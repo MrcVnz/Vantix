@@ -1,0 +1,109 @@
+import { Theme, Icons, Icon, Button } from "theme.slint";
+import { CheckBox } from "std-widgets.slint";
+
+component Paragraph inherits Text {
+    color: Theme.muted;
+    wrap: word-wrap;
+    font-size: 13px;
+}
+
+/// Shown once before anything else runs. Declining quits without writing anything.
+export component TermsWindow inherits Window {
+    callback accepted();
+    callback declined();
+    property <bool> understood;
+
+    title: "EasyTune";
+    icon: @image-url("../res/easytune.png");
+    width: 620px;
+    height: 540px;
+    background: Theme.background;
+    default-font-family: "Segoe UI Variable Text";
+    default-font-size: 13px;
+
+    VerticalLayout {
+        padding: 32px;
+        spacing: 20px;
+
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: start;
+
+            Rectangle {
+                width: 44px;
+                height: 44px;
+                border-radius: 12px;
+                background: Theme.warn.with-alpha(0.12);
+                Icon {
+                    data: Icons.alert;
+                    size: 22px;
+                    tint: Theme.warn;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: @tr("Before you start");
+                    color: Theme.text;
+                    font-family: Theme.display-font;
+                    font-size: 22px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: @tr("Please read this once. It takes a minute.");
+                    color: Theme.muted;
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Theme.surface;
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            VerticalLayout {
+                padding: 22px;
+                spacing: 14px;
+                alignment: start;
+
+                Paragraph {
+                    text: @tr("EasyTune changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability.");
+                }
+                Paragraph {
+                    text: @tr("Before applying a system change EasyTune creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible.");
+                }
+                Paragraph {
+                    text: @tr("You use EasyTune at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use.");
+                    color: Theme.text;
+                }
+                Paragraph {
+                    text: @tr("If you don't agree, choose Decline and EasyTune will close without changing anything.");
+                }
+            }
+        }
+
+        CheckBox {
+            text: @tr("I have read and understand the risks");
+            checked <=> root.understood;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: 10px;
+            Button {
+                text: @tr("Decline");
+                clicked => { root.declined(); }
+            }
+            Button {
+                text: @tr("Accept");
+                primary: true;
+                enabled: root.understood;
+                clicked => { root.accepted(); }
+            }
+        }
+    }
+}

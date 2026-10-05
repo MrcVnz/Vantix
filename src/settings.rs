@@ -48,6 +48,8 @@ impl Default for AutoClean {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub terms_version: u32,
+    pub terms_accepted_at: Option<DateTime<Local>>,
     pub language: Language,
     pub clean_level: Level,
     pub auto_clean: AutoClean,

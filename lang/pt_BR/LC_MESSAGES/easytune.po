@@ -128,3 +128,30 @@ msgstr "Aplicar"
 
 msgid "Applied"
 msgstr "Aplicado"
+
+msgid "Before you start"
+msgstr "Antes de começar"
+
+msgid "Please read this once. It takes a minute."
+msgstr "Leia com atenção. Leva um minuto."
+
+msgid "EasyTune changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability."
+msgstr "O EasyTune altera configurações do Windows, limpa memória e caches e pode modificar componentes do sistema. Os resultados dependem do seu hardware e da sua configuração, e algumas alterações podem reduzir a segurança, a duração da bateria ou a estabilidade."
+
+msgid "Before applying a system change EasyTune creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible."
+msgstr "Antes de aplicar uma alteração no sistema, o EasyTune cria um ponto de restauração e guarda um registro para desfazê-la, mas nenhuma ferramenta pode garantir que toda alteração seja reversível."
+
+msgid "You use EasyTune at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use."
+msgstr "Você usa o EasyTune por sua conta e risco. O software é fornecido como está, sem garantia de qualquer tipo. O autor não se responsabiliza por nenhum dano, perda de dados, perda de desempenho ou qualquer outro prejuízo resultante do seu uso."
+
+msgid "If you don't agree, choose Decline and EasyTune will close without changing anything."
+msgstr "Se não concordar, escolha Não aceitar e o EasyTune fecha sem alterar nada."
+
+msgid "I have read and understand the risks"
+msgstr "Li e entendo os riscos"
+
+msgid "Decline"
+msgstr "Não aceitar"
+
+msgid "Accept"
+msgstr "Aceitar"
