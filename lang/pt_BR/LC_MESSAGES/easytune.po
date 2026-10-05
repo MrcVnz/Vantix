@@ -1,0 +1,130 @@
+msgid ""
+msgstr ""
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Settings"
+msgstr "Configurações"
+
+msgid "Preferences are saved as soon as you change them."
+msgstr "As preferências são salvas assim que você muda."
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "System"
+msgstr "Sistema"
+
+msgid "OPTIMIZE"
+msgstr "OTIMIZAR"
+
+msgid "Memory"
+msgstr "Memória"
+
+msgid "Quick"
+msgstr "Rápida"
+
+msgid "Standard"
+msgstr "Padrão"
+
+msgid "Deep"
+msgstr "Profunda"
+
+msgid "{} installed, updated every second"
+msgstr "{} instalados, atualizado a cada segundo"
+
+msgid "Auto cleanup off"
+msgstr "Limpeza automática desligada"
+
+msgid "Auto every {} min"
+msgstr "Automática a cada {} min"
+
+msgid "Auto above {}%"
+msgstr "Automática acima de {}%"
+
+msgid "in use"
+msgstr "em uso"
+
+msgid "In use"
+msgstr "Em uso"
+
+msgid "Modified"
+msgstr "Modificada"
+
+msgid "Standby cache"
+msgstr "Cache em espera"
+
+msgid "Free"
+msgstr "Livre"
+
+msgid "Last 60 seconds"
+msgstr "Últimos 60 segundos"
+
+msgid "Committed {}"
+msgstr "Confirmada {}"
+
+msgid "Cleanup"
+msgstr "Limpeza"
+
+msgid "Trims apps, never stutters"
+msgstr "Reduz os apps, sem travar"
+
+msgid "Also flushes modified pages"
+msgstr "Também grava as páginas modificadas"
+
+msgid "System-wide, may hitch briefly"
+msgstr "No sistema todo, pode travar por um instante"
+
+msgid "Cleaning..."
+msgstr "Limpando..."
+
+msgid "Clean now"
+msgstr "Limpar agora"
+
+msgid "Freed {}"
+msgstr "{} liberados"
+
+msgid "History"
+msgstr "Histórico"
+
+msgid "Your cleanups will show up here."
+msgstr "Suas limpezas vão aparecer aqui."
+
+msgid "auto"
+msgstr "auto"
+
+msgid "Clear"
+msgstr "Limpar"
+
+msgid "Automatic cleanup"
+msgstr "Limpeza automática"
+
+msgid "Off"
+msgstr "Desligada"
+
+msgid "Interval"
+msgstr "Intervalo"
+
+msgid "RAM limit"
+msgstr "Limite de RAM"
+
+msgid "Cleanups only run when you ask."
+msgstr "A limpeza só roda quando você pedir."
+
+msgid "Every"
+msgstr "A cada"
+
+msgid "minutes"
+msgstr "minutos"
+
+msgid "When usage passes"
+msgstr "Quando o uso passar de"
+
+msgid "Apply"
+msgstr "Aplicar"
+
+msgid "Applied"
+msgstr "Aplicado"

@@ -1,0 +1,3 @@
+# Static CRT and libunwind so the exe runs without llvm-mingw DLLs next to it.
+[target.x86_64-pc-windows-gnullvm]
+rustflags = ["-C", "target-feature=+crt-static"]

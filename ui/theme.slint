@@ -1,0 +1,226 @@
+export global Theme {
+    out property <color> background: #0a0b0d;
+    out property <color> sidebar: #0d0f12;
+    out property <color> surface: #121418;
+    out property <color> raised: #181b20;
+    out property <color> hover: #1d2127;
+    out property <color> border: #1f232a;
+    out property <color> border-strong: #2a2f37;
+
+    out property <color> text: #f2f4f7;
+    out property <color> muted: #8a919c;
+    out property <color> faint: #5b626d;
+
+    // Lime from the app icon, with a teal partner for gradients.
+    out property <color> accent: #9bff3c;
+    out property <color> accent-alt: #2ee6a6;
+    out property <color> on-accent: #0a0b0d;
+    out property <color> info: #5ab0ff;
+    out property <color> warn: #ffb547;
+    out property <color> bad: #ff5c5c;
+
+    out property <brush> accent-gradient: @linear-gradient(90deg, #9bff3c 0%, #2ee6a6 100%);
+
+    out property <length> radius: 16px;
+    out property <length> radius-small: 10px;
+    out property <length> gap: 16px;
+
+    out property <string> display-font: "Segoe UI Variable Display";
+}
+
+// Paths from Lucide (ISC license), 24x24 viewbox, stroked.
+export global Icons {
+    out property <string> memory: "M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9M12 11V9M2 15h20M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v1.1a2 2 0 0 0 0 3.837V17a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5.1a2 2 0 0 0 0-3.837Z";
+    out property <string> settings: "M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4";
+    out property <string> zap: "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z";
+    out property <string> sparkles: "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z";
+    out property <string> layers: "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83zM2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17";
+    out property <string> clock: "M12 6v6l4 2M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0";
+    out property <string> activity: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2";
+    out property <string> history: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2";
+    out property <string> power: "M12 2v10M18.4 6.6a9 9 0 1 1-12.77.04";
+    out property <string> check: "M20 6 9 17l-5-5";
+    out property <string> trash: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2";
+    out property <string> globe: "M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20";
+}
+
+export component Icon inherits Rectangle {
+    in property <string> data;
+    in property <brush> tint: Theme.text;
+    in property <length> size: 18px;
+    in property <length> thickness: 1.8px;
+
+    width: self.size;
+    height: self.size;
+
+    Path {
+        width: 100%;
+        height: 100%;
+        commands: root.data;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: root.tint;
+        stroke-width: root.thickness;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
+}
+
+export component Card inherits Rectangle {
+    in property <string> title;
+    in property <string> icon;
+    in property <length> pad: 20px;
+
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    VerticalLayout {
+        padding: root.pad;
+        spacing: 16px;
+
+        if root.title != "": HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            if root.icon != "": VerticalLayout {
+                alignment: center;
+                Icon {
+                    data: root.icon;
+                    tint: Theme.muted;
+                    size: 15px;
+                }
+            }
+            Text {
+                text: root.title;
+                color: Theme.muted;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+
+        @children
+    }
+}
+
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> enabled: true;
+    in property <bool> primary;
+    in property <length> tall: 40px;
+    callback clicked;
+
+    height: self.tall;
+    border-radius: self.tall / 2;
+    background: !self.enabled ? Theme.raised
+        : self.primary ? Theme.accent-gradient
+        : touch.pressed ? Theme.border-strong : touch.has-hover ? Theme.hover : Theme.raised;
+    border-width: self.primary && self.enabled ? 0 : 1px;
+    border-color: Theme.border;
+    opacity: self.primary && touch.pressed ? 0.85 : 1;
+    drop-shadow-blur: self.primary && self.enabled ? (touch.has-hover ? 28px : 18px) : 0;
+    drop-shadow-color: Theme.accent.with-alpha(0.28);
+    animate background, drop-shadow-blur, opacity { duration: 140ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        spacing: 8px;
+        alignment: center;
+
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                data: root.icon;
+                size: 16px;
+                thickness: 2px;
+                tint: !root.enabled ? Theme.faint : root.primary ? Theme.on-accent : Theme.text;
+            }
+        }
+        Text {
+            text: root.text;
+            color: !root.enabled ? Theme.faint : root.primary ? Theme.on-accent : Theme.text;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// Pill shaped row of mutually exclusive options with a sliding highlight.
+export component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in-out property <int> selected;
+    callback changed(int);
+
+    property <length> slot: (self.width - 8px) / max(1, self.options.length);
+
+    height: 38px;
+    border-radius: self.height / 2;
+    background: Theme.background;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    Rectangle {
+        x: 4px + root.slot * root.selected;
+        y: 4px;
+        width: root.slot;
+        height: parent.height - 8px;
+        border-radius: self.height / 2;
+        background: Theme.hover;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        animate x { duration: 220ms; easing: ease-out-quart; }
+    }
+
+    for option[i] in root.options: Rectangle {
+        x: 4px + root.slot * i;
+        width: root.slot;
+
+        Text {
+            text: option;
+            color: i == root.selected ? Theme.text : area.has-hover ? Theme.text.transparentize(0.25) : Theme.muted;
+            font-weight: 600;
+            font-size: 12.5px;
+            animate color { duration: 150ms; }
+        }
+
+        area := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                if root.selected != i {
+                    root.selected = i;
+                    root.changed(i);
+                }
+            }
+        }
+    }
+}
+
+export component Chip inherits Rectangle {
+    in property <string> text;
+    in property <color> tint: Theme.muted;
+
+    height: 22px;
+    border-radius: 11px;
+    background: self.tint.with-alpha(0.12);
+
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+        Text {
+            text: root.text;
+            color: root.tint;
+            font-size: 11.5px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}

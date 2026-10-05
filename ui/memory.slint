@@ -1,0 +1,627 @@
+import { Theme, Icons, Icon, Card, Button, Segmented, Chip } from "theme.slint";
+import { ListView, Slider, SpinBox } from "std-widgets.slint";
+
+export enum CleanState { idle, running, done }
+
+export struct HistoryRow {
+    time: string,
+    level: int,
+    automatic: bool,
+    freed: string,
+    // Freed amount relative to the biggest entry, for the bar.
+    ratio: float,
+}
+
+export global Memory {
+    in property <float> load;
+    in property <string> in-use;
+    in property <string> total;
+    in property <string> available;
+    in property <string> standby;
+    in property <string> modified;
+    in property <string> free;
+    in property <string> commit;
+
+    // Fractions of installed RAM, they add up to 1.
+    in property <float> part-used;
+    in property <float> part-modified;
+    in property <float> part-standby;
+    in property <float> part-free;
+
+    // SVG path data in a 0..59 x 0..100 box, one point per second.
+    in property <string> spark-line;
+    in property <string> spark-fill;
+
+    in-out property <int> level: 1;
+    in-out property <int> auto-mode;
+    in-out property <int> auto-minutes: 30;
+    in-out property <int> auto-percent: 80;
+    // What the scheduler is actually running; the fields above are the unsaved edits.
+    in property <int> applied-mode;
+    in property <int> applied-minutes;
+    in property <int> applied-percent;
+
+    in property <CleanState> state;
+    in property <string> last-freed;
+    in property <[HistoryRow]> history;
+
+    callback clean();
+    callback level-changed();
+    callback apply-auto();
+    callback clear-history();
+}
+
+/// 270 degree arc gauge, open at the bottom. Drawn in a 200x200 box around (100, 100).
+component Gauge inherits Rectangle {
+    in property <float> value;
+    in property <brush> tint;
+    property <float> shown: clamp(self.value, 0, 1);
+    property <angle> end: -135deg + 270deg * self.shown;
+    // sin(135deg) is the x/y offset of both ends of the track from the center.
+    property <float> corner: 84 * sin(135deg);
+    property <string> start: "M " + (100 - self.corner) + " " + (100 + self.corner);
+    animate shown { duration: 700ms; easing: ease-out-quart; }
+
+    width: 190px;
+    height: 190px;
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 200;
+        viewbox-height: 200;
+        fit: fill;
+        commands: root.start + " A 84 84 0 1 1 " + (100 + root.corner) + " " + (100 + root.corner);
+        stroke: Theme.raised;
+        stroke-width: 13px;
+        stroke-line-cap: round;
+    }
+
+    if root.shown > 0.004: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 200;
+        viewbox-height: 200;
+        fit: fill;
+        commands: root.start + " A 84 84 0 " + (root.end > 45deg ? 1 : 0) + " 1 "
+            + (100 + 84 * sin(root.end)) + " " + (100 - 84 * cos(root.end));
+        stroke: root.tint;
+        stroke-width: 13px;
+        stroke-line-cap: round;
+    }
+
+    @children
+}
+
+component Sparkline inherits Rectangle {
+    in property <string> line;
+    in property <string> area;
+    in property <color> tint;
+
+    for i in 3: Rectangle {
+        y: parent.height * (i + 1) / 4;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    Path {
+        width: 100%;
+        height: 100%;
+        commands: root.area;
+        viewbox-width: 59;
+        viewbox-height: 100;
+        fit: fill;
+        fill: @linear-gradient(180deg, root.tint.with-alpha(0.22) 0%, root.tint.with-alpha(0) 100%);
+    }
+
+    Path {
+        width: 100%;
+        height: 100%;
+        commands: root.line;
+        viewbox-width: 59;
+        viewbox-height: 100;
+        fit: fill;
+        stroke: root.tint;
+        stroke-width: 2px;
+        stroke-line-cap: round;
+    }
+}
+
+/// Stacked bar that shows how physical memory is split right now.
+component Composition inherits Rectangle {
+    property <length> usable: self.width - 6px;
+    height: 10px;
+
+    used := Rectangle {
+        x: 0;
+        width: root.usable * Memory.part-used;
+        border-radius: 5px;
+        background: Theme.accent;
+        animate width { duration: 500ms; easing: ease-out-quart; }
+    }
+    modified := Rectangle {
+        x: used.x + used.width + 2px;
+        width: root.usable * Memory.part-modified;
+        border-radius: 5px;
+        background: Theme.warn;
+        animate width { duration: 500ms; easing: ease-out-quart; }
+    }
+    standby := Rectangle {
+        x: modified.x + modified.width + 2px;
+        width: root.usable * Memory.part-standby;
+        border-radius: 5px;
+        background: Theme.info;
+        animate width { duration: 500ms; easing: ease-out-quart; }
+    }
+    Rectangle {
+        x: standby.x + standby.width + 2px;
+        width: max(0, root.width - self.x);
+        border-radius: 5px;
+        background: Theme.raised;
+    }
+}
+
+component Legend inherits HorizontalLayout {
+    in property <color> dot;
+    in property <string> label;
+    in property <string> value;
+    spacing: 8px;
+
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: root.dot;
+        }
+    }
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12.5px;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.value;
+        color: Theme.text;
+        font-size: 12.5px;
+        font-weight: 600;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+        horizontal-stretch: 1;
+    }
+}
+
+component LevelTile inherits Rectangle {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> active;
+    callback clicked;
+
+    height: 58px;
+    border-radius: Theme.radius-small;
+    background: self.active ? Theme.accent.with-alpha(0.07) : area.has-hover ? Theme.raised : transparent;
+    border-width: 1px;
+    border-color: self.active ? Theme.accent.with-alpha(0.55) : Theme.border;
+    animate background, border-color { duration: 160ms; }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 14px;
+        spacing: 12px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 34px;
+                height: 34px;
+                border-radius: 9px;
+                background: root.active ? Theme.accent.with-alpha(0.14) : Theme.raised;
+                Icon {
+                    data: root.icon;
+                    size: 17px;
+                    tint: root.active ? Theme.accent : Theme.muted;
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-weight: 600;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.muted;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 9px;
+                border-width: root.active ? 5px : 1.5px;
+                border-color: root.active ? Theme.accent : Theme.border-strong;
+                animate border-width { duration: 160ms; easing: ease-out; }
+            }
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component MemoryPage inherits VerticalLayout {
+    property <[string]> level-names: [@tr("Quick"), @tr("Standard"), @tr("Deep")];
+    property <brush> load-tint: Memory.load >= 0.9 ? Theme.bad : Memory.load >= 0.75 ? Theme.warn : Theme.accent-gradient;
+    property <color> spark-tint: Memory.load >= 0.9 ? Theme.bad : Memory.load >= 0.75 ? Theme.warn : Theme.accent;
+    property <bool> auto-dirty: Memory.auto-mode != Memory.applied-mode
+        || (Memory.auto-mode == 1 && Memory.auto-minutes != Memory.applied-minutes)
+        || (Memory.auto-mode == 2 && Memory.auto-percent != Memory.applied-percent);
+    property <bool> running: Memory.state == CleanState.running;
+
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    HorizontalLayout {
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: @tr("Memory");
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 28px;
+                font-weight: 700;
+            }
+            Text {
+                text: @tr("{} installed, updated every second", Memory.total);
+                color: Theme.muted;
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            VerticalLayout {
+                alignment: center;
+                Chip {
+                text: Memory.applied-mode == 0 ? @tr("Auto cleanup off")
+                    : Memory.applied-mode == 1 ? @tr("Auto every {} min", Memory.applied-minutes)
+                    : @tr("Auto above {}%", Memory.applied-percent);
+                    tint: Memory.applied-mode == 0 ? Theme.muted : Theme.accent;
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+
+        Card {
+            horizontal-stretch: 1;
+            pad: 24px;
+
+            HorizontalLayout {
+                spacing: 32px;
+
+                Gauge {
+                    value: Memory.load;
+                    tint: root.load-tint;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: round(Memory.load * 100) + "%";
+                            color: Theme.text;
+                            font-family: Theme.display-font;
+                            font-size: 44px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: @tr("in use");
+                            color: Theme.muted;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 11px;
+                    horizontal-stretch: 1;
+
+                    HorizontalLayout {
+                        Text {
+                            text: Memory.in-use;
+                            color: Theme.text;
+                            font-family: Theme.display-font;
+                            font-size: 22px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: " / " + Memory.total;
+                            color: Theme.faint;
+                            font-family: Theme.display-font;
+                            font-size: 22px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    Composition {}
+                    Legend { dot: Theme.accent; label: @tr("In use"); value: Memory.in-use; }
+                    Legend { dot: Theme.warn; label: @tr("Modified"); value: Memory.modified; }
+                    Legend { dot: Theme.info; label: @tr("Standby cache"); value: Memory.standby; }
+                    Legend { dot: Theme.border-strong; label: @tr("Free"); value: Memory.free; }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 8px;
+                vertical-stretch: 1;
+                HorizontalLayout {
+                    Text {
+                        text: @tr("Last 60 seconds");
+                        color: Theme.muted;
+                        font-size: 12px;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: @tr("Committed {}", Memory.commit);
+                        color: Theme.faint;
+                        font-size: 12px;
+                    }
+                }
+                Sparkline {
+                    line: Memory.spark-line;
+                    area: Memory.spark-fill;
+                    tint: root.spark-tint;
+                    min-height: 56px;
+                    vertical-stretch: 1;
+                }
+            }
+        }
+
+        Card {
+            title: @tr("Cleanup");
+            icon: Icons.sparkles;
+            width: 340px;
+
+            VerticalLayout {
+                spacing: 8px;
+                LevelTile {
+                    icon: Icons.zap;
+                    title: root.level-names[0];
+                    detail: @tr("Trims apps, never stutters");
+                    active: Memory.level == 0;
+                    clicked => { Memory.level = 0; Memory.level-changed(); }
+                }
+                LevelTile {
+                    icon: Icons.sparkles;
+                    title: root.level-names[1];
+                    detail: @tr("Also flushes modified pages");
+                    active: Memory.level == 1;
+                    clicked => { Memory.level = 1; Memory.level-changed(); }
+                }
+                LevelTile {
+                    icon: Icons.layers;
+                    title: root.level-names[2];
+                    detail: @tr("System-wide, may hitch briefly");
+                    active: Memory.level == 2;
+                    clicked => { Memory.level = 2; Memory.level-changed(); }
+                }
+            }
+
+            Button {
+                text: root.running ? @tr("Cleaning...") : @tr("Clean now");
+                icon: root.running ? "" : Icons.zap;
+                primary: true;
+                tall: 46px;
+                enabled: !root.running;
+                clicked => { Memory.clean(); }
+            }
+
+            // Indeterminate progress while cleaning, the result once it's done.
+            Rectangle {
+                height: 18px;
+
+                if root.running: Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    height: 3px;
+                    border-radius: 2px;
+                    background: Theme.raised;
+                    clip: true;
+                    Rectangle {
+                        width: parent.width * 0.35;
+                        // Eased back and forth, one sweep every ~1.4 s.
+                        x: (1 - cos(animation-tick() / 4ms * 1deg)) / 2 * (parent.width - self.width);
+                        border-radius: 2px;
+                        background: Theme.accent-gradient;
+                    }
+                }
+
+                if Memory.state == CleanState.done: HorizontalLayout {
+                    spacing: 6px;
+                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            data: Icons.check;
+                            size: 15px;
+                            thickness: 2.4px;
+                            tint: Theme.accent;
+                        }
+                    }
+                    Text {
+                        text: @tr("Freed {}", Memory.last-freed);
+                        color: Theme.accent;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        vertical-stretch: 1;
+
+        Card {
+            title: @tr("History");
+            icon: Icons.history;
+            horizontal-stretch: 1;
+
+            if Memory.history.length == 0: Text {
+                text: @tr("Your cleanups will show up here.");
+                color: Theme.faint;
+                vertical-stretch: 1;
+            }
+
+            if Memory.history.length > 0: ListView {
+                vertical-stretch: 1;
+                for row in Memory.history: HorizontalLayout {
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    padding-right: 14px;
+                    spacing: 12px;
+
+                    Text {
+                        text: row.time;
+                        color: Theme.faint;
+                        font-size: 12.5px;
+                        width: 92px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.level-names[row.level];
+                        color: Theme.text;
+                        width: 84px;
+                        vertical-alignment: center;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        width: 54px;
+                        if row.automatic: Chip { text: @tr("auto"); }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Rectangle {
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Theme.raised;
+                            Rectangle {
+                                x: 0;
+                                width: parent.width * max(0.02, row.ratio);
+                                border-radius: 3px;
+                                background: Theme.accent-gradient;
+                            }
+                        }
+                    }
+                    Text {
+                        text: row.freed;
+                        color: Theme.text;
+                        font-weight: 600;
+                        width: 64px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                Button {
+                    text: @tr("Clear");
+                    icon: Icons.trash;
+                    tall: 34px;
+                    enabled: Memory.history.length > 0;
+                    clicked => { Memory.clear-history(); }
+                }
+            }
+        }
+
+        Card {
+            title: @tr("Automatic cleanup");
+            icon: Icons.clock;
+            width: 340px;
+
+            Segmented {
+                options: [@tr("Off"), @tr("Interval"), @tr("RAM limit")];
+                selected <=> Memory.auto-mode;
+            }
+
+            if Memory.auto-mode == 0: Text {
+                text: @tr("Cleanups only run when you ask.");
+                color: Theme.muted;
+                wrap: word-wrap;
+                min-height: 36px;
+            }
+
+            if Memory.auto-mode == 1: HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: @tr("Every");
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                SpinBox {
+                    width: 110px;
+                    minimum: 5;
+                    maximum: 1440;
+                    step-size: 5;
+                    value <=> Memory.auto-minutes;
+                }
+                Text {
+                    text: @tr("minutes");
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+            }
+
+            if Memory.auto-mode == 2: VerticalLayout {
+                spacing: 4px;
+                HorizontalLayout {
+                    Text {
+                        text: @tr("When usage passes");
+                        color: Theme.text;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: Memory.auto-percent + "%";
+                        color: Theme.accent;
+                        font-weight: 700;
+                    }
+                }
+                Slider {
+                    minimum: 50;
+                    maximum: 95;
+                    step: 5;
+                    value: Memory.auto-percent;
+                    changed(v) => { Memory.auto-percent = round(v); }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            Button {
+                text: root.auto-dirty ? @tr("Apply") : @tr("Applied");
+                icon: root.auto-dirty ? "" : Icons.check;
+                enabled: root.auto-dirty;
+                primary: root.auto-dirty;
+                clicked => { Memory.apply-auto(); }
+            }
+        }
+    }
+}
