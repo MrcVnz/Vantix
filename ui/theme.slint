@@ -11,15 +11,14 @@ export global Theme {
     out property <color> muted: #8a919c;
     out property <color> faint: #5b626d;
 
-    // Lime from the app icon, with a teal partner for gradients.
+    // Lime from the app icon. The software renderer has no shadows and paints gradients
+    // flat inside rounded shapes, so the design sticks to solid fills.
     out property <color> accent: #9bff3c;
-    out property <color> accent-alt: #2ee6a6;
     out property <color> on-accent: #0a0b0d;
     out property <color> info: #5ab0ff;
     out property <color> warn: #ffb547;
     out property <color> bad: #ff5c5c;
 
-    out property <brush> accent-gradient: @linear-gradient(90deg, #9bff3c 0%, #2ee6a6 100%);
 
     out property <length> radius: 16px;
     out property <length> radius-small: 10px;
@@ -115,14 +114,11 @@ export component Button inherits Rectangle {
     height: self.tall;
     border-radius: self.tall / 2;
     background: !self.enabled ? Theme.raised
-        : self.primary ? Theme.accent-gradient
+        : self.primary ? (touch.pressed ? Theme.accent.darker(0.15) : touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent)
         : touch.pressed ? Theme.border-strong : touch.has-hover ? Theme.hover : Theme.raised;
     border-width: self.primary && self.enabled ? 0 : 1px;
     border-color: Theme.border;
-    opacity: self.primary && touch.pressed ? 0.85 : 1;
-    drop-shadow-blur: self.primary && self.enabled ? (touch.has-hover ? 28px : 18px) : 0;
-    drop-shadow-color: Theme.accent.with-alpha(0.28);
-    animate background, drop-shadow-blur, opacity { duration: 140ms; easing: ease-out; }
+    animate background { duration: 140ms; easing: ease-out; }
 
     HorizontalLayout {
         padding-left: 18px;

@@ -51,16 +51,20 @@ export global Memory {
     callback clear-history();
 }
 
-/// 270 degree arc gauge, open at the bottom. Drawn in a 200x200 box around (100, 100).
+/// 270 degree arc gauge, open at the bottom.
 component Gauge inherits Rectangle {
     in property <float> value;
-    in property <brush> tint;
+    in property <color> tint;
     property <float> shown: clamp(self.value, 0, 1);
     property <angle> end: -135deg + 270deg * self.shown;
-    // sin(135deg) is the x/y offset of both ends of the track from the center.
-    property <float> corner: 84 * sin(135deg);
-    property <string> start: "M " + (100 - self.corner) + " " + (100 + self.corner);
     animate shown { duration: 700ms; easing: ease-out-quart; }
+
+    // Path data is built from integers only: Slint formats floats with the UI language's
+    // decimal separator, and "40,6" in pt_BR is not valid SVG. A 400 unit box keeps the
+    // rounding under half a pixel.
+    pure function point(a: angle) -> string {
+        return round(200 + 168 * sin(a)) + " " + round(200 - 168 * cos(a));
+    }
 
     width: 190px;
     height: 190px;
@@ -68,10 +72,9 @@ component Gauge inherits Rectangle {
     Path {
         width: 100%;
         height: 100%;
-        viewbox-width: 200;
-        viewbox-height: 200;
-        fit: fill;
-        commands: root.start + " A 84 84 0 1 1 " + (100 + root.corner) + " " + (100 + root.corner);
+        viewbox-width: 400;
+        viewbox-height: 400;
+        commands: "M " + root.point(-135deg) + " A 168 168 0 1 1 " + root.point(135deg);
         stroke: Theme.raised;
         stroke-width: 13px;
         stroke-line-cap: round;
@@ -80,11 +83,9 @@ component Gauge inherits Rectangle {
     if root.shown > 0.004: Path {
         width: 100%;
         height: 100%;
-        viewbox-width: 200;
-        viewbox-height: 200;
-        fit: fill;
-        commands: root.start + " A 84 84 0 " + (root.end > 45deg ? 1 : 0) + " 1 "
-            + (100 + 84 * sin(root.end)) + " " + (100 - 84 * cos(root.end));
+        viewbox-width: 400;
+        viewbox-height: 400;
+        commands: "M " + root.point(-135deg) + " A 168 168 0 " + (root.end > 45deg ? 1 : 0) + " 1 " + root.point(root.end);
         stroke: root.tint;
         stroke-width: 13px;
         stroke-line-cap: round;
@@ -111,7 +112,7 @@ component Sparkline inherits Rectangle {
         viewbox-width: 59;
         viewbox-height: 100;
         fit: fill;
-        fill: @linear-gradient(180deg, root.tint.with-alpha(0.22) 0%, root.tint.with-alpha(0) 100%);
+        fill: root.tint.with-alpha(0.12);
     }
 
     Path {
@@ -264,8 +265,7 @@ component LevelTile inherits Rectangle {
 
 export component MemoryPage inherits VerticalLayout {
     property <[string]> level-names: [@tr("Quick"), @tr("Standard"), @tr("Deep")];
-    property <brush> load-tint: Memory.load >= 0.9 ? Theme.bad : Memory.load >= 0.75 ? Theme.warn : Theme.accent-gradient;
-    property <color> spark-tint: Memory.load >= 0.9 ? Theme.bad : Memory.load >= 0.75 ? Theme.warn : Theme.accent;
+    property <color> load-tint: Memory.load >= 0.9 ? Theme.bad : Memory.load >= 0.75 ? Theme.warn : Theme.accent;
     property <bool> auto-dirty: Memory.auto-mode != Memory.applied-mode
         || (Memory.auto-mode == 1 && Memory.auto-minutes != Memory.applied-minutes)
         || (Memory.auto-mode == 2 && Memory.auto-percent != Memory.applied-percent);
@@ -385,7 +385,7 @@ export component MemoryPage inherits VerticalLayout {
                 Sparkline {
                     line: Memory.spark-line;
                     area: Memory.spark-fill;
-                    tint: root.spark-tint;
+                    tint: root.load-tint;
                     min-height: 56px;
                     vertical-stretch: 1;
                 }
@@ -446,7 +446,7 @@ export component MemoryPage inherits VerticalLayout {
                         // Eased back and forth, one sweep every ~1.4 s.
                         x: (1 - cos(animation-tick() / 4ms * 1deg)) / 2 * (parent.width - self.width);
                         border-radius: 2px;
-                        background: Theme.accent-gradient;
+                        background: Theme.accent;
                     }
                 }
 
@@ -525,7 +525,7 @@ export component MemoryPage inherits VerticalLayout {
                                 x: 0;
                                 width: parent.width * max(0.02, row.ratio);
                                 border-radius: 3px;
-                                background: Theme.accent-gradient;
+                                background: Theme.accent;
                             }
                         }
                     }
