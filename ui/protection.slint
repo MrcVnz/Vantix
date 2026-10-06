@@ -43,6 +43,8 @@ export global Job {
     in property <bool> slow;
     /// Whether a restore point will be made first.
     in property <bool> with-point;
+    /// The point made before Vantix's first change still exists and covers this one.
+    in property <bool> baseline;
     /// System Restore is off, so there won't be a point.
     in property <bool> protection-off;
     /// Free space a finished change gave back.
@@ -140,7 +142,8 @@ export component JobSheet inherits Rectangle {
                 }
                 Text {
                     text: Job.undo ? @tr("Puts back how it was before Vantix changed it.")
-                        : Job.with-point ? @tr("Vantix creates a restore point first.")
+                        : Job.with-point ? @tr("This is the first change, so Vantix creates a restore point first.")
+                        : Job.baseline ? @tr("The restore point made before Vantix's first change still covers this one, and Vantix keeps its own record to undo it.")
                         : Job.protection-off ? @tr("System protection is off, so there won't be a restore point. Vantix still keeps its own record to undo this.")
                         : @tr("Nothing to back up for this one, it runs right away.");
                     color: Theme.muted;
@@ -273,7 +276,7 @@ export component ProtectionPage inherits VerticalLayout {
 
             Text {
                 text: Protection.enabled
-                    ? @tr("Vantix creates a point automatically before every system change.")
+                    ? @tr("Vantix creates a point automatically before its first system change.")
                     : @tr("Without it Vantix can't create restore points. Turning it on reserves a small part of the drive.");
                 color: Theme.muted;
                 wrap: word-wrap;

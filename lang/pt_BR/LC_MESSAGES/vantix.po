@@ -138,8 +138,8 @@ msgstr "Leia com calma. Leva só um minuto."
 msgid "Vantix changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability."
 msgstr "O Vantix altera configurações do Windows, limpa memória e caches e pode modificar componentes do sistema. Os resultados dependem do seu hardware e da sua configuração, e algumas alterações podem reduzir a segurança, a duração da bateria ou a estabilidade."
 
-msgid "Before applying a system change Vantix creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible."
-msgstr "Antes de aplicar uma alteração no sistema, o Vantix cria um ponto de restauração e guarda um registro para desfazê-la, mas nenhuma ferramenta pode garantir que toda alteração seja reversível."
+msgid "Before its first system change Vantix creates a restore point, and it keeps a record to undo every change, but no tool can guarantee that every change is reversible."
+msgstr "Antes da primeira alteração no sistema, o Vantix cria um ponto de restauração e guarda um registro para desfazer cada alteração, mas nenhuma ferramenta pode garantir que toda alteração seja reversível."
 
 msgid "You use Vantix at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use."
 msgstr "Você usa o Vantix por sua conta e risco. O software é fornecido como está, sem garantia de qualquer tipo. O autor não se responsabiliza por nenhum dano, perda de dados, perda de desempenho ou qualquer outro prejuízo resultante do seu uso."
@@ -222,8 +222,8 @@ msgstr "Pontos de restauração no disco do Windows"
 msgid "On"
 msgstr "Ligada"
 
-msgid "Vantix creates a point automatically before every system change."
-msgstr "O Vantix cria um ponto automaticamente antes de cada alteração no sistema."
+msgid "Vantix creates a point automatically before its first system change."
+msgstr "O Vantix cria um ponto automaticamente antes da primeira alteração no sistema."
 
 msgid "Without it Vantix can't create restore points. Turning it on reserves a small part of the drive."
 msgstr "Sem ela o Vantix não consegue criar pontos de restauração. Ligar reserva uma pequena parte do disco."
@@ -525,8 +525,11 @@ msgstr "Aplicar esta alteração?"
 msgid "Puts back how it was before Vantix changed it."
 msgstr "Volta tudo como estava antes de o Vantix mexer."
 
-msgid "Vantix creates a restore point first."
-msgstr "Antes, o Vantix cria um ponto de restauração."
+msgid "This is the first change, so Vantix creates a restore point first."
+msgstr "Esta é a primeira alteração, então o Vantix cria um ponto de restauração antes."
+
+msgid "The restore point made before Vantix's first change still covers this one, and Vantix keeps its own record to undo it."
+msgstr "O ponto de restauração criado antes da primeira alteração do Vantix continua valendo, e o Vantix guarda o próprio registro para desfazer esta."
 
 msgid "Nothing to back up for this one, it runs right away."
 msgstr "Isso não muda nenhuma configuração, então roda direto, sem ponto de restauração."

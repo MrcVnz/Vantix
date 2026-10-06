@@ -26,7 +26,7 @@ use tweaks::{CATALOG, Kind, Section};
 slint::include_modules!();
 
 /// Bump when the terms text changes so everyone is asked again.
-const TERMS_VERSION: u32 = 1;
+const TERMS_VERSION: u32 = 2;
 
 /// Seconds of load history drawn in the sparkline.
 const SPARK_SAMPLES: usize = 60;
@@ -56,6 +56,9 @@ struct State {
     /// Bumped whenever the journal changes, so a state read that started before can't
     /// throw away a change it never saw.
     journal_version: u32,
+    /// Whether the baseline restore point still exists. Windows deletes old points when
+    /// their reserved space fills up, and then the next change makes a new one.
+    baseline_alive: bool,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -108,6 +111,7 @@ fn main() -> Result<(), slint::PlatformError> {
             asked: None,
             working: None,
             journal_version: 0,
+            baseline_alive: false,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -725,6 +729,7 @@ impl App {
             job.set_reboot(false);
             job.set_slow(false);
             job.set_with_point(false);
+            job.set_baseline(false);
             job.set_protection_off(false);
             job.set_elapsed(0);
             job.set_state(state);
@@ -753,10 +758,16 @@ impl App {
     /// Reads every tweak's real state in parallel. A few of them start PowerShell, which
     /// takes about a second.
     fn refresh_tweaks(self: &Rc<Self>) {
-        let version = self.state.borrow().journal_version;
+        let (version, baseline) = {
+            let state = self.state.borrow();
+            (state.journal_version, state.settings.baseline_point)
+        };
         self.run_job(
-            || {
-                std::thread::scope(|scope| {
+            move || {
+                let alive = baseline.is_some_and(|sequence| {
+                    restore::list().is_ok_and(|points| points.iter().any(|p| p.sequence == sequence))
+                });
+                let reads = std::thread::scope(|scope| {
                     let jobs: Vec<_> = CATALOG
                         .iter()
                         .map(|tweak| {
@@ -773,12 +784,14 @@ impl App {
                         })
                         .collect();
                     jobs.into_iter().map(|job| job.join().ok()).collect::<Vec<_>>()
-                })
+                });
+                (reads, alive)
             },
             move |app, results| {
-                let Some(results) = results else { return };
+                let Some((results, alive)) = results else { return };
                 {
                     let mut state = app.state.borrow_mut();
+                    state.baseline_alive = alive;
                     for (info, result) in state.tweaks.iter_mut().zip(results) {
                         let (shown, on, estimate) = result.unwrap_or((false, None, None));
                         *info = TweakInfo { loaded: true, shown, on, estimate, ran: info.ran };
@@ -885,9 +898,11 @@ impl App {
             Ask::UndoAll => (None, true),
         };
         let subject = index.map(|i| self.tweak_title(i)).unwrap_or_default();
-        // Only changes that can be undone get a restore point; a retrim has nothing to save.
+        // Only changes that can be undone need a restore point; a retrim has nothing to save.
+        // One point covers them all: the one made before Vantix's first change.
         let toggle = index.is_some_and(|i| matches!(CATALOG[i].kind, Kind::Toggle { .. }));
         let protection = !undo && toggle && restore::protection_enabled();
+        let baseline = self.state.borrow().baseline_alive;
         self.state.borrow_mut().asked = Some(ask);
         self.show_job(JobState::Confirm, &subject, true);
         self.with_ui(|ui| {
@@ -899,7 +914,8 @@ impl App {
             job.set_cost(tweak.map_or(0, |t| t.cost as i32));
             job.set_reboot(tweak.is_some_and(|t| t.reboot));
             job.set_slow(tweak.is_some_and(|t| t.slow));
-            job.set_with_point(protection);
+            job.set_with_point(protection && !baseline);
+            job.set_baseline(protection && baseline);
             job.set_protection_off(!undo && toggle && !protection);
         });
     }
@@ -924,7 +940,15 @@ impl App {
         self.run_job(
             move || restore::create(&format!("Vantix: {title}")),
             move |app, result| match result {
-                Some(Ok(_)) => app.apply(ask),
+                Some(Ok(sequence)) => {
+                    {
+                        let mut state = app.state.borrow_mut();
+                        state.settings.baseline_point = Some(sequence);
+                        state.baseline_alive = true;
+                        let _ = state.settings.save();
+                    }
+                    app.apply(ask)
+                }
                 Some(Err(error)) => app.set_job(JobState::PointFailed, &error.message()),
                 None => app.set_job(JobState::PointFailed, ""),
             },

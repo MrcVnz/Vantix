@@ -59,6 +59,9 @@ pub struct Settings {
     pub start_minimized: bool,
     pub notifications: bool,
     pub tray_hint_shown: bool,
+    /// Sequence number of the restore point made before Vantix's first system change.
+    /// Later changes rely on it and the journal instead of making a point each.
+    pub baseline_point: Option<u32>,
 }
 
 impl Default for Settings {
@@ -72,6 +75,7 @@ impl Default for Settings {
             start_minimized: true,
             notifications: true,
             tray_hint_shown: false,
+            baseline_point: None,
         }
     }
 }
