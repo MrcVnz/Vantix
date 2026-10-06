@@ -4,8 +4,8 @@ use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERRO
 use windows::Win32::System::Registry::{
     HKEY, KEY_READ, KEY_WRITE, REG_BINARY, REG_DWORD, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, REG_SZ,
     REG_VALUE_TYPE, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_MULTI_SZ, RRF_RT_REG_SZ,
-    RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegDeleteTreeW, RegEnumValueW, RegGetValueW,
-    RegOpenKeyExW, RegSetValueExW,
+    RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegDeleteTreeW, RegEnumKeyExW, RegEnumValueW,
+    RegGetValueW, RegOpenKeyExW, RegSetValueExW,
 };
 use windows::core::{HSTRING, Result};
 
@@ -157,6 +157,29 @@ pub fn string_values(root: HKEY, path: &str) -> Result<Vec<(String, String)>> {
         let _ = RegCloseKey(key);
     }
     Ok(values)
+}
+
+/// Names of the keys directly under a key. Empty when the key doesn't exist.
+pub fn subkeys(root: HKEY, path: &str) -> Vec<String> {
+    let mut key = HKEY::default();
+    if unsafe { RegOpenKeyExW(root, &HSTRING::from(path), None, KEY_READ, &mut key) }.is_err() {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    for index in 0.. {
+        let mut name = [0u16; 256];
+        let mut name_len = name.len() as u32;
+        let name_ptr = Some(windows::core::PWSTR(name.as_mut_ptr()));
+        let status = unsafe { RegEnumKeyExW(key, index, name_ptr, &mut name_len, None, None, None, None) };
+        if status.is_err() {
+            break;
+        }
+        names.push(String::from_utf16_lossy(&name[..name_len as usize]));
+    }
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    names
 }
 
 fn get_string_raw(key: HKEY, name: &str) -> Result<Option<String>> {

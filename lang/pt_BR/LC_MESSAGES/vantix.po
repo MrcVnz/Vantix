@@ -558,9 +558,6 @@ msgstr "Isso leva alguns minutos. Pode continuar usando o PC."
 msgid "Windows settings that take up drive space. Each one shows what it gives and what it costs."
 msgstr "Configurações do Windows que ocupam espaço no disco. Cada uma mostra o que você ganha e o que perde."
 
-msgid "Tweaks"
-msgstr "Ajustes"
-
 msgid "{n} change takes effect after a restart"
 msgid_plural "{n} changes take effect after a restart"
 msgstr[0] "{n} alteração passa a valer depois de reiniciar"
@@ -1137,3 +1134,75 @@ msgstr "Usar"
 
 msgid "Vantix only changes the DNS of a cable, Wi-Fi or PPPoE connection. A VPN sets its own."
 msgstr "O Vantix só troca o DNS de conexões por cabo, Wi-Fi ou PPPoE. Uma VPN define o dela."
+
+msgid "Tweaks"
+msgstr "Ajustes"
+
+msgid "Nothing to change on this connection: its adapter has none of these settings, or they're already where they should be."
+msgstr "Nada para mudar nesta conexão: o adaptador não tem nenhum destes ajustes, ou eles já estão como deviam."
+
+msgid "Turn off Interrupt Moderation"
+msgstr "Desligar a Moderação de Interrupção"
+
+msgid "Turn off Energy Efficient Ethernet"
+msgstr "Desligar o Ethernet com Eficiência Energética"
+
+msgid "Turn on Receive Side Scaling"
+msgstr "Ligar o Receive Side Scaling"
+
+msgid "Keep Windows from turning off the network adapter"
+msgstr "Impedir o Windows de desligar o adaptador de rede"
+
+msgid "Wi-Fi at full power"
+msgstr "Wi-Fi na potência máxima"
+
+msgid "Prefer the 5 GHz Wi-Fi band"
+msgstr "Preferir a banda de 5 GHz do Wi-Fi"
+
+msgid "Lowest Wi-Fi roaming"
+msgstr "Roaming do Wi-Fi no mínimo"
+
+msgid "Stop uploading updates to PCs on the internet"
+msgstr "Parar de enviar atualizações para PCs na internet"
+
+msgid "The network card tells the CPU about each packet as it arrives instead of holding a few to report together. That saves up to a fraction of a millisecond per packet. The connection drops for a few seconds while the adapter restarts."
+msgstr "A placa de rede avisa a CPU de cada pacote assim que ele chega, em vez de juntar alguns para avisar de uma vez. Isso poupa até uma fração de milissegundo por pacote. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "The cable link stops dozing between packets, so it never has to wake up before sending. Covers the standard setting and Realtek's Green Ethernet. The connection drops for a few seconds while the adapter restarts."
+msgstr "O link do cabo para de cochilar entre pacotes, então nunca precisa acordar antes de enviar. Cobre o ajuste padrão e o Green Ethernet da Realtek. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "Incoming traffic is spread over several CPU cores instead of one, so a fast download can't max out a single core and slow down everything behind it. The connection drops for a few seconds while the adapter restarts."
+msgstr "O tráfego que chega é dividido entre vários núcleos da CPU em vez de um só, então um download rápido não satura um núcleo e não atrasa tudo o que vem atrás. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "Unticks \"Allow the computer to turn off this device to save power\", so the adapter doesn't drop off after the PC idles or wakes from sleep."
+msgstr "Desmarca \"Permitir que o computador desligue este dispositivo para economizar energia\", para o adaptador não sumir depois de o PC ficar parado ou voltar da suspensão."
+
+msgid "Turns off Wi-Fi power saving on battery too. Plugged in, Windows already runs Wi-Fi at full power. With power saving the adapter naps between packets, which shows up as ping spikes."
+msgstr "Desliga a economia de energia do Wi-Fi também na bateria. Na tomada, o Windows já usa o Wi-Fi na potência máxima. Com a economia ligada o adaptador cochila entre pacotes, e isso aparece como picos de ping."
+
+msgid "The Intel Wi-Fi card joins your router's 5 GHz band whenever it can, which is faster and less crowded than 2.4 GHz. The connection drops for a few seconds while the adapter restarts."
+msgstr "A placa Wi-Fi Intel entra na banda de 5 GHz do roteador sempre que pode, que é mais rápida e menos congestionada que a de 2,4 GHz. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "The Intel Wi-Fi card only looks for another access point when the signal is very weak. Each search stalls the connection for a moment. For PCs that stay in one place. The connection drops for a few seconds while the adapter restarts."
+msgstr "A placa Wi-Fi Intel só procura outro ponto de acesso quando o sinal está muito fraco. Cada busca trava a conexão por um instante. Para PCs que ficam sempre no mesmo lugar. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "Windows is set to send updates to other PCs on the internet, which fills your upload and lags everything else. This keeps the sharing to your local network, the Windows default."
+msgstr "O Windows está configurado para enviar atualizações a outros PCs na internet, o que enche o seu upload e atrasa todo o resto. Isto deixa o compartilhamento só na sua rede local, o padrão do Windows."
+
+msgid "More CPU time during big downloads, since every packet interrupts the CPU."
+msgstr "Mais uso de CPU em downloads grandes, porque cada pacote interrompe a CPU."
+
+msgid "The network card draws a little more power."
+msgstr "A placa de rede gasta um pouco mais de energia."
+
+msgid "A little more battery use while the PC sleeps."
+msgstr "Um pouco mais de bateria gasta enquanto o PC está suspenso."
+
+msgid "Shorter battery life on Wi-Fi."
+msgstr "A bateria dura menos no Wi-Fi."
+
+msgid "5 GHz reaches less far through walls. If the signal gets weak in some room, undo this."
+msgstr "O 5 GHz alcança menos através de paredes. Se o sinal ficar fraco em algum cômodo, desfaça isto."
+
+msgid "Carried around, the laptop stays on a far access point longer before it switches."
+msgstr "Se o notebook anda pela casa, ele fica mais tempo num ponto de acesso longe antes de trocar."

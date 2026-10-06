@@ -1192,6 +1192,7 @@ impl App {
         tweaks.set_performance(ModelRc::new(VecModel::from(section(Section::Performance))));
         tweaks.set_games(ModelRc::new(VecModel::from(section(Section::Games))));
         tweaks.set_internet(ModelRc::new(VecModel::from(section(Section::Internet))));
+        tweaks.set_network(ModelRc::new(VecModel::from(section(Section::Network))));
         tweaks.set_input(ModelRc::new(VecModel::from(section(Section::Input))));
         tweaks.set_storage(ModelRc::new(VecModel::from(section(Section::Storage))));
         tweaks.set_background(ModelRc::new(VecModel::from(section(Section::Background))));

@@ -7,10 +7,10 @@
 
 use std::cell::Cell;
 
-use windows::Win32::Foundation::{HLOCAL, LocalFree};
+use windows::Win32::Foundation::{HLOCAL, LocalFree, WIN32_ERROR};
 use windows::Win32::System::Power::{
-    GetPwrCapabilities, PowerGetActiveScheme, PowerReadACValueIndex, PowerSetActiveScheme,
-    PowerWriteACValueIndex, SYSTEM_POWER_CAPABILITIES,
+    GetPwrCapabilities, PowerGetActiveScheme, PowerReadACValueIndex, PowerReadDCValueIndex,
+    PowerSetActiveScheme, PowerWriteACValueIndex, PowerWriteDCValueIndex, SYSTEM_POWER_CAPABILITIES,
 };
 use windows::Win32::System::Registry::HKEY;
 use windows::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory;
@@ -84,6 +84,8 @@ const PROCTHROTTLEMIN: GUID = GUID::from_u128(0x893dee8e_2bef_41e0_89c6_b55d0929
 const PERFBOOSTMODE: GUID = GUID::from_u128(0xbe337238_0d82_4146_a960_4f3749d470c7);
 const ASPM: GUID = GUID::from_u128(0xee12f906_d277_404b_b6da_e5fa1a576df5);
 const USB_SUSPEND: GUID = GUID::from_u128(0x48e6b7a6_50f5_4782_a5d4_53bb8f07e226);
+const SUB_WIRELESS: GUID = GUID::from_u128(0x19cbb8fa_5279_450e_9fac_8a3d5fedd0c1);
+const WIFI_POWER_SAVING: GUID = GUID::from_u128(0x12bbebe6_58d6_4636_95bb_3217ef867c1a);
 
 fn active_scheme() -> Result<GUID> {
     unsafe {
@@ -265,6 +267,67 @@ power_tweak!(
     0,
     1
 );
+
+// Wi-Fi power saving, on battery too: plugged in, the plans already run Wi-Fi at full
+// power, and on battery is where its naps show up as ping spikes. 0 is Maximum
+// Performance; Balanced uses 2 on battery.
+
+fn wifi_power() -> Result<(u32, u32)> {
+    let scheme = target_scheme()?;
+    let (subgroup, setting): (*const GUID, *const GUID) = (&SUB_WIRELESS, &WIFI_POWER_SAVING);
+    let (mut ac, mut dc) = (0, 0);
+    unsafe {
+        PowerReadACValueIndex(None, Some(&scheme), Some(subgroup), Some(setting), &mut ac).ok()?;
+        WIN32_ERROR(PowerReadDCValueIndex(None, Some(&scheme), Some(subgroup), Some(setting), &mut dc)).ok()?;
+    }
+    Ok((ac, dc))
+}
+
+fn set_wifi_power(ac: u32, dc: u32) -> Result<()> {
+    let scheme = target_scheme()?;
+    let (subgroup, setting): (*const GUID, *const GUID) = (&SUB_WIRELESS, &WIFI_POWER_SAVING);
+    unsafe {
+        PowerWriteACValueIndex(None, &scheme, Some(subgroup), Some(setting), ac).ok()?;
+        WIN32_ERROR(PowerWriteDCValueIndex(None, &scheme, Some(subgroup), Some(setting), dc)).ok()?;
+        if scheme == active_scheme()? {
+            PowerSetActiveScheme(None, Some(&scheme)).ok()?;
+        }
+    }
+    Ok(())
+}
+
+pub fn shows_wifi_power() -> bool {
+    crate::net::uses_wifi() || crate::settings::load_changes().iter().any(|c| c.id == "wifi-max-performance")
+}
+
+pub fn wifi_full_power() -> Result<bool> {
+    Ok(wifi_power()? == (0, 0))
+}
+
+pub fn set_wifi_full_power() -> Saved {
+    let (ac, dc) = wifi_power()?;
+    set_wifi_power(0, 0)?;
+    Ok(Some(format!("{ac},{dc}")))
+}
+
+pub fn restore_wifi_power(previous: Option<&str>) -> Result<()> {
+    let Some((ac, dc)) = previous.and_then(|text| text.split_once(',')) else { return Ok(()) };
+    match (unsaved(ac), unsaved(dc)) {
+        (Some(ac), Some(dc)) => set_wifi_power(ac, dc),
+        _ => Ok(()),
+    }
+}
+
+pub fn reset_wifi_power() -> Result<()> {
+    set_wifi_power(0, 2)
+}
+
+/// Laptops, and the odd desktop on a UPS that reports itself as a battery.
+pub fn has_battery() -> bool {
+    let mut caps = SYSTEM_POWER_CAPABILITIES::default();
+    let read = unsafe { GetPwrCapabilities(&mut caps) };
+    read && caps.SystemBatteriesPresent
+}
 
 // Memory integrity (HVCI). Missing means it was never turned on, unless a policy or the
 // firmware did, which the running services tell.

@@ -45,6 +45,7 @@ export global Tweaks {
     in property <[TweakRow]> performance;
     in property <[TweakRow]> games;
     in property <[TweakRow]> internet;
+    in property <[TweakRow]> network;
     in property <[TweakRow]> input;
     in property <[TweakRow]> storage;
     in property <[TweakRow]> background;
@@ -92,6 +93,14 @@ export global TweakText {
         @tr("Renew the IP address"),
         @tr("Reset the network stack"),
         @tr("Change the DNS servers"),
+        @tr("Turn off Interrupt Moderation"),
+        @tr("Turn off Energy Efficient Ethernet"),
+        @tr("Turn on Receive Side Scaling"),
+        @tr("Keep Windows from turning off the network adapter"),
+        @tr("Wi-Fi at full power"),
+        @tr("Prefer the 5 GHz Wi-Fi band"),
+        @tr("Lowest Wi-Fi roaming"),
+        @tr("Stop uploading updates to PCs on the internet"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -124,6 +133,14 @@ export global TweakText {
         @tr("Asks the router for the address lease again. Fixes a connection that shows no internet after the router restarted."),
         @tr("Puts Winsock and TCP/IP back to how Windows installs them. For a connection that nothing else fixes."),
         @tr("The connection in use asks the chosen service for every name, through its main and backup servers, and over IPv6 too when the connection has it. Takes effect at once."),
+        @tr("The network card tells the CPU about each packet as it arrives instead of holding a few to report together. That saves up to a fraction of a millisecond per packet. The connection drops for a few seconds while the adapter restarts."),
+        @tr("The cable link stops dozing between packets, so it never has to wake up before sending. Covers the standard setting and Realtek's Green Ethernet. The connection drops for a few seconds while the adapter restarts."),
+        @tr("Incoming traffic is spread over several CPU cores instead of one, so a fast download can't max out a single core and slow down everything behind it. The connection drops for a few seconds while the adapter restarts."),
+        @tr("Unticks \"Allow the computer to turn off this device to save power\", so the adapter doesn't drop off after the PC idles or wakes from sleep."),
+        @tr("Turns off Wi-Fi power saving on battery too. Plugged in, Windows already runs Wi-Fi at full power. With power saving the adapter naps between packets, which shows up as ping spikes."),
+        @tr("The Intel Wi-Fi card joins your router's 5 GHz band whenever it can, which is faster and less crowded than 2.4 GHz. The connection drops for a few seconds while the adapter restarts."),
+        @tr("The Intel Wi-Fi card only looks for another access point when the signal is very weak. Each search stalls the connection for a moment. For PCs that stay in one place. The connection drops for a few seconds while the adapter restarts."),
+        @tr("Windows is set to send updates to other PCs on the internet, which fills your upload and lags everything else. This keeps the sharing to your local network, the Windows default."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -156,6 +173,14 @@ export global TweakText {
         @tr("The connection can drop for a few seconds."),
         @tr("IP addresses and DNS servers set by hand are cleared, and VPN or firewall software may need to be reinstalled."),
         @tr("Quad9 blocks known malicious sites and AdGuard blocks ads, so a site can fail to load with them. On public Wi-Fi with a sign-in page, undo this if the page doesn't open."),
+        @tr("More CPU time during big downloads, since every packet interrupts the CPU."),
+        @tr("The network card draws a little more power."),
+        "",
+        @tr("A little more battery use while the PC sleeps."),
+        @tr("Shorter battery life on Wi-Fi."),
+        @tr("5 GHz reaches less far through walls. If the signal gets weak in some room, undo this."),
+        @tr("Carried around, the laptop stays on a far access point longer before it switches."),
+        "",
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }

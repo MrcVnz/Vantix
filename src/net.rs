@@ -53,6 +53,7 @@ pub struct Connection {
     /// Cable, Wi-Fi or a PPPoE dial-up. VPN and virtual adapters get their DNS from
     /// whatever made them, so Vantix leaves those alone.
     pub physical: bool,
+    pub wifi: bool,
     /// Has a global IPv6 address, so IPv6 DNS servers can be reached through it.
     pub ipv6: bool,
 }
@@ -126,6 +127,7 @@ pub fn adapters() -> Vec<Connection> {
                     dns,
                     dhcp: unsafe { a.Anonymous2.Flags } & DHCP_ENABLED != 0,
                     physical: matches!(a.IfType, ETHERNET | WIFI | PPP),
+                    wifi: a.IfType == WIFI,
                     ipv6,
                 });
             }
@@ -1021,6 +1023,363 @@ fn random() -> u64 {
     RandomState::new().hash_one(Instant::now())
 }
 
+// Driver settings of the adapter, the ones in its Advanced tab. A keyword is only touched
+// when the driver lists it and takes the value, and the adapter restarts so the driver
+// reads it, which drops the connection for a few seconds. The adapter's GUID goes first
+// in what's saved, so undo finds the same adapter after a restart or with another one in use.
+
+const NET_CLASS: &str = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}";
+
+pub struct Property {
+    keyword: &'static str,
+    /// Values that count as on; the first is the one written.
+    on: &'static [&'static str],
+    off: &'static str,
+}
+
+pub struct AdapterSetting {
+    id: &'static str,
+    /// `Some(true)` only on Wi-Fi, `Some(false)` only on cable.
+    wifi: Option<bool>,
+    properties: &'static [Property],
+    /// Offered only while off, since turning it off would only make things worse.
+    one_way: bool,
+}
+
+pub const INTERRUPT_MODERATION: AdapterSetting = AdapterSetting {
+    id: "interrupt-moderation-off",
+    wifi: Some(false),
+    properties: &[Property { keyword: "*InterruptModeration", on: &["0"], off: "1" }],
+    one_way: false,
+};
+
+/// Realtek ships its own switches next to the standard one, and any of them left on
+/// keeps the link dropping into low power between packets.
+pub const EEE: AdapterSetting = AdapterSetting {
+    id: "eee-off",
+    wifi: Some(false),
+    properties: &[
+        Property { keyword: "*EEE", on: &["0"], off: "1" },
+        Property { keyword: "AdvancedEEE", on: &["0"], off: "1" },
+        Property { keyword: "EnableGreenEthernet", on: &["0"], off: "1" },
+        Property { keyword: "GreenEthernet", on: &["0"], off: "1" },
+    ],
+    one_way: false,
+};
+
+pub const RSS: AdapterSetting = AdapterSetting {
+    id: "rss-on",
+    wifi: None,
+    properties: &[Property { keyword: "*RSS", on: &["1"], off: "0" }],
+    one_way: true,
+};
+
+/// Intel's keywords: 2 prefers 5 GHz, 3 prefers 6 GHz on the drivers that have it.
+pub const WIFI_BAND: AdapterSetting = AdapterSetting {
+    id: "wifi-band",
+    wifi: Some(true),
+    properties: &[Property { keyword: "RoamingPreferredBandType", on: &["2", "3"], off: "0" }],
+    one_way: false,
+};
+
+/// Intel's 0 to 4, 2 being the default.
+pub const WIFI_ROAMING: AdapterSetting = AdapterSetting {
+    id: "wifi-roaming-low",
+    wifi: Some(true),
+    properties: &[Property { keyword: "RoamAggressiveness", on: &["0"], off: "2" }],
+    one_way: false,
+};
+
+/// The adapter's driver key, found by its GUID.
+fn class_key(guid: &str) -> Option<String> {
+    let id = |key: &str| reg::get_string(reg::HKEY_LOCAL_MACHINE, key, "NetCfgInstanceId").ok().flatten();
+    reg::subkeys(reg::HKEY_LOCAL_MACHINE, NET_CLASS)
+        .into_iter()
+        .map(|sub| format!(r"{NET_CLASS}\{sub}"))
+        .find(|key| id(key).is_some_and(|id| id.eq_ignore_ascii_case(guid)))
+}
+
+/// Whether the driver lists the keyword and takes `value` for it.
+fn accepts(key: &str, keyword: &str, value: &str) -> bool {
+    let params = format!(r"{key}\Ndi\Params\{keyword}");
+    let choices = format!(r"{params}\enum");
+    reg::key_exists(reg::HKEY_LOCAL_MACHINE, &params)
+        && (!reg::key_exists(reg::HKEY_LOCAL_MACHINE, &choices)
+            || reg::get_string(reg::HKEY_LOCAL_MACHINE, &choices, value).is_ok_and(|v| v.is_some()))
+}
+
+/// What the driver uses: the value set, or its default when none is.
+fn property(key: &str, keyword: &str) -> Option<String> {
+    let params = format!(r"{key}\Ndi\Params\{keyword}");
+    reg::get_string(reg::HKEY_LOCAL_MACHINE, key, keyword)
+        .ok()
+        .flatten()
+        .or_else(|| reg::get_string(reg::HKEY_LOCAL_MACHINE, &params, "Default").ok().flatten())
+}
+
+/// The GUID a journal entry was saved with, when the tweak is in the journal.
+fn journal_guid(id: &str) -> Option<String> {
+    let previous = crate::settings::load_changes().into_iter().find(|c| c.id == id)?.previous?;
+    previous.split('|').next().map(String::from)
+}
+
+fn in_journal(id: &str) -> bool {
+    crate::settings::load_changes().iter().any(|c| c.id == id)
+}
+
+/// The adapter Vantix changed, or else the one in use if it's the right kind. Returns
+/// its GUID and driver key.
+fn setting_adapter(id: &str, wifi: Option<bool>) -> Option<(String, String)> {
+    let guid = match journal_guid(id) {
+        Some(guid) => guid,
+        None => dns_adapter().filter(|a| wifi.is_none_or(|w| w == a.wifi))?.guid,
+    };
+    let key = class_key(&guid)?;
+    Some((guid, key))
+}
+
+fn changed_adapter(id: &str, wifi: Option<bool>) -> windows::core::Result<(String, String)> {
+    setting_adapter(id, wifi).ok_or_else(|| dns_error("no adapter to change"))
+}
+
+fn present(setting: &AdapterSetting, key: &str) -> Vec<&'static Property> {
+    setting.properties.iter().filter(|p| accepts(key, p.keyword, p.on[0])).collect()
+}
+
+fn setting_on(setting: &AdapterSetting, key: &str) -> bool {
+    let properties = present(setting, key);
+    !properties.is_empty()
+        && properties.iter().all(|p| property(key, p.keyword).is_some_and(|v| p.on.contains(&v.as_str())))
+}
+
+fn shows_setting(setting: &AdapterSetting) -> bool {
+    in_journal(setting.id)
+        || setting_adapter(setting.id, setting.wifi).is_some_and(|(_, key)| {
+            !present(setting, &key).is_empty() && !(setting.one_way && setting_on(setting, &key))
+        })
+}
+
+fn read_setting(setting: &AdapterSetting) -> windows::core::Result<bool> {
+    Ok(setting_adapter(setting.id, setting.wifi).is_some_and(|(_, key)| setting_on(setting, &key)))
+}
+
+/// Saved as "{guid}|keyword=old|keyword=-", "-" for a value that wasn't set.
+fn apply_setting(setting: &AdapterSetting) -> windows::core::Result<Option<String>> {
+    let (guid, key) = changed_adapter(setting.id, setting.wifi)?;
+    let mut saved = vec![guid.clone()];
+    for p in present(setting, &key) {
+        if property(&key, p.keyword).is_some_and(|v| p.on.contains(&v.as_str())) {
+            continue;
+        }
+        let written = reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword).and_then(|old| {
+            saved.push(format!("{}={}", p.keyword, old.as_deref().unwrap_or("-")));
+            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, p.on[0])
+        });
+        // Nothing reaches the journal on an error, so what was already written goes back.
+        if let Err(e) = written {
+            let _ = revert_setting(Some(&saved.join("|")));
+            return Err(e);
+        }
+    }
+    let saved = saved.join("|");
+    if let Err(e) = restart_adapter(&guid) {
+        let _ = revert_setting(Some(&saved));
+        return Err(e);
+    }
+    Ok(Some(saved))
+}
+
+fn revert_setting(previous: Option<&str>) -> windows::core::Result<()> {
+    let mut parts = previous.unwrap_or_default().split('|');
+    let guid = parts.next().unwrap_or_default();
+    // An adapter that was removed has nothing left to put back.
+    let Some(key) = class_key(guid) else { return Ok(()) };
+    for (keyword, value) in parts.filter_map(|pair| pair.split_once('=')) {
+        match value {
+            "-" => reg::delete_value(reg::HKEY_LOCAL_MACHINE, &key, keyword)?,
+            value => reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, keyword, value)?,
+        }
+    }
+    restart_adapter(guid)
+}
+
+fn reset_setting(setting: &AdapterSetting) -> windows::core::Result<()> {
+    let (guid, key) = changed_adapter(setting.id, setting.wifi)?;
+    for p in present(setting, &key) {
+        if accepts(&key, p.keyword, p.off) {
+            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, p.off)?;
+        }
+    }
+    restart_adapter(&guid)
+}
+
+/// The driver only reads its settings when the adapter starts. One that's disabled is
+/// left that way and reads them whenever it's turned back on. Waits for the link to come
+/// back, so whatever reads the connection next finds it; an unplugged cable never does.
+fn restart_adapter(guid: &str) -> windows::core::Result<()> {
+    let was_up = adapters().iter().any(|a| a.guid.eq_ignore_ascii_case(guid) && a.up);
+    let quoted = guid.replace('\'', "");
+    tweaks::powershell(&format!(
+        "$a = Get-NetAdapter | Where-Object InterfaceGuid -eq '{quoted}'; \
+         if ($a -and $a.Status -ne 'Disabled') {{ \
+         $a | Restart-NetAdapter -Confirm:$false -ErrorAction Stop }}"
+    ))?;
+    let start = Instant::now();
+    while was_up && start.elapsed() < Duration::from_secs(20) {
+        if adapters().iter().any(|a| a.guid.eq_ignore_ascii_case(guid) && a.up && a.gateway.is_some()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Ok(())
+}
+
+macro_rules! adapter_tweak {
+    ($shown:ident, $read:ident, $apply:ident, $revert:ident, $reset:ident, $setting:expr) => {
+        pub fn $shown() -> bool {
+            shows_setting(&$setting)
+        }
+        pub fn $read() -> windows::core::Result<bool> {
+            read_setting(&$setting)
+        }
+        pub fn $apply() -> windows::core::Result<Option<String>> {
+            apply_setting(&$setting)
+        }
+        pub fn $revert(previous: Option<&str>) -> windows::core::Result<()> {
+            revert_setting(previous)
+        }
+        pub fn $reset() -> windows::core::Result<()> {
+            reset_setting(&$setting)
+        }
+    };
+}
+
+adapter_tweak!(
+    shows_moderation,
+    moderation_off,
+    disable_moderation,
+    restore_moderation,
+    reset_moderation,
+    INTERRUPT_MODERATION
+);
+adapter_tweak!(shows_eee, eee_off, disable_eee, restore_eee, reset_eee, EEE);
+adapter_tweak!(shows_rss, rss_on, enable_rss, restore_rss, reset_rss, RSS);
+adapter_tweak!(shows_wifi_band, wifi_band, set_wifi_band, restore_wifi_band, reset_wifi_band, WIFI_BAND);
+adapter_tweak!(
+    shows_wifi_roaming,
+    wifi_roaming_low,
+    set_wifi_roaming,
+    restore_wifi_roaming,
+    reset_wifi_roaming,
+    WIFI_ROAMING
+);
+
+// "Allow the computer to turn off this device to save power". Bit 0x10 unticks it, 0x08
+// with it stops the wake-up handling Windows adds on top. Windows only uses it on laptops
+// and on USB adapters, so desktops with a card on the board don't see the tweak.
+
+const ADAPTER_SLEEP: &str = "adapter-sleep-off";
+const NO_POWER_OFF: u32 = 0x18;
+
+fn shows_adapter_sleep_on(key: &str) -> bool {
+    let usb = reg::get_string(reg::HKEY_LOCAL_MACHINE, key, "DeviceInstanceID")
+        .ok()
+        .flatten()
+        .is_some_and(|id| id.starts_with(r"USB\"));
+    usb || crate::boost::has_battery()
+}
+
+pub fn shows_adapter_sleep() -> bool {
+    in_journal(ADAPTER_SLEEP)
+        || setting_adapter(ADAPTER_SLEEP, None).is_some_and(|(_, key)| shows_adapter_sleep_on(&key))
+}
+
+pub fn adapter_sleep_off() -> windows::core::Result<bool> {
+    let Some((_, key)) = setting_adapter(ADAPTER_SLEEP, None) else { return Ok(false) };
+    let value = reg::get_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities")?;
+    Ok(value.is_some_and(|v| v & NO_POWER_OFF == NO_POWER_OFF))
+}
+
+/// Saved as "{guid}|old", "-" when the value wasn't set.
+pub fn disable_adapter_sleep() -> windows::core::Result<Option<String>> {
+    let (guid, key) = changed_adapter(ADAPTER_SLEEP, None)?;
+    let old = reg::get_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities")?;
+    reg::set_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities", old.unwrap_or(0) | NO_POWER_OFF)?;
+    Ok(Some(format!("{guid}|{}", old.map_or("-".into(), |v| v.to_string()))))
+}
+
+pub fn restore_adapter_sleep(previous: Option<&str>) -> windows::core::Result<()> {
+    let (guid, old) = previous.unwrap_or_default().split_once('|').unwrap_or_default();
+    let Some(key) = class_key(guid) else { return Ok(()) };
+    match old.parse() {
+        Ok(value) => reg::set_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities", value),
+        Err(_) => reg::delete_value(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities"),
+    }
+}
+
+pub fn reset_adapter_sleep() -> windows::core::Result<()> {
+    let (_, key) = changed_adapter(ADAPTER_SLEEP, None)?;
+    let value = reg::get_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities")?.unwrap_or(0);
+    reg::set_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities", value & !NO_POWER_OFF)
+}
+
+pub fn uses_wifi() -> bool {
+    connection().is_some_and(|c| c.wifi)
+}
+
+// Delivery Optimization can send Windows and Store updates to PCs on the internet, which
+// fills the upload and lags everything else on the line. Only offered when it's set to
+// do that; the Windows default shares with the local network alone, which this keeps.
+// A policy means the PC is managed, so the setting is left alone then.
+
+const DO_SETTINGS: &str = r"S-1-5-20\Software\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Settings";
+const DO_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization";
+const DO_UPLOAD: &str = "do-upload-off";
+/// 2 shares within a group that can span the internet, 3 with anyone on it.
+const DO_INTERNET: [u32; 2] = [2, 3];
+const DO_LAN: u32 = 1;
+
+fn do_mode() -> windows::core::Result<Option<u32>> {
+    reg::get_dword(windows::Win32::System::Registry::HKEY_USERS, DO_SETTINGS, "DownloadMode")
+}
+
+fn do_managed() -> bool {
+    reg::get_dword(reg::HKEY_LOCAL_MACHINE, DO_POLICY, "DODownloadMode").is_ok_and(|v| v.is_some())
+}
+
+pub fn shows_do_upload() -> bool {
+    in_journal(DO_UPLOAD) || !do_managed() && !do_upload_off().unwrap_or(true)
+}
+
+pub fn do_upload_off() -> windows::core::Result<bool> {
+    Ok(!do_mode()?.is_some_and(|m| DO_INTERNET.contains(&m)))
+}
+
+/// The service reads the setting when it starts and starts again on its own when needed.
+fn set_do_mode(mode: Option<u32>) -> windows::core::Result<()> {
+    let root = windows::Win32::System::Registry::HKEY_USERS;
+    match mode {
+        Some(mode) => reg::set_dword(root, DO_SETTINGS, "DownloadMode", mode)?,
+        None => reg::delete_value(root, DO_SETTINGS, "DownloadMode")?,
+    }
+    let _ = tweaks::run("sc.exe", &["stop", "DoSvc"]);
+    Ok(())
+}
+
+pub fn disable_do_upload() -> windows::core::Result<Option<String>> {
+    let old = do_mode()?;
+    set_do_mode(Some(DO_LAN))?;
+    Ok(Some(old.map_or("-".into(), |v| v.to_string())))
+}
+
+pub fn restore_do_upload(previous: Option<&str>) -> windows::core::Result<()> {
+    set_do_mode(previous.and_then(|v| v.parse().ok()))
+}
+
+pub fn reset_do_upload() -> windows::core::Result<()> {
+    set_do_mode(Some(3))
+}
+
 // Traffic per program, from the Microsoft-Windows-Kernel-Network ETW provider: it sees
 // TCP and UDP, so games, voice chat and QUIC in browsers count too. A real-time session
 // outlives the process that started it, so it's always stopped by name before a start
@@ -1219,6 +1578,24 @@ mod tests {
             let times: Vec<_> = (0..5).map(|_| icmp.ping(target, Duration::from_secs(1))).collect();
             println!("{target}: {times:.2?}");
         }
+    }
+
+    /// Restarts the adapter in use twice, so the connection drops for a few seconds each
+    /// time: `cargo test moderation_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn moderation_round_trip() {
+        let (_, key) = setting_adapter(INTERRUPT_MODERATION.id, Some(false)).expect("no wired adapter");
+        let original = reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, "*InterruptModeration").unwrap();
+        let was_off = moderation_off().unwrap();
+        let start = Instant::now();
+        let previous = disable_moderation().unwrap();
+        println!("saved {previous:?} in {:.1?}", start.elapsed());
+        assert!(moderation_off().unwrap());
+        restore_moderation(previous.as_deref()).unwrap();
+        assert_eq!(reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, "*InterruptModeration").unwrap(), original);
+        assert_eq!(moderation_off().unwrap(), was_off);
+        println!("connection: {:?}", connection().map(|c| c.gateway));
     }
 
     /// `cargo test net_dns -- --ignored --nocapture`

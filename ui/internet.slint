@@ -642,8 +642,8 @@ export component InternetPage inherits VerticalLayout {
         VerticalLayout {
             alignment: center;
             Segmented {
-                width: 480px;
-                options: [@tr("Ping"), @tr("Bufferbloat"), @tr("DNS"), @tr("Network use"), @tr("Repair")];
+                width: 540px;
+                options: [@tr("Ping"), @tr("Bufferbloat"), @tr("DNS"), @tr("Network use"), @tr("Tweaks"), @tr("Repair")];
                 selected <=> Net.tab;
             }
         }
@@ -654,6 +654,17 @@ export component InternetPage inherits VerticalLayout {
     if Net.tab == 2: DnsTab { vertical-stretch: 1; }
     if Net.tab == 3: UsageTab { vertical-stretch: 1; }
     if Net.tab == 4: TweakList {
+        vertical-stretch: 1;
+        rows: Tweaks.network;
+        if Tweaks.network.length == 0: Card {
+            Text {
+                text: @tr("Nothing to change on this connection: its adapter has none of these settings, or they're already where they should be.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+    }
+    if Net.tab == 5: TweakList {
         vertical-stretch: 1;
         rows: Tweaks.internet;
     }
