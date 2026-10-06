@@ -54,6 +54,8 @@ export global Job {
     in property <bool> baseline;
     /// System Restore is off, so there won't be a point.
     in property <bool> protection-off;
+    /// Something that stays on until turned off, unlike a one-off action such as a retrim.
+    in property <bool> toggle;
     /// Free space a finished change gave back.
     in property <string> freed;
 
@@ -118,9 +120,12 @@ export component JobSheet inherits Rectangle {
                                 ? (Job.undo && Job.tweak < 0 ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?")
                                     : Job.reset ? @tr("Turn this tweak off?") : @tr("Apply this change?"))
                             : Job.state == JobState.creating-point ? @tr("Creating a restore point")
-                            : Job.state == JobState.applying ? @tr("Applying changes")
+                            : Job.state == JobState.applying
+                                ? (Job.undo ? @tr("Undoing changes") : Job.reset ? @tr("Turning off") : @tr("Applying changes"))
                             : Job.state == JobState.point-failed ? @tr("Couldn't create the restore point")
-                            : Job.state == JobState.done ? @tr("Done")
+                            : Job.state == JobState.done
+                                ? (Job.undo && Job.tweak < 0 ? @tr("Every change undone") : Job.undo ? @tr("Change undone")
+                                    : Job.reset ? @tr("Turned off") : Job.toggle ? @tr("Applied") : @tr("Done"))
                             : @tr("Something went wrong");
                         color: Theme.text;
                         font-size: 16px;

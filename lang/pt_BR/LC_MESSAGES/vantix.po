@@ -267,11 +267,23 @@ msgstr "Criando ponto de restauração"
 msgid "Applying changes"
 msgstr "Aplicando alterações"
 
+msgid "Undoing changes"
+msgstr "Desfazendo alterações"
+
+msgid "Turning off"
+msgstr "Desativando"
+
 msgid "Couldn't create the restore point"
 msgstr "Não foi possível criar o ponto de restauração"
 
 msgid "Done"
 msgstr "Concluído"
+
+msgid "Every change undone"
+msgstr "Todas as alterações foram desfeitas"
+
+msgid "Change undone"
+msgstr "Alteração desfeita"
 
 msgid "Something went wrong"
 msgstr "Algo deu errado"

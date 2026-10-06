@@ -797,6 +797,7 @@ impl App {
             job.set_with_point(false);
             job.set_baseline(false);
             job.set_protection_off(false);
+            job.set_toggle(false);
             job.set_elapsed(0);
             job.set_state(state);
         });
@@ -1064,7 +1065,17 @@ impl App {
         self.show_job(JobState::Applying, &subject, true);
         let slow = work.iter().any(|(i, _)| CATALOG[*i].slow);
         self.with_ui(|ui| {
-            ui.global::<Job>().set_slow(slow);
+            // The progress and done titles say which way the change went.
+            let job = ui.global::<Job>();
+            let index = match ask {
+                Ask::Apply(i) | Ask::Reset(i) | Ask::Undo(i) => Some(i),
+                Ask::UndoAll => None,
+            };
+            job.set_tweak(index.map_or(-1, |i| i as i32));
+            job.set_undo(matches!(ask, Ask::Undo(_) | Ask::UndoAll));
+            job.set_reset(matches!(ask, Ask::Reset(_)));
+            job.set_toggle(index.is_some_and(|i| matches!(CATALOG[i].kind, Kind::Toggle { .. })));
+            job.set_slow(slow);
             self.show_tweaks(ui);
         });
 
