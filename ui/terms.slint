@@ -1,19 +1,59 @@
 import { Theme, Icons, Icon, Button } from "theme.slint";
 import { CheckBox } from "std-widgets.slint";
 
+export struct TermsLine {
+    words: [string],
+    /// Left aligned instead of spread to the edges.
+    last: bool,
+}
+
+export struct TermsParagraph {
+    lines: [TermsLine],
+}
+
 export global Terms {
     /// From the moment the window opens until the terms are accepted. Blocks the app.
     in property <bool> pending;
     /// Raised shortly after the window opens, until the terms are accepted.
     in property <bool> shown;
+    /// The paragraphs below, broken into justified lines by src/text.rs. Empty when the
+    /// font couldn't be read, and the text then wraps the normal way.
+    in property <[TermsParagraph]> justified;
+
+    out property <[string]> paragraphs: [
+        @tr("Vantix changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability."),
+        @tr("Before applying a system change Vantix creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible."),
+        @tr("You use Vantix at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use."),
+        @tr("If you don't agree, choose Decline and Vantix will close without changing anything."),
+    ];
+    /// Width the paragraphs get inside the sheet: 620 minus 2 x 30 and 2 x 20 of padding.
+    out property <length> line-width: 520px;
+    out property <length> font-size: 13px;
+
     callback accepted();
     callback declined();
 }
 
-component Paragraph inherits Text {
-    color: Theme.muted;
-    wrap: word-wrap;
-    font-size: 13px;
+component Paragraph inherits VerticalLayout {
+    in property <int> index;
+    in property <color> tint: Theme.muted;
+
+    if Terms.justified.length == 0: Text {
+        text: Terms.paragraphs[root.index];
+        color: root.tint;
+        wrap: word-wrap;
+        font-size: Terms.font-size;
+    }
+    for line in Terms.justified[root.index].lines: HorizontalLayout {
+        alignment: line.last ? start : space-between;
+        // Only the last line uses it; the others get their gaps from space-between.
+        spacing: 3.5px;
+        for word in line.words: Text {
+            text: word;
+            color: root.tint;
+            font-size: Terms.font-size;
+        }
+    }
 }
 
 /// Covers the app until the terms are accepted. Declining quits without writing anything.
@@ -87,19 +127,13 @@ export component TermsSheet inherits Rectangle {
                     padding: 20px;
                     spacing: 14px;
 
+                    Paragraph { index: 0; }
+                    Paragraph { index: 1; }
                     Paragraph {
-                        text: @tr("Vantix changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability.");
+                        index: 2;
+                        tint: Theme.text;
                     }
-                    Paragraph {
-                        text: @tr("Before applying a system change Vantix creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible.");
-                    }
-                    Paragraph {
-                        text: @tr("You use Vantix at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use.");
-                        color: Theme.text;
-                    }
-                    Paragraph {
-                        text: @tr("If you don't agree, choose Decline and Vantix will close without changing anything.");
-                    }
+                    Paragraph { index: 3; }
                 }
             }
 

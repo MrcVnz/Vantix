@@ -4629,6 +4629,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "ttf-parser",
  "windows",
  "windows-link",
 ]

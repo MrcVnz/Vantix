@@ -291,3 +291,44 @@ export component Toggle inherits Rectangle {
         }
     }
 }
+
+/// Hover hint. Owners place it above themselves, so it lands on parts of the page drawn
+/// before it and never ends up hidden behind later siblings.
+export component Tip inherits Rectangle {
+    in property <string> text;
+    in property <bool> shown;
+    in property <length> widest: 280px;
+
+    width: min(label.preferred-width + 24px, root.widest);
+    height: content.preferred-height;
+    y: -self.height - 6px;
+    background: Theme.hover;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    opacity: 0;
+
+    states [
+        visible when root.shown: {
+            opacity: 1;
+            in {
+                animate opacity { delay: 400ms; duration: 120ms; }
+            }
+            out {
+                animate opacity { duration: 80ms; }
+            }
+        }
+    ]
+
+    content := VerticalLayout {
+        padding: 8px;
+        padding-left: 12px;
+        padding-right: 12px;
+        label := Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}

@@ -1,4 +1,4 @@
-import { Theme, Icons, Icon, Card, Button, Segmented, Chip } from "theme.slint";
+import { Theme, Icons, Icon, Card, Button, Segmented, Chip, Tip } from "theme.slint";
 import { ListView, Slider, SpinBox } from "std-widgets.slint";
 
 export enum CleanState { idle, running, done }
@@ -166,35 +166,51 @@ component Composition inherits Rectangle {
     }
 }
 
-component Legend inherits HorizontalLayout {
+component Legend inherits Rectangle {
     in property <color> dot;
     in property <string> label;
     in property <string> value;
-    spacing: 8px;
+    /// What this part of memory is, shown on hover.
+    in property <string> hint;
 
-    VerticalLayout {
-        alignment: center;
-        Rectangle {
-            width: 8px;
-            height: 8px;
-            border-radius: 4px;
-            background: root.dot;
+    min-height: row.min-height;
+    preferred-height: row.preferred-height;
+
+    row := HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.dot;
+            }
+        }
+        Text {
+            text: root.label;
+            color: Theme.muted;
+            font-size: 12.5px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.value;
+            color: Theme.text;
+            font-size: 12.5px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            horizontal-stretch: 1;
         }
     }
-    Text {
-        text: root.label;
-        color: Theme.muted;
-        font-size: 12.5px;
-        vertical-alignment: center;
-    }
-    Text {
-        text: root.value;
-        color: Theme.text;
-        font-size: 12.5px;
-        font-weight: 600;
-        vertical-alignment: center;
-        horizontal-alignment: right;
-        horizontal-stretch: 1;
+
+    area := TouchArea {}
+
+    Tip {
+        x: 0;
+        text: root.hint;
+        shown: area.has-hover;
     }
 }
 
@@ -240,7 +256,7 @@ component LevelTile inherits Rectangle {
                 color: Theme.text;
                 font-weight: 600;
             }
-            Text {
+            detail-text := Text {
                 text: root.detail;
                 color: Theme.muted;
                 font-size: 12px;
@@ -264,6 +280,14 @@ component LevelTile inherits Rectangle {
     area := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+
+    // Only when the detail line is actually cut off.
+    Tip {
+        x: 0;
+        text: root.detail;
+        widest: root.width;
+        shown: area.has-hover && detail-text.preferred-width > detail-text.width;
     }
 }
 
@@ -363,10 +387,30 @@ export component MemoryPage inherits VerticalLayout {
                         }
                     }
                     Composition {}
-                    Legend { dot: Theme.accent; label: @tr("In use"); value: Memory.in-use; }
-                    Legend { dot: Theme.warn; label: @tr("Modified"); value: Memory.modified; }
-                    Legend { dot: Theme.info; label: @tr("Standby cache"); value: Memory.standby; }
-                    Legend { dot: Theme.border-strong; label: @tr("Free"); value: Memory.free; }
+                    Legend {
+                        dot: Theme.accent;
+                        label: @tr("In use");
+                        value: Memory.in-use;
+                        hint: @tr("Memory taken by open programs and Windows right now. It only comes back when something closes or frees it.");
+                    }
+                    Legend {
+                        dot: Theme.warn;
+                        label: @tr("Modified");
+                        value: Memory.modified;
+                        hint: @tr("Changed data that has to be written to disk first, to the page file or back to its own file, before this memory can be reused.");
+                    }
+                    Legend {
+                        dot: Theme.info;
+                        label: @tr("Standby cache");
+                        value: Memory.standby;
+                        hint: @tr("Files and programs Windows keeps in memory so they open faster next time. It's handed over instantly when a program needs it, so it counts as available.");
+                    }
+                    Legend {
+                        dot: Theme.border-strong;
+                        label: @tr("Free");
+                        value: Memory.free;
+                        hint: @tr("Memory holding nothing at all. Windows prefers to use it as cache, so a low number here is normal.");
+                    }
                 }
             }
 
@@ -380,10 +424,20 @@ export component MemoryPage inherits VerticalLayout {
                         font-size: 12px;
                         horizontal-stretch: 1;
                     }
-                    Text {
-                        text: @tr("Committed {}", Memory.commit);
-                        color: Theme.faint;
-                        font-size: 12px;
+                    Rectangle {
+                        width: commit-text.preferred-width;
+                        min-height: commit-text.preferred-height;
+                        commit-text := Text {
+                            text: @tr("Committed {}", Memory.commit);
+                            color: Theme.faint;
+                            font-size: 12px;
+                        }
+                        commit-area := TouchArea {}
+                        Tip {
+                            x: parent.width - self.width;
+                            text: @tr("Everything programs have reserved, counting RAM and the page file, against the most Windows can hand out: RAM plus the page file.");
+                            shown: commit-area.has-hover;
+                        }
                     }
                 }
                 Sparkline {

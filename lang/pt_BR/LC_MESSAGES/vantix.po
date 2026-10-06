@@ -553,3 +553,18 @@ msgstr[1] "{n} alterações passam a valer depois de reiniciar"
 
 msgid "Undo every change?"
 msgstr "Desfazer todas as alterações?"
+
+msgid "Memory taken by open programs and Windows right now. It only comes back when something closes or frees it."
+msgstr "Memória ocupada agora pelos programas abertos e pelo Windows. Ela só volta quando algo fecha ou libera essa memória."
+
+msgid "Changed data that has to be written to disk first, to the page file or back to its own file, before this memory can be reused."
+msgstr "Dados alterados que precisam ser gravados no disco antes, no arquivo de paginação ou no próprio arquivo, para essa memória poder ser reaproveitada."
+
+msgid "Files and programs Windows keeps in memory so they open faster next time. It's handed over instantly when a program needs it, so it counts as available."
+msgstr "Arquivos e programas que o Windows guarda na memória para abrirem mais rápido da próxima vez. É entregue na hora quando algum programa precisa, por isso conta como disponível."
+
+msgid "Memory holding nothing at all. Windows prefers to use it as cache, so a low number here is normal."
+msgstr "Memória sem nada dentro. O Windows prefere usá-la como cache, então é normal esse número ser baixo."
+
+msgid "Everything programs have reserved, counting RAM and the page file, against the most Windows can hand out: RAM plus the page file."
+msgstr "Tudo o que os programas já reservaram, somando RAM e arquivo de paginação, contra o máximo que o Windows consegue entregar: RAM mais o arquivo de paginação."

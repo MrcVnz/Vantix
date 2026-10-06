@@ -6,6 +6,7 @@ mod reg;
 mod restore;
 mod settings;
 mod system;
+mod text;
 mod tweaks;
 
 use std::cell::RefCell;
@@ -117,7 +118,10 @@ fn main() -> Result<(), slint::PlatformError> {
     if app.state.borrow().settings.terms_version < TERMS_VERSION {
         app.state.borrow_mut().terms_pending = true;
         app.open_window()?;
-        app.with_ui(|ui| ui.global::<Terms>().set_pending(true));
+        app.with_ui(|ui| {
+            ui.global::<Terms>().set_pending(true);
+            justify_terms(ui);
+        });
         let later = Rc::downgrade(&app);
         Timer::single_shot(Duration::from_millis(1500), move || {
             if let Some(app) = later.upgrade() {
@@ -1168,6 +1172,31 @@ fn style_when_ready<T: ComponentHandle + 'static>(component: slint::Weak<T>, att
             style_when_ready(component, attempt + 1);
         }
     });
+}
+
+/// Breaks the terms into justified lines, in whatever language the UI is in now.
+fn justify_terms(ui: &AppWindow) {
+    let terms = ui.global::<Terms>();
+    let (size, width) = (terms.get_font_size(), terms.get_line_width());
+    // A few pixels of slack for kerning, which the measurement leaves out.
+    let paragraphs: Option<Vec<TermsParagraph>> = terms
+        .get_paragraphs()
+        .iter()
+        .map(|text| {
+            let lines = text::justify(&text, size, width - 4.0)?;
+            let lines: Vec<TermsLine> = lines
+                .into_iter()
+                .map(|line| TermsLine {
+                    words: ModelRc::new(VecModel::from(
+                        line.words.into_iter().map(slint::SharedString::from).collect::<Vec<_>>(),
+                    )),
+                    last: line.last,
+                })
+                .collect();
+            Some(TermsParagraph { lines: ModelRc::new(VecModel::from(lines)) })
+        })
+        .collect();
+    terms.set_justified(ModelRc::new(VecModel::from(paragraphs.unwrap_or_default())));
 }
 
 /// Needs at least one component to exist, Slint only loads the bundled catalogs then.
