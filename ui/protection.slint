@@ -41,6 +41,8 @@ export global Job {
     // The tweak waiting for confirmation, see TweakRow.
     in property <int> tweak: -1;
     in property <bool> undo;
+    /// Turning off a tweak that was already in place before Vantix.
+    in property <bool> reset;
     in property <int> gain;
     in property <int> cost;
     in property <bool> reboot;
@@ -110,7 +112,8 @@ export component JobSheet inherits Rectangle {
                     spacing: 2px;
                     Text {
                         text: Job.state == JobState.confirm
-                                ? (Job.undo && Job.tweak < 0 ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?") : @tr("Apply this change?"))
+                                ? (Job.undo && Job.tweak < 0 ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?")
+                                    : Job.reset ? @tr("Turn this tweak off?") : @tr("Apply this change?"))
                             : Job.state == JobState.creating-point ? @tr("Creating a restore point")
                             : Job.state == JobState.applying ? @tr("Applying changes")
                             : Job.state == JobState.point-failed ? @tr("Couldn't create the restore point")
@@ -130,7 +133,12 @@ export component JobSheet inherits Rectangle {
 
             if Job.state == JobState.confirm: VerticalLayout {
                 spacing: 12px;
-                if !Job.undo: HorizontalLayout {
+                if Job.reset: Text {
+                    text: @tr("This was already set before Vantix. Turning it off puts the setting the other way, and you can undo it later from the card or from Protection.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+                if !Job.undo && !Job.reset: HorizontalLayout {
                     spacing: 18px;
                     alignment: start;
                     LevelTag { level: Job.gain; }
@@ -140,7 +148,7 @@ export component JobSheet inherits Rectangle {
                     }
                     RebootChip { reboot: Job.reboot; }
                 }
-                if !Job.undo && Job.tweak >= 0 && TweakText.notes[Job.tweak] != "": Text {
+                if !Job.undo && !Job.reset && Job.tweak >= 0 && TweakText.notes[Job.tweak] != "": Text {
                     text: TweakText.notes[Job.tweak];
                     color: Theme.warn;
                     wrap: word-wrap;
@@ -219,7 +227,7 @@ export component JobSheet inherits Rectangle {
                     clicked => { Job.dismiss(); }
                 }
                 if Job.state == JobState.confirm: Button {
-                    text: Job.undo ? @tr("Undo") : @tr("Apply");
+                    text: Job.undo ? @tr("Undo") : Job.reset ? @tr("Turn off") : @tr("Apply");
                     primary: true;
                     clicked => { Job.confirm(); }
                 }
@@ -451,9 +459,10 @@ export component ProtectionPage inherits VerticalLayout {
                             overflow: elide;
                         }
                         Text {
-                            text: change.pending ? change.time + " · " + @tr("Waiting for restart")
-                                : change.freed != "" ? change.time + " · " + @tr("Freed {}", change.freed)
-                                : change.time;
+                            text: (change.reset ? @tr("Turned off") + " · " : "")
+                                + (change.pending ? change.time + " · " + @tr("Waiting for restart")
+                                    : change.freed != "" ? change.time + " · " + @tr("Freed {}", change.freed)
+                                    : change.time);
                             color: change.pending ? Theme.info : Theme.faint;
                             font-size: 12px;
                             overflow: elide;

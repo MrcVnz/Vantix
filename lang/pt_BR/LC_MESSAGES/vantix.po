@@ -483,8 +483,8 @@ msgstr "Aguardando reinício"
 msgid "Needs a restart"
 msgstr "Precisa reiniciar"
 
-msgid "Applies right away"
-msgstr "Vale na hora"
+msgid "No restart needed"
+msgstr "Não precisa reiniciar"
 
 msgid "Already set in Windows"
 msgstr "Já está assim no Windows"
@@ -580,3 +580,195 @@ msgstr "Excluir"
 
 msgid "Confirm"
 msgstr "Confirmar"
+
+msgid "Turn off core parking"
+msgstr "Desligar o estacionamento de núcleos"
+
+msgid "Keeps every CPU core awake while plugged in, so work never waits for a parked core to wake up."
+msgstr "Mantém todos os núcleos da CPU acordados na tomada, então o trabalho nunca espera um núcleo estacionado acordar."
+
+msgid "More power draw and heat while the PC sits idle."
+msgstr "Mais consumo e calor com o PC parado."
+
+msgid "Keep the CPU at full clock"
+msgstr "Manter a CPU no clock máximo"
+
+msgid "Sets the minimum processor state to 100% while plugged in, so the clock never drops between bursts of work."
+msgstr "Coloca o estado mínimo do processador em 100% na tomada, então o clock nunca cai entre um pico de trabalho e outro."
+
+msgid "The CPU runs hotter and draws more power even when idle."
+msgstr "A CPU esquenta mais e gasta mais energia mesmo parada."
+
+msgid "Aggressive processor boost"
+msgstr "Turbo do processador agressivo"
+
+msgid "Lets the CPU go above its base clock sooner and more often while plugged in."
+msgstr "Deixa a CPU passar do clock base mais cedo e com mais frequência na tomada."
+
+msgid "More heat and fan noise under load."
+msgstr "Mais calor e barulho de ventoinha com carga."
+
+msgid "Turn off PCI Express power saving"
+msgstr "Desligar a economia de energia do PCI Express"
+
+msgid "Stops the link to the graphics card and NVMe drives from dropping into low power states while plugged in."
+msgstr "Impede que a ligação com a placa de vídeo e os SSDs NVMe entre em modo de baixo consumo na tomada."
+
+msgid "A little more power draw while the PC sits idle."
+msgstr "Um pouco mais de consumo com o PC parado."
+
+msgid "Turn off USB selective suspend"
+msgstr "Desligar a suspensão seletiva do USB"
+
+msgid "Windows stops putting idle USB devices to sleep, which can cause mouse, headset or controller dropouts."
+msgstr "O Windows para de colocar dispositivos USB parados para dormir, o que pode causar falhas no mouse, headset ou controle."
+
+msgid "USB devices draw power even when unused."
+msgstr "Os dispositivos USB gastam energia mesmo sem uso."
+
+msgid "Turn off Memory integrity"
+msgstr "Desligar a Integridade de Memória"
+
+msgid "Memory integrity (HVCI) checks every driver inside a virtualized layer, which costs 5 to 10% in many games."
+msgstr "A Integridade de Memória (HVCI) verifica cada driver numa camada virtualizada, o que custa de 5 a 10% em muitos jogos."
+
+msgid "Removes a kernel protection against malicious drivers. Some anti-cheats require it to stay on."
+msgstr "Remove uma proteção do kernel contra drivers maliciosos. Alguns anti-cheats exigem que ela fique ligada."
+
+msgid "Turn off memory compression"
+msgstr "Desligar a compressão de memória"
+
+msgid "With 16 GB or more, Windows spends CPU time compressing memory it rarely needs to save."
+msgstr "Com 16 GB ou mais, o Windows gasta CPU compactando memória que quase nunca precisa economizar."
+
+msgid "Uses more RAM before Windows starts using the page file."
+msgstr "Usa mais RAM antes de o Windows começar a usar o arquivo de paginação."
+
+msgid "Optimizations for windowed games"
+msgstr "Otimizações para jogos em janela"
+
+msgid "DirectX 10 and 11 games in windowed and borderless modes use the flip model: lower latency, plus VRR and Auto HDR. Takes effect when the game restarts."
+msgstr "Jogos DirectX 10 e 11 em janela e sem borda passam a usar o modelo flip: menos latência, com VRR e HDR automático. Vale ao reabrir o jogo."
+
+msgid "Variable refresh rate in windowed games"
+msgstr "Taxa de atualização variável em jogos em janela"
+
+msgid "Lets G-Sync and FreeSync work in games that don't support VRR in a window on their own. Takes effect when the game restarts."
+msgstr "Deixa o G-Sync e o FreeSync funcionarem em jogos que não suportam VRR em janela sozinhos. Vale ao reabrir o jogo."
+
+msgid "Turn off Game Bar background recording"
+msgstr "Desligar a gravação em segundo plano do Game Bar"
+
+msgid "Stops Xbox Game Bar from recording the last minutes of gameplay all the time."
+msgstr "Impede o Xbox Game Bar de ficar gravando os últimos minutos do jogo o tempo todo."
+
+msgid "Win+Alt+G, which saves what just happened, stops working."
+msgstr "O Win+Alt+G, que salva o que acabou de acontecer, deixa de funcionar."
+
+msgid "Turn on Game Mode"
+msgstr "Ligar o Modo de Jogo"
+
+msgid "Windows gives the game priority for CPU and GPU time and holds back Windows Update installs and notifications while you play."
+msgstr "O Windows dá prioridade de CPU e GPU para o jogo e segura instalações do Windows Update e notificações enquanto você joga."
+
+msgid "Hardware-accelerated GPU scheduling"
+msgstr "Agendamento de GPU acelerado por hardware"
+
+msgid "The graphics card manages its own memory and work queue. Required for DLSS Frame Generation."
+msgstr "A placa de vídeo gerencia a própria memória e a fila de trabalho. É obrigatório para a Geração de Quadros do DLSS."
+
+msgid "Some older drivers stutter with it on."
+msgstr "Alguns drivers antigos engasgam com ele ligado."
+
+msgid "Global timer resolution"
+msgstr "Resolução de timer global"
+
+msgid "On Windows 11 a program asking for a 0.5 ms timer only gets it while its window is visible. This makes the request count for the whole system again, like before Windows 11."
+msgstr "No Windows 11, um programa que pede um timer de 0,5 ms só recebe enquanto a janela dele está visível. Isso faz o pedido valer para o sistema todo de novo, como antes do Windows 11."
+
+msgid "Slightly more power use while some program asks for a fast timer."
+msgstr "Um pouco mais de consumo enquanto algum programa pede um timer rápido."
+
+msgid "Turn off mouse acceleration"
+msgstr "Desligar a aceleração do mouse"
+
+msgid "Turns off Enhance pointer precision, so the same hand movement always moves the pointer the same distance, at any speed."
+msgstr "Desliga a opção Aprimorar precisão do ponteiro, então o mesmo movimento da mão sempre leva o ponteiro à mesma distância, em qualquer velocidade."
+
+msgid "Turn off accessibility shortcuts"
+msgstr "Desligar os atalhos de acessibilidade"
+
+msgid "Pressing Shift five times, holding right Shift or holding Num Lock no longer pops up Sticky, Filter or Toggle Keys in the middle of a game. The features stay in Settings."
+msgstr "Apertar Shift cinco vezes, segurar o Shift direito ou segurar o Num Lock deixa de abrir as Teclas de Aderência, de Filtragem ou de Alternância no meio do jogo. Os recursos continuam em Configurações."
+
+msgid "Stop Store apps in the background"
+msgstr "Impedir apps da Store em segundo plano"
+
+msgid "Microsoft Store apps no longer keep running after you close them."
+msgstr "Os apps da Microsoft Store deixam de continuar rodando depois que você fecha."
+
+msgid "Those apps stop sending notifications and syncing until you open them."
+msgstr "Esses apps param de mandar notificações e de sincronizar até você abrir."
+
+msgid "Telemetry to the minimum"
+msgstr "Telemetria no mínimo"
+
+msgid "Sets diagnostic data to the lowest level your Windows edition allows and turns off the service that sends it."
+msgstr "Coloca os dados de diagnóstico no menor nível que a sua edição do Windows permite e desliga o serviço que os envia."
+
+msgid "Windows Insider and some feedback features stop working."
+msgstr "O Windows Insider e alguns recursos de feedback deixam de funcionar."
+
+msgid "Performance"
+msgstr "Desempenho"
+
+msgid "Power and CPU settings that trade efficiency for speed. They apply to the active power plan, while plugged in."
+msgstr "Configurações de energia e de CPU que trocam economia por velocidade. Valem para o plano de energia ativo, na tomada."
+
+msgid "Games"
+msgstr "Jogos"
+
+msgid "Windows settings that affect frame rate, latency and stutter in games."
+msgstr "Configurações do Windows que afetam FPS, latência e engasgos nos jogos."
+
+msgid "Input"
+msgstr "Entrada"
+
+msgid "Mouse and keyboard behavior that gets in the way during games."
+msgstr "Comportamentos do mouse e do teclado que atrapalham durante os jogos."
+
+msgid "Background"
+msgstr "Segundo plano"
+
+msgid "What keeps running when you're not using it."
+msgstr "O que continua rodando quando você não está usando."
+
+msgid "Make key repeat as fast as Windows allows"
+msgstr "Repetição de tecla no máximo do Windows"
+
+msgid "Keys without delay (gaming Filter Keys)"
+msgstr "Teclas sem atraso (Filter Keys para jogos)"
+
+msgid "Sets the delay before a held key starts repeating to the shortest, 250 ms, and the repeat speed to the fastest, about 30 a second."
+msgstr "Coloca o atraso antes de uma tecla segurada começar a repetir no menor valor, 250 ms, e a velocidade de repetição no máximo, cerca de 30 por segundo."
+
+msgid "Turns on Filter Keys with no wait and no bounce time, so Filter Keys never delays or ignores a key, and makes a held key repeat after 150 ms, every 10 ms. That's past what the regular keyboard settings allow."
+msgstr "Liga as Teclas de Filtragem sem espera e sem tempo de rejeição, então elas nunca atrasam nem ignoram uma tecla, e faz uma tecla segurada repetir depois de 150 ms, a cada 10 ms. Isso passa do que as configurações normais de teclado permitem."
+
+msgid "Holding a key while typing repeats it very fast."
+msgstr "Segurar uma tecla ao digitar repete muito rápido."
+
+msgid "Turned off by Vantix"
+msgstr "Desativado pelo Vantix"
+
+msgid "Turn off"
+msgstr "Desativar"
+
+msgid "Turned off"
+msgstr "Desativado"
+
+msgid "Turn this tweak off?"
+msgstr "Desativar este ajuste?"
+
+msgid "This was already set before Vantix. Turning it off puts the setting the other way, and you can undo it later from the card or from Protection."
+msgstr "Isso já estava assim antes do Vantix. Desativar coloca a configuração do outro jeito, e você pode desfazer depois pelo cartão ou pela Proteção."

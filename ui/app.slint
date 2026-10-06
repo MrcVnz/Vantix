@@ -2,7 +2,7 @@ import { Theme, Icons, Icon, Card, Segmented, Toggle, Button } from "theme.slint
 import { Memory, MemoryPage, CleanState, HistoryRow } from "memory.slint";
 import { Protection, ProtectionPage, Job, JobState, JobSheet, RestorePoint } from "protection.slint";
 import { Storage, StoragePage, CleanupRow, RowState } from "storage.slint";
-import { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, RebootBanner } from "tweaks.slint";
+import { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, RebootBanner, SectionPage } from "tweaks.slint";
 import { Terms, TermsSheet, TermsLine, TermsParagraph } from "terms.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
@@ -256,10 +256,34 @@ export component AppWindow inherits Window {
                     clicked => { root.page = 0; }
                 }
                 NavItem {
+                    text: @tr("Performance");
+                    icon: Icons.gauge;
+                    active: root.page == 4;
+                    clicked => { root.page = 4; }
+                }
+                NavItem {
+                    text: @tr("Games");
+                    icon: Icons.gamepad;
+                    active: root.page == 5;
+                    clicked => { root.page = 5; }
+                }
+                NavItem {
+                    text: @tr("Input");
+                    icon: Icons.mouse;
+                    active: root.page == 6;
+                    clicked => { root.page = 6; }
+                }
+                NavItem {
                     text: @tr("Storage");
                     icon: Icons.drive;
                     active: root.page == 3;
                     clicked => { root.page = 3; }
+                }
+                NavItem {
+                    text: @tr("Background");
+                    icon: Icons.activity;
+                    active: root.page == 7;
+                    clicked => { root.page = 7; }
                 }
 
                 Rectangle { vertical-stretch: 1; }
@@ -320,6 +344,34 @@ export component AppWindow inherits Window {
                 if root.page == 3: StoragePage {
                     width: parent.width;
                     height: parent.height;
+                }
+                if root.page == 4: SectionPage {
+                    width: parent.width;
+                    height: parent.height;
+                    title: @tr("Performance");
+                    subtitle: @tr("Power and CPU settings that trade efficiency for speed. They apply to the active power plan, while plugged in.");
+                    rows: Tweaks.performance;
+                }
+                if root.page == 5: SectionPage {
+                    width: parent.width;
+                    height: parent.height;
+                    title: @tr("Games");
+                    subtitle: @tr("Windows settings that affect frame rate, latency and stutter in games.");
+                    rows: Tweaks.games;
+                }
+                if root.page == 6: SectionPage {
+                    width: parent.width;
+                    height: parent.height;
+                    title: @tr("Input");
+                    subtitle: @tr("Mouse and keyboard behavior that gets in the way during games.");
+                    rows: Tweaks.input;
+                }
+                if root.page == 7: SectionPage {
+                    width: parent.width;
+                    height: parent.height;
+                    title: @tr("Background");
+                    subtitle: @tr("What keeps running when you're not using it.");
+                    rows: Tweaks.background;
                 }
             }
         }

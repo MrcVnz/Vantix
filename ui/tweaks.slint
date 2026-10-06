@@ -6,8 +6,10 @@ export enum TweakState {
     off,
     /// Applied by Vantix, so it can be undone from the journal.
     on,
-    /// Already in place without Vantix; nothing to undo.
+    /// Already in place without Vantix. It can still be turned off, as a change of its own.
     system,
+    /// Was in place before Vantix and Vantix turned it off; undoing puts it back.
+    reverted,
     unknown,
     busy,
     action,
@@ -35,10 +37,16 @@ export struct ChangeRow {
     time: string,
     freed: string,
     pending: bool,
+    /// Turned a tweak off rather than on.
+    reset: bool,
 }
 
 export global Tweaks {
+    in property <[TweakRow]> performance;
+    in property <[TweakRow]> games;
+    in property <[TweakRow]> input;
     in property <[TweakRow]> storage;
+    in property <[TweakRow]> background;
     in property <[ChangeRow]> changes;
     in property <int> pending-count;
     in property <bool> busy;
@@ -46,6 +54,7 @@ export global Tweaks {
     callback activate(int);
     callback undo(int);
     callback undo-all();
+    callback reset(int);
     callback restart();
 }
 
@@ -57,6 +66,25 @@ export global TweakText {
         @tr("Compress Windows (CompactOS)"),
         @tr("Stop recording last access time"),
         @tr("Retrim SSDs"),
+        @tr("Turn off core parking"),
+        @tr("Keep the CPU at full clock"),
+        @tr("Aggressive processor boost"),
+        @tr("Turn off PCI Express power saving"),
+        @tr("Turn off USB selective suspend"),
+        @tr("Turn off Memory integrity"),
+        @tr("Turn off memory compression"),
+        @tr("Optimizations for windowed games"),
+        @tr("Variable refresh rate in windowed games"),
+        @tr("Turn off Game Bar background recording"),
+        @tr("Turn on Game Mode"),
+        @tr("Hardware-accelerated GPU scheduling"),
+        @tr("Global timer resolution"),
+        @tr("Turn off mouse acceleration"),
+        @tr("Turn off accessibility shortcuts"),
+        @tr("Make key repeat as fast as Windows allows"),
+        @tr("Keys without delay (gaming Filter Keys)"),
+        @tr("Stop Store apps in the background"),
+        @tr("Telemetry to the minimum"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -64,6 +92,25 @@ export global TweakText {
         @tr("Stores the Windows files compressed and frees 2 to 4 GB. Takes 5 to 20 minutes."),
         @tr("NTFS stops writing the last access date every time a file is read. Less writing to the drive."),
         @tr("Tells your SSDs about all the free space at once. Windows already does this every week on its own."),
+        @tr("Keeps every CPU core awake while plugged in, so work never waits for a parked core to wake up."),
+        @tr("Sets the minimum processor state to 100% while plugged in, so the clock never drops between bursts of work."),
+        @tr("Lets the CPU go above its base clock sooner and more often while plugged in."),
+        @tr("Stops the link to the graphics card and NVMe drives from dropping into low power states while plugged in."),
+        @tr("Windows stops putting idle USB devices to sleep, which can cause mouse, headset or controller dropouts."),
+        @tr("Memory integrity (HVCI) checks every driver inside a virtualized layer, which costs 5 to 10% in many games."),
+        @tr("With 16 GB or more, Windows spends CPU time compressing memory it rarely needs to save."),
+        @tr("DirectX 10 and 11 games in windowed and borderless modes use the flip model: lower latency, plus VRR and Auto HDR. Takes effect when the game restarts."),
+        @tr("Lets G-Sync and FreeSync work in games that don't support VRR in a window on their own. Takes effect when the game restarts."),
+        @tr("Stops Xbox Game Bar from recording the last minutes of gameplay all the time."),
+        @tr("Windows gives the game priority for CPU and GPU time and holds back Windows Update installs and notifications while you play."),
+        @tr("The graphics card manages its own memory and work queue. Required for DLSS Frame Generation."),
+        @tr("On Windows 11 a program asking for a 0.5 ms timer only gets it while its window is visible. This makes the request count for the whole system again, like before Windows 11."),
+        @tr("Turns off Enhance pointer precision, so the same hand movement always moves the pointer the same distance, at any speed."),
+        @tr("Pressing Shift five times, holding right Shift or holding Num Lock no longer pops up Sticky, Filter or Toggle Keys in the middle of a game. The features stay in Settings."),
+        @tr("Sets the delay before a held key starts repeating to the shortest, 250 ms, and the repeat speed to the fastest, about 30 a second."),
+        @tr("Turns on Filter Keys with no wait and no bounce time, so Filter Keys never delays or ignores a key, and makes a held key repeat after 150 ms, every 10 ms. That's past what the regular keyboard settings allow."),
+        @tr("Microsoft Store apps no longer keep running after you close them."),
+        @tr("Sets diagnostic data to the lowest level your Windows edition allows and turns off the service that sends it."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -71,6 +118,25 @@ export global TweakText {
         @tr("Opening system programs uses a little more CPU."),
         @tr("Backup and cleanup tools that rely on this date no longer see when a file was opened."),
         "",
+        @tr("More power draw and heat while the PC sits idle."),
+        @tr("The CPU runs hotter and draws more power even when idle."),
+        @tr("More heat and fan noise under load."),
+        @tr("A little more power draw while the PC sits idle."),
+        @tr("USB devices draw power even when unused."),
+        @tr("Removes a kernel protection against malicious drivers. Some anti-cheats require it to stay on."),
+        @tr("Uses more RAM before Windows starts using the page file."),
+        "",
+        "",
+        @tr("Win+Alt+G, which saves what just happened, stops working."),
+        "",
+        @tr("Some older drivers stutter with it on."),
+        @tr("Slightly more power use while some program asks for a fast timer."),
+        "",
+        "",
+        "",
+        @tr("Holding a key while typing repeats it very fast."),
+        @tr("Those apps stop sending notifications and syncing until you open them."),
+        @tr("Windows Insider and some feedback features stop working."),
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }
@@ -103,7 +169,7 @@ export component LevelTag inherits HorizontalLayout {
 export component RebootChip inherits Chip {
     in property <bool> reboot;
     in property <bool> pending;
-    text: root.pending ? @tr("Waiting for restart") : root.reboot ? @tr("Needs a restart") : @tr("Applies right away");
+    text: root.pending ? @tr("Waiting for restart") : root.reboot ? @tr("Needs a restart") : @tr("No restart needed");
     tint: root.pending ? Theme.info : root.reboot ? Theme.warn : Theme.muted;
 }
 
@@ -147,6 +213,10 @@ component TweakCard inherits Rectangle {
                 if root.item.state == TweakState.system: VerticalLayout {
                     alignment: center;
                     Chip { text: @tr("Already set in Windows"); }
+                }
+                if root.item.state == TweakState.reverted: VerticalLayout {
+                    alignment: center;
+                    Chip { text: @tr("Turned off by Vantix"); }
                 }
                 if root.item.state == TweakState.unknown: VerticalLayout {
                     alignment: center;
@@ -218,7 +288,15 @@ component TweakCard inherits Rectangle {
                     clicked => { Tweaks.activate(root.item.index); }
                 }
             }
-            if root.item.state == TweakState.on: HorizontalLayout {
+            if root.item.state == TweakState.system: HorizontalLayout {
+                alignment: end;
+                Button {
+                    text: @tr("Turn off");
+                    enabled: !Tweaks.busy;
+                    clicked => { Tweaks.reset(root.item.index); }
+                }
+            }
+            if root.item.state == TweakState.on || root.item.state == TweakState.reverted: HorizontalLayout {
                 alignment: end;
                 Button {
                     text: @tr("Undo");
@@ -293,5 +371,37 @@ export component RebootBanner inherits Rectangle {
         interval: 4s;
         running: root.confirm;
         triggered => { root.confirm = false; }
+    }
+}
+
+/// A page that only lists tweaks, for the sections that have nothing else.
+export component SectionPage inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <[TweakRow]> rows;
+
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: root.subtitle;
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    TweakList {
+        vertical-stretch: 1;
+        rows: root.rows;
     }
 }

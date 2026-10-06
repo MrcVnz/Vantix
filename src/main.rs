@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod boost;
 mod disk;
 mod memory;
 mod reg;
@@ -76,8 +77,19 @@ struct TweakInfo {
 #[derive(Clone, Copy)]
 enum Ask {
     Apply(usize),
+    /// Turn off a tweak that was already in place before Vantix.
+    Reset(usize),
     Undo(usize),
     UndoAll,
+}
+
+/// What actually runs for one tweak.
+enum Op {
+    Apply,
+    Reset,
+    Revert(Option<String>),
+    /// Undoes a reset by applying the tweak again.
+    Reapply,
 }
 
 /// Lives for the whole process. The window comes and goes; the scheduler keeps running.
@@ -364,6 +376,7 @@ impl App {
         tweaks.on_activate(bind_with(self, |app, i: i32| app.ask(Ask::Apply(i as usize))));
         tweaks.on_undo(bind_with(self, |app, i: i32| app.ask(Ask::Undo(i as usize))));
         tweaks.on_undo_all(bind(self, |app| app.ask(Ask::UndoAll)));
+        tweaks.on_reset(bind_with(self, |app, i: i32| app.ask(Ask::Reset(i as usize))));
         tweaks.on_restart(|| {
             if let Err(e) = tweaks::restart() {
                 system::log_error("restart", &e);
@@ -779,6 +792,7 @@ impl App {
             job.set_freed("".into());
             job.set_tweak(-1);
             job.set_undo(false);
+            job.set_reset(false);
             job.set_reboot(false);
             job.set_slow(false);
             job.set_with_point(false);
@@ -859,7 +873,8 @@ impl App {
                             CATALOG
                                 .iter()
                                 .position(|t| t.id == change.id)
-                                .is_none_or(|i| state.tweaks[i].on == Some(false))
+                                // A reset is stale once the tweak is back on, a change once it's off.
+                                .is_none_or(|i| state.tweaks[i].on == Some(change.reset))
                         })
                         .map(|change| change.id.clone())
                         .collect();
@@ -887,11 +902,12 @@ impl App {
             } else if !info.loaded {
                 TweakState::Loading
             } else {
-                match info.on {
-                    Some(true) if applied.is_some() => TweakState::On,
-                    Some(true) => TweakState::System,
-                    Some(false) => TweakState::Off,
-                    None => TweakState::Unknown,
+                match (info.on, applied.map(|c| c.reset)) {
+                    (Some(true), Some(false)) => TweakState::On,
+                    (Some(true), _) => TweakState::System,
+                    (Some(false), Some(true)) => TweakState::Reverted,
+                    (Some(false), _) => TweakState::Off,
+                    (None, _) => TweakState::Unknown,
                 }
             };
             TweakRow {
@@ -925,12 +941,17 @@ impl App {
                     time: change.time.format("%d/%m/%Y %H:%M").to_string().into(),
                     freed: change.freed.map(format_bytes).unwrap_or_default().into(),
                     pending: change.reboot && tweaks::same_boot(change.boot),
+                    reset: change.reset,
                 })
             })
             .collect();
 
         let tweaks = ui.global::<Tweaks>();
+        tweaks.set_performance(ModelRc::new(VecModel::from(section(Section::Performance))));
+        tweaks.set_games(ModelRc::new(VecModel::from(section(Section::Games))));
+        tweaks.set_input(ModelRc::new(VecModel::from(section(Section::Input))));
         tweaks.set_storage(ModelRc::new(VecModel::from(section(Section::Storage))));
+        tweaks.set_background(ModelRc::new(VecModel::from(section(Section::Background))));
         tweaks.set_pending_count(changes.iter().filter(|c| c.pending).count() as i32);
         tweaks.set_changes(ModelRc::new(VecModel::from(changes)));
         tweaks.set_busy(state.working.is_some());
@@ -946,10 +967,11 @@ impl App {
     /// Puts up the confirmation sheet with what the change gives, costs and needs.
     fn ask(self: &Rc<Self>, ask: Ask) {
         let (index, undo) = match ask {
-            Ask::Apply(i) => (Some(i), false),
+            Ask::Apply(i) | Ask::Reset(i) => (Some(i), false),
             Ask::Undo(i) => (Some(i), true),
             Ask::UndoAll => (None, true),
         };
+        let reset = matches!(ask, Ask::Reset(_));
         let subject = index.map(|i| self.tweak_title(i)).unwrap_or_default();
         // Only changes that can be undone need a restore point; a retrim has nothing to save.
         // One point covers them all: the one made before Vantix's first change.
@@ -963,6 +985,7 @@ impl App {
             let tweak = index.map(|i| &CATALOG[i]);
             job.set_tweak(index.map_or(-1, |i| i as i32));
             job.set_undo(undo);
+            job.set_reset(reset);
             job.set_gain(tweak.map_or(0, |t| t.gain as i32));
             job.set_cost(tweak.map_or(0, |t| t.cost as i32));
             job.set_reboot(tweak.is_some_and(|t| t.reboot));
@@ -979,7 +1002,7 @@ impl App {
         let Some(ask) = self.state.borrow().asked else { return };
         let with_point =
             use_point && self.with_ui_value(|ui| ui.global::<Job>().get_with_point()).unwrap_or(false);
-        let Ask::Apply(i) = ask else {
+        let (Ask::Apply(i) | Ask::Reset(i)) = ask else {
             self.apply(ask);
             return;
         };
@@ -1010,19 +1033,23 @@ impl App {
     }
 
     fn apply(self: &Rc<Self>, ask: Ask) {
-        let work: Vec<(usize, bool, Option<u32>)> = {
+        let work: Vec<(usize, Op)> = {
             let mut state = self.state.borrow_mut();
             state.asked = None;
-            let previous =
-                |i: usize| state.changes.iter().find(|c| c.id == CATALOG[i].id).and_then(|c| c.previous);
+            let undo = |change: &Change| {
+                if change.reset { Op::Reapply } else { Op::Revert(change.previous.clone()) }
+            };
             let work = match ask {
-                Ask::Apply(i) => vec![(i, false, None)],
-                Ask::Undo(i) => vec![(i, true, previous(i))],
+                Ask::Apply(i) => vec![(i, Op::Apply)],
+                Ask::Reset(i) => vec![(i, Op::Reset)],
+                Ask::Undo(i) => {
+                    state.changes.iter().filter(|c| c.id == CATALOG[i].id).map(|c| (i, undo(c))).collect()
+                }
                 Ask::UndoAll => state
                     .changes
                     .iter()
                     .rev()
-                    .filter_map(|c| CATALOG.iter().position(|t| t.id == c.id).map(|i| (i, true, c.previous)))
+                    .filter_map(|c| CATALOG.iter().position(|t| t.id == c.id).map(|i| (i, undo(c))))
                     .collect(),
             };
             state.working = work.first().map(|w| w.0);
@@ -1030,10 +1057,10 @@ impl App {
         };
         let subject = match ask {
             Ask::UndoAll => String::new(),
-            Ask::Apply(i) | Ask::Undo(i) => self.tweak_title(i),
+            Ask::Apply(i) | Ask::Reset(i) | Ask::Undo(i) => self.tweak_title(i),
         };
         self.show_job(JobState::Applying, &subject, true);
-        let slow = work.iter().any(|&(i, _, _)| CATALOG[i].slow);
+        let slow = work.iter().any(|(i, _)| CATALOG[*i].slow);
         self.with_ui(|ui| {
             ui.global::<Job>().set_slow(slow);
             self.show_tweaks(ui);
@@ -1043,14 +1070,18 @@ impl App {
             move || {
                 let (free_before, _) = disk::system_drive_space();
                 let mut outcomes = Vec::new();
-                for &(i, undo, previous) in &work {
-                    let result = match (&CATALOG[i].kind, undo) {
-                        (Kind::Toggle { apply, .. }, false) => apply(),
-                        (Kind::Toggle { revert, .. }, true) => revert(previous).map(|_| None),
+                for (i, op) in work {
+                    let result = match (&CATALOG[i].kind, &op) {
+                        (Kind::Toggle { apply, .. }, Op::Apply) => apply(),
+                        (Kind::Toggle { reset, .. }, Op::Reset) => reset().map(|_| None),
+                        (Kind::Toggle { revert, .. }, Op::Revert(previous)) => {
+                            revert(previous.as_deref()).map(|_| None)
+                        }
+                        (Kind::Toggle { apply, .. }, Op::Reapply) => apply().map(|_| None),
                         (Kind::Action { run }, _) => run().map(|_| None),
                     };
                     let failed = result.is_err();
-                    outcomes.push((i, undo, result));
+                    outcomes.push((i, op, result));
                     if failed {
                         break;
                     }
@@ -1074,23 +1105,26 @@ impl App {
                     let mut state = app.state.borrow_mut();
                     state.working = None;
                     state.journal_version += 1;
-                    for (i, undo, result) in outcomes {
+                    for (i, op, result) in outcomes {
                         let tweak = &CATALOG[i];
                         match result {
                             Ok(previous) => {
                                 reboot |= tweak.reboot;
                                 state.changes.retain(|c| c.id != tweak.id);
-                                match tweak.kind {
-                                    Kind::Action { .. } => state.tweaks[i].ran = true,
-                                    Kind::Toggle { .. } if !undo => state.changes.push(Change {
-                                        id: tweak.id.into(),
-                                        time: Local::now(),
-                                        previous,
-                                        boot: tweaks::boot_time(),
-                                        reboot: tweak.reboot,
-                                        freed: gained,
-                                    }),
-                                    Kind::Toggle { .. } => {}
+                                let journal = |reset: bool| Change {
+                                    id: tweak.id.into(),
+                                    time: Local::now(),
+                                    previous: previous.clone(),
+                                    boot: tweaks::boot_time(),
+                                    reboot: tweak.reboot,
+                                    freed: gained,
+                                    reset,
+                                };
+                                match (&tweak.kind, op) {
+                                    (Kind::Action { .. }, _) => state.tweaks[i].ran = true,
+                                    (_, Op::Apply) => state.changes.push(journal(false)),
+                                    (_, Op::Reset) => state.changes.push(journal(true)),
+                                    (_, Op::Revert(_) | Op::Reapply) => {}
                                 }
                             }
                             Err(e) => {

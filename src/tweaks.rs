@@ -23,14 +23,18 @@ use windows::Win32::System::Ioctl::{
 use windows::Win32::System::SystemInformation::{GetSystemDirectoryW, GetTickCount64, GetWindowsDirectoryW};
 use windows::core::{BOOL, Error, HSTRING, Result};
 
-use crate::reg;
+use crate::{boost, reg};
 
 /// From WinBase.h; the windows crate only has it behind an unrelated feature.
 const DRIVE_FIXED: u32 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
+    Performance,
+    Games,
+    Input,
     Storage,
+    Background,
 }
 
 /// Matches the Gain/Cost order in the UI.
@@ -43,11 +47,14 @@ pub enum Level {
 }
 
 pub enum Kind {
-    /// An on/off change. `apply` returns whatever `revert` needs to put it back.
+    /// An on/off change. `apply` returns whatever `revert` needs to put it back, as text.
+    /// `reset` turns it off when it was already in place before Vantix: undoing that is
+    /// just applying it again.
     Toggle {
         read: fn() -> Result<bool>,
-        apply: fn() -> Result<Option<u32>>,
-        revert: fn(Option<u32>) -> Result<()>,
+        apply: fn() -> Result<Option<String>>,
+        revert: fn(Option<&str>) -> Result<()>,
+        reset: fn() -> Result<()>,
     },
     /// A one-off job with nothing to undo.
     Action { run: fn() -> Result<()> },
@@ -78,7 +85,12 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: hiberfil_size,
         slow: false,
-        kind: Kind::Toggle { read: hibernation_off, apply: disable_hibernation, revert: enable_hibernation },
+        kind: Kind::Toggle {
+            read: hibernation_off,
+            apply: disable_hibernation,
+            revert: enable_hibernation,
+            reset: reset_hibernation,
+        },
     },
     Tweak {
         id: "reserved-storage-off",
@@ -93,6 +105,7 @@ pub const CATALOG: &[Tweak] = &[
             read: reserved_storage_off,
             apply: disable_reserved_storage,
             revert: enable_reserved_storage,
+            reset: reset_reserved_storage,
         },
     },
     Tweak {
@@ -104,7 +117,12 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: true,
-        kind: Kind::Toggle { read: compact_os_on, apply: enable_compact_os, revert: disable_compact_os },
+        kind: Kind::Toggle {
+            read: compact_os_on,
+            apply: enable_compact_os,
+            revert: disable_compact_os,
+            reset: reset_compact_os,
+        },
     },
     Tweak {
         id: "last-access-off",
@@ -115,7 +133,12 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
-        kind: Kind::Toggle { read: last_access_off, apply: disable_last_access, revert: restore_last_access },
+        kind: Kind::Toggle {
+            read: last_access_off,
+            apply: disable_last_access,
+            revert: restore_last_access,
+            reset: reset_last_access,
+        },
     },
     Tweak {
         id: "retrim",
@@ -127,6 +150,310 @@ pub const CATALOG: &[Tweak] = &[
         estimate: none,
         slow: false,
         kind: Kind::Action { run: retrim },
+    },
+    Tweak {
+        id: "core-parking-off",
+        section: Section::Performance,
+        gain: Level::Medium,
+        cost: Level::Medium,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::core_parking_off,
+            apply: boost::disable_core_parking,
+            revert: boost::restore_core_parking,
+            reset: boost::reset_core_parking,
+        },
+    },
+    Tweak {
+        id: "full-clock",
+        section: Section::Performance,
+        gain: Level::Low,
+        cost: Level::Medium,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::full_clock,
+            apply: boost::set_full_clock,
+            revert: boost::restore_full_clock,
+            reset: boost::reset_full_clock,
+        },
+    },
+    Tweak {
+        id: "boost-aggressive",
+        section: Section::Performance,
+        gain: Level::Low,
+        cost: Level::Medium,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::boost_aggressive,
+            apply: boost::set_boost_aggressive,
+            revert: boost::restore_boost,
+            reset: boost::reset_boost,
+        },
+    },
+    Tweak {
+        id: "pcie-aspm-off",
+        section: Section::Performance,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::aspm_off,
+            apply: boost::disable_aspm,
+            revert: boost::restore_aspm,
+            reset: boost::reset_aspm,
+        },
+    },
+    Tweak {
+        id: "usb-suspend-off",
+        section: Section::Performance,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::usb_suspend_off,
+            apply: boost::disable_usb_suspend,
+            revert: boost::restore_usb_suspend,
+            reset: boost::reset_usb_suspend,
+        },
+    },
+    Tweak {
+        id: "hvci-off",
+        section: Section::Performance,
+        gain: Level::High,
+        cost: Level::High,
+        reboot: true,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::hvci_off,
+            apply: boost::disable_hvci,
+            revert: boost::restore_hvci,
+            reset: boost::reset_hvci,
+        },
+    },
+    Tweak {
+        id: "memory-compression-off",
+        section: Section::Performance,
+        gain: Level::Low,
+        cost: Level::Medium,
+        reboot: true,
+        shown: boost::has_16_gb,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::memory_compression_off,
+            apply: boost::disable_memory_compression,
+            revert: boost::enable_memory_compression,
+            reset: boost::reset_memory_compression,
+        },
+    },
+    Tweak {
+        id: "windowed-flip",
+        section: Section::Games,
+        gain: Level::Medium,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::windowed_flip,
+            apply: boost::enable_windowed_flip,
+            revert: boost::restore_windowed_flip,
+            reset: boost::reset_windowed_flip,
+        },
+    },
+    Tweak {
+        id: "windowed-vrr",
+        section: Section::Games,
+        gain: Level::Low,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::windowed_vrr,
+            apply: boost::enable_windowed_vrr,
+            revert: boost::restore_windowed_vrr,
+            reset: boost::reset_windowed_vrr,
+        },
+    },
+    Tweak {
+        id: "game-dvr-off",
+        section: Section::Games,
+        gain: Level::Medium,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::game_dvr_off,
+            apply: boost::disable_game_dvr,
+            revert: boost::restore_game_dvr,
+            reset: boost::reset_game_dvr,
+        },
+    },
+    Tweak {
+        id: "game-mode-on",
+        section: Section::Games,
+        gain: Level::Low,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::game_mode_on,
+            apply: boost::enable_game_mode,
+            revert: boost::restore_game_mode,
+            reset: boost::reset_game_mode,
+        },
+    },
+    Tweak {
+        id: "hags-on",
+        section: Section::Games,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: true,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::hags_on,
+            apply: boost::enable_hags,
+            revert: boost::restore_hags,
+            reset: boost::reset_hags,
+        },
+    },
+    Tweak {
+        id: "global-timer",
+        section: Section::Games,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: true,
+        shown: boost::is_windows_11,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::global_timer_on,
+            apply: boost::enable_global_timer,
+            revert: boost::restore_global_timer,
+            reset: boost::reset_global_timer,
+        },
+    },
+    Tweak {
+        id: "mouse-acceleration-off",
+        section: Section::Input,
+        gain: Level::Medium,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::mouse_acceleration_off,
+            apply: boost::disable_mouse_acceleration,
+            revert: boost::restore_mouse_acceleration,
+            reset: boost::reset_mouse_acceleration,
+        },
+    },
+    Tweak {
+        id: "accessibility-hotkeys-off",
+        section: Section::Input,
+        gain: Level::Low,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::hotkeys_off,
+            apply: boost::disable_hotkeys,
+            revert: boost::restore_hotkeys,
+            reset: boost::reset_hotkeys,
+        },
+    },
+    Tweak {
+        id: "fast-key-repeat",
+        section: Section::Input,
+        gain: Level::Low,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::fast_repeat,
+            apply: boost::set_fast_repeat,
+            revert: boost::restore_repeat,
+            reset: boost::reset_repeat,
+        },
+    },
+    Tweak {
+        id: "game-filter-keys",
+        section: Section::Input,
+        gain: Level::Medium,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::game_filter_keys,
+            apply: boost::set_game_filter_keys,
+            revert: boost::restore_filter_keys,
+            reset: boost::reset_filter_keys,
+        },
+    },
+    Tweak {
+        id: "store-background-off",
+        section: Section::Background,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::store_background_off,
+            apply: boost::disable_store_background,
+            revert: boost::restore_store_background,
+            reset: boost::reset_store_background,
+        },
+    },
+    Tweak {
+        id: "telemetry-off",
+        section: Section::Background,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: boost::telemetry_off,
+            apply: boost::disable_telemetry,
+            revert: boost::restore_telemetry,
+            reset: boost::reset_telemetry,
+        },
     },
 ];
 
@@ -168,7 +495,7 @@ fn windows_dir() -> String {
 
 /// Runs a console tool from System32 without flashing a console window. Fails on a
 /// non-zero exit, with whatever the tool printed as the reason.
-fn run(program: &str, args: &[&str]) -> Result<String> {
+pub fn run(program: &str, args: &[&str]) -> Result<String> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let output = Command::new(system_tool(program)).args(args).creation_flags(CREATE_NO_WINDOW).output()?;
     let text = decode(&output.stdout);
@@ -209,7 +536,7 @@ fn decode(bytes: &[u8]) -> String {
 
 /// For the cmdlets that have no console tool equivalent. Errors come back as just the
 /// message instead of PowerShell's multi-line error record.
-fn powershell(script: &str) -> Result<String> {
+pub fn powershell(script: &str) -> Result<String> {
     let script = format!(
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \
          try {{ {script} }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}"
@@ -238,12 +565,16 @@ fn hiberfil_size() -> Option<u64> {
         .filter(|&len| len > 0)
 }
 
-fn disable_hibernation() -> Result<Option<u32>> {
+fn disable_hibernation() -> Result<Option<String>> {
     run("powercfg.exe", &["/hibernate", "off"]).map(|_| None)
 }
 
-fn enable_hibernation(_: Option<u32>) -> Result<()> {
+fn enable_hibernation(_: Option<&str>) -> Result<()> {
     run("powercfg.exe", &["/hibernate", "on"]).map(drop)
+}
+
+fn reset_hibernation() -> Result<()> {
+    enable_hibernation(None)
 }
 
 // Reserved storage: about 7 GB Windows keeps aside so updates still install on a full disk.
@@ -267,12 +598,16 @@ fn reserved_storage_off() -> Result<bool> {
     }
 }
 
-fn disable_reserved_storage() -> Result<Option<u32>> {
+fn disable_reserved_storage() -> Result<Option<String>> {
     powershell("Set-WindowsReservedStorageState -State Disabled -ErrorAction Stop").map(|_| None)
 }
 
-fn enable_reserved_storage(_: Option<u32>) -> Result<()> {
+fn enable_reserved_storage(_: Option<&str>) -> Result<()> {
     powershell("Set-WindowsReservedStorageState -State Enabled -ErrorAction Stop").map(drop)
+}
+
+fn reset_reserved_storage() -> Result<()> {
+    enable_reserved_storage(None)
 }
 
 // CompactOS: system binaries stored compressed through WOF. `compact /compactos:query`
@@ -295,18 +630,22 @@ fn compact_os_on() -> Result<bool> {
 
 // compact's exit code isn't a reliable success flag here, so the files have the last word.
 
-fn enable_compact_os() -> Result<Option<u32>> {
+fn enable_compact_os() -> Result<Option<String>> {
     match run("compact.exe", &["/compactos:always"]) {
         Err(e) if !compact_os_on().unwrap_or(false) => Err(e),
         _ => Ok(None),
     }
 }
 
-fn disable_compact_os(_: Option<u32>) -> Result<()> {
+fn disable_compact_os(_: Option<&str>) -> Result<()> {
     match run("compact.exe", &["/compactos:never"]) {
         Err(e) if compact_os_on().unwrap_or(true) => Err(e),
         _ => Ok(()),
     }
+}
+
+fn reset_compact_os() -> Result<()> {
+    disable_compact_os(None)
 }
 
 // NTFS last access time. fsutil reports 0/1 as user managed and 2/3 as system managed;
@@ -319,14 +658,19 @@ fn last_access_off() -> Result<bool> {
     Ok(reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS)?.is_some_and(|value| value & 1 == 1))
 }
 
-fn disable_last_access() -> Result<Option<u32>> {
+fn disable_last_access() -> Result<Option<String>> {
     let previous = reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS)?;
     run("fsutil.exe", &["behavior", "set", "disablelastaccess", "1"])?;
-    Ok(previous)
+    Ok(previous.map(|value| value.to_string()))
 }
 
-fn restore_last_access(previous: Option<u32>) -> Result<()> {
-    match previous {
+/// Windows' default: system managed, updates on.
+fn reset_last_access() -> Result<()> {
+    reg::set_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS, 0x8000_0002)
+}
+
+fn restore_last_access(previous: Option<&str>) -> Result<()> {
+    match previous.and_then(|text| text.parse().ok()) {
         Some(value) => reg::set_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS, value),
         None => reg::delete_value(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS),
     }
@@ -413,9 +757,9 @@ mod tests {
         let original = reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS).unwrap();
         let was_off = last_access_off().unwrap();
         let previous = disable_last_access().unwrap();
-        assert_eq!(previous, original);
+        assert_eq!(previous, original.map(|v| v.to_string()));
         assert!(last_access_off().unwrap());
-        restore_last_access(previous).unwrap();
+        restore_last_access(previous.as_deref()).unwrap();
         assert_eq!(reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS).unwrap(), original);
         assert_eq!(last_access_off().unwrap(), was_off);
     }

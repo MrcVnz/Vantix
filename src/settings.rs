@@ -105,12 +105,15 @@ pub struct Change {
     pub id: String,
     pub time: DateTime<Local>,
     /// What the tweak needs to put the old state back.
-    pub previous: Option<u32>,
+    pub previous: Option<String>,
     /// Boot it was applied in, to tell when a change that needs a restart took effect.
     pub boot: i64,
     pub reboot: bool,
     /// Free space measured on the Windows drive before and after.
     pub freed: Option<u64>,
+    /// The tweak was already in place before Vantix and this turned it off.
+    #[serde(default)]
+    pub reset: bool,
 }
 
 pub fn data_dir() -> PathBuf {
