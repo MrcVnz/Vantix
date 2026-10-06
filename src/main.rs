@@ -25,9 +25,6 @@ slint::include_modules!();
 /// Bump when the terms text changes so everyone is asked again.
 const TERMS_VERSION: u32 = 1;
 
-/// Keeps a RAM limit cleanup from firing every tick when it can't get below the limit.
-const LIMIT_COOLDOWN: Duration = Duration::from_secs(120);
-
 /// Seconds of load history drawn in the sparkline.
 const SPARK_SAMPLES: usize = 60;
 
@@ -38,7 +35,12 @@ struct State {
     selected: [bool; disk::Category::ALL.len()],
     history: Vec<HistoryEntry>,
     cleaning: bool,
-    last_auto: Instant,
+    /// Interval mode counts from here: the last apply, app start or automatic cleanup.
+    interval_start: Instant,
+    /// Limit mode fires once when usage crosses the limit, then waits for it to drop
+    /// back below before it can fire again. Without this it would clean every tick when
+    /// a cleanup can't get usage under the limit.
+    limit_armed: bool,
     loads: VecDeque<u32>,
 }
 
@@ -63,7 +65,8 @@ fn main() -> Result<(), slint::PlatformError> {
             selected: disk::Category::ALL.map(disk::Category::selected_by_default),
             history: settings::load_history(),
             cleaning: false,
-            last_auto: Instant::now(),
+            interval_start: Instant::now(),
+            limit_armed: true,
             loads: VecDeque::with_capacity(SPARK_SAMPLES),
         }),
         window: RefCell::new(None),
@@ -173,7 +176,8 @@ impl App {
         } else {
             auto.mode = AutoMode::Off;
         }
-        state.last_auto = Instant::now();
+        state.interval_start = Instant::now();
+        state.limit_armed = true;
         let _ = state.settings.save();
         self.with_ui(|ui| show_settings(ui, &state.settings));
     }
@@ -248,8 +252,9 @@ impl App {
                 }
                 let on = auto.mode != AutoMode::Off;
                 app.with_tray(|tray| tray.set_auto_on(on));
-                // Restart the interval so applying doesn't trigger an immediate cleanup.
-                state.last_auto = Instant::now();
+                // The interval counts from now; the limit watches from the next tick.
+                state.interval_start = Instant::now();
+                state.limit_armed = true;
                 let _ = state.settings.save();
                 show_settings(ui, &state.settings);
             })
@@ -342,9 +347,14 @@ impl App {
                 state.loads.pop_front();
             }
             state.loads.push_back(stats.load);
+            let auto = state.settings.auto_clean;
+            if auto.mode == AutoMode::Limit && stats.load < auto.percent {
+                state.limit_armed = true;
+            }
             self.with_ui(|ui| {
                 show_stats(ui, &stats);
                 show_sparkline(ui, &state.loads);
+                show_auto_status(ui, &state);
             });
             auto_clean_due(&state, stats.load)
         };
@@ -361,7 +371,8 @@ impl App {
             }
             state.cleaning = true;
             if automatic {
-                state.last_auto = Instant::now();
+                state.interval_start = Instant::now();
+                state.limit_armed = false;
             }
             state.settings.clean_level
         };
@@ -670,12 +681,26 @@ fn auto_clean_due(state: &State, load: u32) -> bool {
         return false;
     }
     let auto = state.settings.auto_clean;
-    let elapsed = state.last_auto.elapsed();
     match auto.mode {
         AutoMode::Off => false,
-        AutoMode::Interval => elapsed >= Duration::from_secs(u64::from(auto.minutes) * 60),
-        AutoMode::Limit => load >= auto.percent && elapsed >= LIMIT_COOLDOWN,
+        AutoMode::Interval => interval_remaining(state).is_zero(),
+        AutoMode::Limit => state.limit_armed && load >= auto.percent,
     }
+}
+
+fn interval_remaining(state: &State) -> Duration {
+    let interval = Duration::from_secs(u64::from(state.settings.auto_clean.minutes) * 60);
+    interval.saturating_sub(state.interval_start.elapsed())
+}
+
+/// What the scheduler is waiting for, so it's visible that it runs.
+fn show_auto_status(ui: &AppWindow, state: &State) {
+    let mem = ui.global::<Memory>();
+    let left = interval_remaining(state).as_secs();
+    let (h, m, s) = (left / 3600, left / 60 % 60, left % 60);
+    let countdown = if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") };
+    mem.set_auto_countdown(countdown.into());
+    mem.set_auto_armed(state.limit_armed);
 }
 
 fn show_stats(ui: &AppWindow, stats: &memory::Stats) {

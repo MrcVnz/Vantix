@@ -40,6 +40,10 @@ export global Memory {
     in property <int> applied-mode;
     in property <int> applied-minutes;
     in property <int> applied-percent;
+    /// Time left until the next interval cleanup, already formatted.
+    in property <string> auto-countdown;
+    /// False right after a limit cleanup, until usage drops back under the limit.
+    in property <bool> auto-armed: true;
 
     in property <CleanState> state;
     in property <string> last-freed;
@@ -578,9 +582,9 @@ export component MemoryPage inherits VerticalLayout {
                 }
                 SpinBox {
                     width: 110px;
-                    minimum: 5;
+                    minimum: 1;
                     maximum: 1440;
-                    step-size: 5;
+                    step-size: 1;
                     value <=> Memory.auto-minutes;
                 }
                 Text {
@@ -614,6 +618,26 @@ export component MemoryPage inherits VerticalLayout {
             }
 
             Rectangle { vertical-stretch: 1; }
+
+            if Memory.applied-mode != 0: HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        data: Memory.applied-mode == 1 ? Icons.clock : Icons.activity;
+                        size: 15px;
+                        tint: Theme.accent;
+                    }
+                }
+                Text {
+                    text: Memory.applied-mode == 1 ? @tr("Next cleanup in {}", Memory.auto-countdown)
+                        : Memory.auto-armed ? @tr("Watching: now {}%, cleans above {}%", round(Memory.load * 100), Memory.applied-percent)
+                        : @tr("Cleaned. Waits for usage to drop below {}% before cleaning again.", Memory.applied-percent);
+                    color: Theme.text;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+            }
 
             Button {
                 text: root.auto-dirty ? @tr("Apply") : @tr("Applied");

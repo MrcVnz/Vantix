@@ -407,3 +407,12 @@ msgstr "Os arquivos apagados não poderão mais ser recuperados."
 
 msgid "Nothing to clean"
 msgstr "Nada para limpar"
+
+msgid "Next cleanup in {}"
+msgstr "Próxima limpeza em {}"
+
+msgid "Watching: now {}%, cleans above {}%"
+msgstr "Monitorando: agora {}%, limpa acima de {}%"
+
+msgid "Cleaned. Waits for usage to drop below {}% before cleaning again."
+msgstr "Limpou. Espera o uso cair abaixo de {}% antes de limpar de novo."
