@@ -5,9 +5,12 @@
 //! Saved values are text so one entry can hold several of them: numbers as decimal,
 //! lists joined with commas and "-" for a value that didn't exist.
 
+use std::cell::Cell;
+
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 use windows::Win32::System::Power::{
-    PowerGetActiveScheme, PowerReadACValueIndex, PowerSetActiveScheme, PowerWriteACValueIndex,
+    GetPwrCapabilities, PowerGetActiveScheme, PowerReadACValueIndex, PowerSetActiveScheme,
+    PowerWriteACValueIndex, SYSTEM_POWER_CAPABILITIES,
 };
 use windows::Win32::System::Registry::HKEY;
 use windows::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory;
@@ -88,20 +91,56 @@ fn active_scheme() -> Result<GUID> {
     }
 }
 
+thread_local! {
+    /// The plan a change is undone on, when that's not the active one.
+    static PLAN: Cell<Option<GUID>> = const { Cell::new(None) };
+}
+
+/// The active plan, as the journal records it for the power settings below.
+pub fn active_plan() -> Option<String> {
+    active_scheme().ok().map(|scheme| format!("{scheme:?}"))
+}
+
+/// Whether a plan from the journal still exists.
+pub fn plan_exists(plan: &str) -> bool {
+    let Ok(scheme) = GUID::try_from(plan) else { return false };
+    let mut value = 0;
+    unsafe {
+        PowerReadACValueIndex(None, Some(&scheme), Some(&SUB_PROCESSOR), Some(&PROCTHROTTLEMIN), &mut value)
+    }
+    .is_ok()
+}
+
+/// Runs `f` with the power settings below aimed at `plan` instead of the active plan.
+pub fn on_plan<T>(plan: Option<&str>, f: impl FnOnce() -> T) -> T {
+    PLAN.set(plan.and_then(|plan| GUID::try_from(plan).ok()));
+    let result = f();
+    PLAN.set(None);
+    result
+}
+
+fn target_scheme() -> Result<GUID> {
+    PLAN.get().map_or_else(active_scheme, Ok)
+}
+
 fn power(subgroup: &GUID, setting: &GUID) -> Result<u32> {
-    let scheme = active_scheme()?;
+    let scheme = target_scheme()?;
     let mut value = 0;
     unsafe { PowerReadACValueIndex(None, Some(&scheme), Some(subgroup), Some(setting), &mut value).ok()? };
     Ok(value)
 }
 
-/// Writing to the plan doesn't touch the running system until the plan is set again.
+/// Writing to the plan doesn't touch the running system until the plan is set again,
+/// which only happens when it's the active one.
 fn set_power(subgroup: &GUID, setting: &GUID, value: u32) -> Result<()> {
-    let scheme = active_scheme()?;
+    let scheme = target_scheme()?;
     unsafe {
         PowerWriteACValueIndex(None, &scheme, Some(subgroup), Some(setting), value).ok()?;
-        PowerSetActiveScheme(None, Some(&scheme)).ok()
+        if scheme == active_scheme()? {
+            PowerSetActiveScheme(None, Some(&scheme)).ok()?;
+        }
     }
+    Ok(())
 }
 
 /// `$off` is what Windows' own Balanced plan uses for the setting.
@@ -125,6 +164,56 @@ macro_rules! power_tweak {
             set_power(&$subgroup, &$setting, $off)
         }
     };
+}
+
+// Ultimate Performance plan. Windows ships it hidden, as a template to copy. The copy gets
+// a GUID of our own so undo knows which plan to remove, and there's never a second one.
+// Copies keep the template's name resource, which is how copies made by other tools or by
+// hand are recognized too.
+
+const ULTIMATE: GUID = GUID::from_u128(0xe9a42b02_d5df_448d_aa00_03f14749eb61);
+const VANTIX_ULTIMATE: GUID = GUID::from_u128(0x5a17e0c1_7a3d_4e2b_9c41_86f0d2b5a9e3);
+const BALANCED: GUID = GUID::from_u128(0x381b4222_f694_41f0_9685_ff5bb260df2e);
+
+/// Modern Standby PCs only offer Balanced, and Windows switches back from any other plan.
+pub fn has_power_plans() -> bool {
+    let mut caps = SYSTEM_POWER_CAPABILITIES::default();
+    !unsafe { GetPwrCapabilities(&mut caps) } || !caps.AoAc
+}
+
+fn set_scheme(scheme: &GUID) -> Result<()> {
+    unsafe { PowerSetActiveScheme(None, Some(scheme)).ok() }
+}
+
+pub fn ultimate_on() -> Result<bool> {
+    let active = active_scheme()?;
+    let key = format!(r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\{active:?}");
+    let name = reg::get_string(HKEY_LOCAL_MACHINE, &key, "FriendlyName")?.unwrap_or_default();
+    Ok(active == ULTIMATE || active == VANTIX_ULTIMATE || name.to_lowercase().contains("powrprof.dll,-19,"))
+}
+
+pub fn enable_ultimate() -> Saved {
+    let previous = active_scheme()?;
+    if set_scheme(&VANTIX_ULTIMATE).is_err() {
+        run("powercfg.exe", &["/duplicatescheme", &format!("{ULTIMATE:?}"), &format!("{VANTIX_ULTIMATE:?}")])?;
+        set_scheme(&VANTIX_ULTIMATE)?;
+    }
+    Ok(Some(format!("{previous:?}")))
+}
+
+/// Back to the plan that was active, or Balanced if that one was deleted since.
+pub fn restore_ultimate(previous: Option<&str>) -> Result<()> {
+    let previous = previous.and_then(|text| GUID::try_from(text).ok()).unwrap_or(BALANCED);
+    if set_scheme(&previous).is_err() {
+        set_scheme(&BALANCED)?;
+    }
+    // Fails when it no longer exists, which is fine.
+    let _ = run("powercfg.exe", &["/delete", &format!("{VANTIX_ULTIMATE:?}")]);
+    Ok(())
+}
+
+pub fn reset_ultimate() -> Result<()> {
+    restore_ultimate(None)
 }
 
 // Turned off, these go to the values Balanced uses on battery, which is the closest thing
@@ -732,6 +821,48 @@ mod tests {
             println!("{name}: {before} -> applied -> {before}, saved {previous:?}");
         }
         assert_eq!(reg::get_string(HKEY_CURRENT_USER, DX_KEY, DX_VALUE).unwrap(), dx_before);
+    }
+
+    /// Changes a setting on Balanced while another plan is active and puts it back:
+    /// `cargo test inactive_plan_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn inactive_plan_round_trip() {
+        let active = active_scheme().unwrap();
+        assert_ne!(active, BALANCED, "needs another plan active");
+        let balanced = format!("{BALANCED:?}");
+        let before = on_plan(Some(&balanced), || power(&SUB_PROCESSOR, &PROCTHROTTLEMIN)).unwrap();
+        let active_before = power(&SUB_PROCESSOR, &PROCTHROTTLEMIN).unwrap();
+        let previous = on_plan(Some(&balanced), set_full_clock).unwrap();
+        assert_eq!(on_plan(Some(&balanced), || power(&SUB_PROCESSOR, &PROCTHROTTLEMIN)).unwrap(), 100);
+        assert_eq!(active_scheme().unwrap(), active, "active plan switched");
+        assert_eq!(power(&SUB_PROCESSOR, &PROCTHROTTLEMIN).unwrap(), active_before, "active plan touched");
+        on_plan(Some(&balanced), || restore_full_clock(previous.as_deref())).unwrap();
+        assert_eq!(on_plan(Some(&balanced), || power(&SUB_PROCESSOR, &PROCTHROTTLEMIN)).unwrap(), before);
+        println!("balanced min processor: {before} -> 100 -> {before}, active plan untouched");
+    }
+
+    /// Switches to Ultimate Performance, prints what it sets and goes back:
+    /// `cargo test ultimate_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn ultimate_round_trip() {
+        let before = active_scheme().unwrap();
+        let previous = enable_ultimate().unwrap();
+        assert!(ultimate_on().unwrap());
+        for (name, subgroup, setting) in [
+            ("core parking min", SUB_PROCESSOR, CPMINCORES),
+            ("min processor", SUB_PROCESSOR, PROCTHROTTLEMIN),
+            ("boost mode", SUB_PROCESSOR, PERFBOOSTMODE),
+            ("pcie aspm", SUB_PCIEXPRESS, ASPM),
+            ("usb suspend", SUB_USB, USB_SUSPEND),
+        ] {
+            println!("{name}: {}", power(&subgroup, &setting).unwrap());
+        }
+        restore_ultimate(previous.as_deref()).unwrap();
+        assert_eq!(active_scheme().unwrap(), before);
+        assert!(set_scheme(&VANTIX_ULTIMATE).is_err(), "copy not removed");
+        println!("back to {before:?}");
     }
 }
 

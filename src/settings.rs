@@ -114,6 +114,9 @@ pub struct Change {
     /// The tweak was already in place before Vantix and this turned it off.
     #[serde(default)]
     pub reset: bool,
+    /// Power plan the change was made on, for the settings that live in a plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
 }
 
 pub fn data_dir() -> PathBuf {

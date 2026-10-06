@@ -593,6 +593,15 @@ msgstr "Excluir"
 msgid "Confirm"
 msgstr "Confirmar"
 
+msgid "Ultimate Performance power plan"
+msgstr "Plano de energia Desempenho Máximo"
+
+msgid "Turns on the plan Windows keeps hidden for workstations: every CPU core stays awake at full clock, boost kicks in sooner and the link to the graphics card and NVMe drives stays at full power. Undo goes back to the plan you were using."
+msgstr "Ativa o plano que o Windows deixa escondido para workstations: todos os núcleos da CPU ficam acordados no clock máximo, o boost entra mais cedo e a ligação com a placa de vídeo e os SSDs NVMe fica sempre em potência total. Desfazer volta para o plano que você usava."
+
+msgid "More power draw, heat and fan noise, even at idle."
+msgstr "Mais consumo, calor e barulho de ventoinha, mesmo parado."
+
 msgid "Turn off core parking"
 msgstr "Desligar o estacionamento de núcleos"
 
@@ -784,3 +793,24 @@ msgstr "Desativar este ajuste?"
 
 msgid "This was already set before Vantix. Turning it off puts the setting the other way, and you can undo it later from the card or from Protection."
 msgstr "Isso já estava assim antes do Vantix. Desativar coloca a configuração do outro jeito, e você pode desfazer depois pelo cartão ou pela Proteção."
+
+msgid "Startup apps"
+msgstr "Apps de inicialização"
+
+msgid "Programs that open on their own when you sign in. Turning one off doesn't uninstall or close it."
+msgstr "Programas que abrem sozinhos quando você entra no Windows. Desativar um não desinstala nem fecha o programa."
+
+msgid "No apps start with Windows."
+msgstr "Nenhum app abre com o Windows."
+
+msgid "{} of {} start with Windows. Changes count from the next sign-in."
+msgstr "{} de {} abrem com o Windows. As mudanças valem a partir do próximo login."
+
+msgid "All users"
+msgstr "Todos os usuários"
+
+msgid "This user"
+msgstr "Este usuário"
+
+msgid "{} in use now"
+msgstr "{} em uso agora"

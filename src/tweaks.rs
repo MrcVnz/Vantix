@@ -72,6 +72,9 @@ pub struct Tweak {
     pub estimate: fn() -> Option<u64>,
     /// Takes minutes rather than seconds.
     pub slow: bool,
+    /// A setting of the active power plan. Its changes stay with the plan they were made
+    /// on, so switching plans neither undoes them nor loses track of them.
+    pub on_plan: bool,
     pub kind: Kind,
 }
 
@@ -85,6 +88,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: hiberfil_size,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: hibernation_off,
             apply: disable_hibernation,
@@ -101,6 +105,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: has_reserved_storage,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: reserved_storage_off,
             apply: disable_reserved_storage,
@@ -117,6 +122,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: true,
+        on_plan: false,
         kind: Kind::Toggle {
             read: compact_os_on,
             apply: enable_compact_os,
@@ -133,6 +139,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: last_access_off,
             apply: disable_last_access,
@@ -149,7 +156,25 @@ pub const CATALOG: &[Tweak] = &[
         shown: || !ssd_volumes().is_empty(),
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Action { run: retrim },
+    },
+    Tweak {
+        id: "ultimate-plan",
+        section: Section::Performance,
+        gain: Level::Medium,
+        cost: Level::Medium,
+        reboot: false,
+        shown: boost::has_power_plans,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Toggle {
+            read: boost::ultimate_on,
+            apply: boost::enable_ultimate,
+            revert: boost::restore_ultimate,
+            reset: boost::reset_ultimate,
+        },
     },
     Tweak {
         id: "core-parking-off",
@@ -160,6 +185,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: true,
         kind: Kind::Toggle {
             read: boost::core_parking_off,
             apply: boost::disable_core_parking,
@@ -176,6 +202,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: true,
         kind: Kind::Toggle {
             read: boost::full_clock,
             apply: boost::set_full_clock,
@@ -192,6 +219,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: true,
         kind: Kind::Toggle {
             read: boost::boost_aggressive,
             apply: boost::set_boost_aggressive,
@@ -208,6 +236,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: true,
         kind: Kind::Toggle {
             read: boost::aspm_off,
             apply: boost::disable_aspm,
@@ -224,6 +253,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: true,
         kind: Kind::Toggle {
             read: boost::usb_suspend_off,
             apply: boost::disable_usb_suspend,
@@ -240,6 +270,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::hvci_off,
             apply: boost::disable_hvci,
@@ -256,6 +287,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: boost::has_16_gb,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::memory_compression_off,
             apply: boost::disable_memory_compression,
@@ -272,6 +304,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::windowed_flip,
             apply: boost::enable_windowed_flip,
@@ -288,6 +321,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::windowed_vrr,
             apply: boost::enable_windowed_vrr,
@@ -304,6 +338,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::game_dvr_off,
             apply: boost::disable_game_dvr,
@@ -320,6 +355,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::game_mode_on,
             apply: boost::enable_game_mode,
@@ -336,6 +372,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::hags_on,
             apply: boost::enable_hags,
@@ -352,6 +389,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: boost::is_windows_11,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::global_timer_on,
             apply: boost::enable_global_timer,
@@ -368,6 +406,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::mouse_acceleration_off,
             apply: boost::disable_mouse_acceleration,
@@ -384,6 +423,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::hotkeys_off,
             apply: boost::disable_hotkeys,
@@ -400,6 +440,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::fast_repeat,
             apply: boost::set_fast_repeat,
@@ -416,6 +457,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::game_filter_keys,
             apply: boost::set_game_filter_keys,
@@ -432,6 +474,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::store_background_off,
             apply: boost::disable_store_background,
@@ -448,6 +491,7 @@ pub const CATALOG: &[Tweak] = &[
         shown: always,
         estimate: none,
         slow: false,
+        on_plan: false,
         kind: Kind::Toggle {
             read: boost::telemetry_off,
             apply: boost::disable_telemetry,

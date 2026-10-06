@@ -6,6 +6,7 @@ mod memory;
 mod reg;
 mod restore;
 mod settings;
+mod startup;
 mod system;
 mod text;
 mod tweaks;
@@ -63,6 +64,12 @@ struct State {
     /// When this session made the baseline. WMI takes a few seconds to list a new point,
     /// so a listing right after can't be trusted to say it's gone.
     baseline_made: Option<Instant>,
+    startup: Vec<startup::Entry>,
+    /// The active power plan when the tweak states were last read. Cards show only the
+    /// changes made on it; changes on other plans stay in the journal.
+    active_plan: Option<String>,
+    /// Startup switches still being written.
+    startup_writes: u32,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -90,9 +97,10 @@ enum Ask {
 enum Op {
     Apply,
     Reset,
-    Revert(Option<String>),
-    /// Undoes a reset by applying the tweak again.
-    Reapply,
+    /// The saved state and, for power plan settings, the plan it was saved from.
+    Revert(Option<String>, Option<String>),
+    /// Undoes a reset by applying the tweak again, on the plan the reset was made on.
+    Reapply(Option<String>),
 }
 
 /// Lives for the whole process. The window comes and goes; the scheduler keeps running.
@@ -128,6 +136,9 @@ fn main() -> Result<(), slint::PlatformError> {
             journal_version: 0,
             baseline_alive: false,
             baseline_made: None,
+            startup: Vec::new(),
+            active_plan: None,
+            startup_writes: 0,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -369,6 +380,17 @@ impl App {
             }
         });
         self.show_storage(&ui, None);
+
+        let startup = ui.global::<Startup>();
+        startup.on_refresh(bind(self, |app| app.refresh_startup()));
+        startup.on_toggled({
+            let app = Rc::downgrade(self);
+            move |index, on| {
+                if let Some(app) = app.upgrade() {
+                    app.toggle_startup(index as usize, on);
+                }
+            }
+        });
 
         let terms = ui.global::<Terms>();
         terms.on_accepted(bind(self, |app| app.accept_terms()));
@@ -825,9 +847,11 @@ impl App {
     /// Reads every tweak's real state in parallel. A few of them start PowerShell, which
     /// takes about a second.
     fn refresh_tweaks(self: &Rc<Self>) {
-        let (version, baseline) = {
+        let (version, baseline, plans) = {
             let state = self.state.borrow();
-            (state.journal_version, state.settings.baseline_point)
+            let mut plans: Vec<String> = state.changes.iter().filter_map(|c| c.plan.clone()).collect();
+            plans.dedup();
+            (state.journal_version, state.settings.baseline_point, plans)
         };
         self.run_job(
             move || {
@@ -852,10 +876,11 @@ impl App {
                         .collect();
                     jobs.into_iter().map(|job| job.join().ok()).collect::<Vec<_>>()
                 });
-                (reads, alive)
+                let gone: Vec<String> = plans.into_iter().filter(|plan| !boost::plan_exists(plan)).collect();
+                (reads, alive, boost::active_plan(), gone)
             },
             move |app, results| {
-                let Some((results, alive)) = results else { return };
+                let Some((results, alive, active, gone)) = results else { return };
                 {
                     let mut state = app.state.borrow_mut();
                     let fresh =
@@ -865,23 +890,42 @@ impl App {
                         let (shown, on, estimate) = result.unwrap_or((false, None, None));
                         *info = TweakInfo { loaded: true, shown, on, estimate, ran: info.ran };
                     }
-                    // A change that Windows or the user undid elsewhere has nothing left to
-                    // undo. Only trusted when no change landed while these states were read.
+                    state.active_plan = active.clone();
+                    // Only trusted when no change landed while these states were read.
                     let current = state.journal_version == version && state.working.is_none();
-                    let stale: Vec<String> = state
+                    // Plan settings from before the journal kept plans were made on the plan
+                    // that's active now, unless the plan changed since.
+                    let mut dirty = false;
+                    if current {
+                        for change in &mut state.changes {
+                            if change.plan.is_none()
+                                && CATALOG.iter().any(|t| t.id == change.id && t.on_plan)
+                            {
+                                change.plan = active.clone();
+                                dirty = true;
+                            }
+                        }
+                    }
+                    // A change that Windows or the user undid elsewhere has nothing left to
+                    // undo, and neither has one whose plan was deleted. Changes on a plan that
+                    // isn't active can't be checked, so they stay.
+                    let stale: Vec<(String, Option<String>)> = state
                         .changes
                         .iter()
-                        .filter(|change| {
-                            CATALOG
-                                .iter()
-                                .position(|t| t.id == change.id)
-                                // A reset is stale once the tweak is back on, a change once it's off.
-                                .is_none_or(|i| state.tweaks[i].on == Some(change.reset))
+                        .filter(|change| match (CATALOG.iter().position(|t| t.id == change.id), &change.plan) {
+                            (None, _) => true,
+                            (Some(_), Some(plan)) if gone.contains(plan) => true,
+                            (Some(_), Some(plan)) if Some(plan) != active.as_ref() => false,
+                            // A reset is stale once the tweak is back on, a change once it's off.
+                            (Some(i), _) => state.tweaks[i].on == Some(change.reset),
                         })
-                        .map(|change| change.id.clone())
+                        .map(|change| (change.id.clone(), change.plan.clone()))
                         .collect();
                     if current && !stale.is_empty() {
-                        state.changes.retain(|change| !stale.contains(&change.id));
+                        state.changes.retain(|c| !stale.contains(&(c.id.clone(), c.plan.clone())));
+                        dirty = true;
+                    }
+                    if dirty {
                         let _ = settings::save_changes(&state.changes);
                     }
                 }
@@ -890,9 +934,67 @@ impl App {
         );
     }
 
+    fn refresh_startup(self: &Rc<Self>) {
+        self.run_job(startup::list, |app, entries| {
+            let Some(entries) = entries else { return };
+            // Read while a switch was being written, so it may show the old state.
+            if app.state.borrow().startup_writes > 0 {
+                return;
+            }
+            app.state.borrow_mut().startup = entries;
+            app.with_ui(|ui| app.show_startup(ui));
+        });
+    }
+
+    /// Updates one row in place, so the list keeps its scroll position. A failure rebuilds
+    /// the list instead: the switch already flipped itself and only a new row puts it back.
+    /// The entry is found again by what it is, since the list may have been read anew.
+    fn toggle_startup(self: &Rc<Self>, index: usize, on: bool) {
+        let Some(entry) = self.state.borrow().startup.get(index).cloned() else { return };
+        self.state.borrow_mut().startup_writes += 1;
+        self.run_job(
+            {
+                let entry = entry.clone();
+                move || startup::set_enabled(&entry, on)
+            },
+            move |app, result| {
+                app.state.borrow_mut().startup_writes -= 1;
+                if !matches!(result, Some(Ok(()))) {
+                    if let Some(Err(e)) = result {
+                        system::log_error("startup", &e);
+                    }
+                    app.with_ui(|ui| app.show_startup(ui));
+                    return;
+                }
+                let mut state = app.state.borrow_mut();
+                let Some(index) = state.startup.iter().position(|e| e.same(&entry)) else { return };
+                let entry = &mut state.startup[index];
+                entry.enabled = on;
+                let row = startup_row(entry);
+                let count = state.startup.iter().filter(|e| e.enabled).count() as i32;
+                app.with_ui(|ui| {
+                    let startup = ui.global::<Startup>();
+                    startup.get_rows().set_row_data(index, row);
+                    startup.set_enabled_count(count);
+                });
+            },
+        );
+    }
+
+    fn show_startup(&self, ui: &AppWindow) {
+        let state = self.state.borrow();
+        let rows: Vec<StartupRow> = state.startup.iter().map(startup_row).collect();
+        let startup = ui.global::<Startup>();
+        startup.set_enabled_count(state.startup.iter().filter(|e| e.enabled).count() as i32);
+        startup.set_rows(ModelRc::new(VecModel::from(rows)));
+        startup.set_loaded(true);
+    }
+
     fn show_tweaks(&self, ui: &AppWindow) {
         let state = self.state.borrow();
-        let change = |id: &str| state.changes.iter().find(|change| change.id == id);
+        let change = |id: &str| {
+            state.changes.iter().find(|c| c.id == id && (c.plan.is_none() || c.plan == state.active_plan))
+        };
         let row = |i: usize| {
             let (tweak, info) = (&CATALOG[i], state.tweaks[i]);
             let applied = change(tweak.id);
@@ -1040,7 +1142,11 @@ impl App {
             let mut state = self.state.borrow_mut();
             state.asked = None;
             let undo = |change: &Change| {
-                if change.reset { Op::Reapply } else { Op::Revert(change.previous.clone()) }
+                if change.reset {
+                    Op::Reapply(change.plan.clone())
+                } else {
+                    Op::Revert(change.previous.clone(), change.plan.clone())
+                }
             };
             let work = match ask {
                 Ask::Apply(i) => vec![(i, Op::Apply)],
@@ -1082,28 +1188,37 @@ impl App {
         self.run_job(
             move || {
                 let (free_before, _) = disk::system_drive_space();
+                let active = boost::active_plan();
                 let mut outcomes = Vec::new();
                 for (i, op) in work {
-                    let result = match (&CATALOG[i].kind, &op) {
+                    let tweak = &CATALOG[i];
+                    // Undo goes to the plan the change was made on; new changes land on the
+                    // active one.
+                    let plan = match &op {
+                        Op::Revert(_, plan) | Op::Reapply(plan) => plan.clone().or_else(|| active.clone()),
+                        Op::Apply | Op::Reset => active.clone(),
+                    }
+                    .filter(|_| tweak.on_plan);
+                    let result = boost::on_plan(plan.as_deref(), || match (&tweak.kind, &op) {
                         (Kind::Toggle { apply, .. }, Op::Apply) => apply(),
                         (Kind::Toggle { reset, .. }, Op::Reset) => reset().map(|_| None),
-                        (Kind::Toggle { revert, .. }, Op::Revert(previous)) => {
+                        (Kind::Toggle { revert, .. }, Op::Revert(previous, _)) => {
                             revert(previous.as_deref()).map(|_| None)
                         }
-                        (Kind::Toggle { apply, .. }, Op::Reapply) => apply().map(|_| None),
+                        (Kind::Toggle { apply, .. }, Op::Reapply(_)) => apply().map(|_| None),
                         (Kind::Action { run }, _) => run().map(|_| None),
-                    };
+                    });
                     let failed = result.is_err();
-                    outcomes.push((i, op, result));
+                    outcomes.push((i, op, plan, result));
                     if failed {
                         break;
                     }
                 }
                 let (free_after, _) = disk::system_drive_space();
-                (outcomes, free_after.saturating_sub(free_before))
+                (outcomes, free_after.saturating_sub(free_before), active)
             },
             |app, result| {
-                let Some((outcomes, gained)) = result else {
+                let Some((outcomes, gained, active)) = result else {
                     app.state.borrow_mut().working = None;
                     app.set_job(JobState::Failed, "");
                     app.with_ui(|ui| app.show_tweaks(ui));
@@ -1118,12 +1233,17 @@ impl App {
                     let mut state = app.state.borrow_mut();
                     state.working = None;
                     state.journal_version += 1;
-                    for (i, op, result) in outcomes {
+                    for (i, op, plan, result) in outcomes {
                         let tweak = &CATALOG[i];
                         match result {
                             Ok(previous) => {
                                 reboot |= tweak.reboot;
-                                state.changes.retain(|c| c.id != tweak.id);
+                                // Old entries of a plan setting have no plan yet; they belong to
+                                // the plan that was active, like the change replacing them.
+                                state.changes.retain(|c| {
+                                    let owner = c.plan.as_ref().or(active.as_ref()).filter(|_| tweak.on_plan);
+                                    c.id != tweak.id || owner != plan.as_ref()
+                                });
                                 let journal = |reset: bool| Change {
                                     id: tweak.id.into(),
                                     time: Local::now(),
@@ -1132,16 +1252,20 @@ impl App {
                                     reboot: tweak.reboot,
                                     freed: gained,
                                     reset,
+                                    plan: plan.clone(),
                                 };
-                                if let Kind::Toggle { .. } = tweak.kind {
-                                    let on = matches!(op, Op::Apply | Op::Reapply);
+                                // A change on another plan doesn't alter what the card shows.
+                                if let Kind::Toggle { .. } = tweak.kind
+                                    && (plan.is_none() || plan == active)
+                                {
+                                    let on = matches!(op, Op::Apply | Op::Reapply(_));
                                     state.tweaks[i].on = Some(on);
                                 }
                                 match (&tweak.kind, op) {
                                     (Kind::Action { .. }, _) => state.tweaks[i].ran = true,
                                     (_, Op::Apply) => state.changes.push(journal(false)),
                                     (_, Op::Reset) => state.changes.push(journal(true)),
-                                    (_, Op::Revert(_) | Op::Reapply) => {}
+                                    (_, Op::Revert(..) | Op::Reapply(_)) => {}
                                 }
                             }
                             Err(e) => {
@@ -1285,6 +1409,16 @@ fn level_from_index(index: i32) -> Level {
         0 => Level::Quick,
         2 => Level::Deep,
         _ => Level::Standard,
+    }
+}
+
+fn startup_row(entry: &startup::Entry) -> StartupRow {
+    StartupRow {
+        name: entry.name.as_str().into(),
+        publisher: entry.publisher.as_str().into(),
+        all_users: entry.all_users,
+        enabled: entry.enabled,
+        memory: entry.memory.map(format_bytes).unwrap_or_default().into(),
     }
 }
 

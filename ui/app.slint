@@ -4,9 +4,11 @@ import { Protection, ProtectionPage, Job, JobState, JobSheet, RestorePoint } fro
 import { Storage, StoragePage, CleanupRow, RowState } from "storage.slint";
 import { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, RebootBanner, SectionPage } from "tweaks.slint";
 import { Terms, TermsSheet, TermsLine, TermsParagraph } from "terms.slint";
+import { Startup, StartupRow, BackgroundPage } from "startup.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
+export { Startup, StartupRow }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -366,12 +368,9 @@ export component AppWindow inherits Window {
                     subtitle: @tr("Mouse and keyboard behavior that gets in the way during games.");
                     rows: Tweaks.input;
                 }
-                if root.page == 7: SectionPage {
+                if root.page == 7: BackgroundPage {
                     width: parent.width;
                     height: parent.height;
-                    title: @tr("Background");
-                    subtitle: @tr("What keeps running when you're not using it.");
-                    rows: Tweaks.background;
                 }
             }
         }

@@ -1,0 +1,98 @@
+import { Theme, Card, Toggle, Segmented } from "theme.slint";
+import { ListView } from "std-widgets.slint";
+import { Tweaks, TweakList } from "tweaks.slint";
+
+/// One program that starts with Windows, from a Run key or a Startup folder.
+export struct StartupRow {
+    name: string,
+    publisher: string,
+    all-users: bool,
+    enabled: bool,
+    /// RAM its processes use right now, empty when it isn't running.
+    memory: string,
+}
+
+export global Startup {
+    in property <[StartupRow]> rows;
+    in property <int> enabled-count;
+    in property <bool> loaded;
+    /// Startup apps or tweaks, kept while the page itself comes and goes.
+    in-out property <int> tab;
+
+    callback refresh();
+    callback toggled(int, bool);
+}
+
+export component BackgroundPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    // The list is read again every time the page opens, so the RAM figures are current.
+    init => { Startup.refresh(); }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: @tr("Background");
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 28px;
+                font-weight: 700;
+            }
+            Text {
+                text: Startup.tab == 0
+                    ? @tr("Programs that open on their own when you sign in. Turning one off doesn't uninstall or close it.")
+                    : @tr("What keeps running when you're not using it.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Segmented {
+                width: 290px;
+                options: [@tr("Startup apps"), @tr("Tweaks")];
+                selected <=> Startup.tab;
+            }
+        }
+    }
+
+    if Startup.tab == 1: TweakList {
+        vertical-stretch: 1;
+        rows: Tweaks.background;
+    }
+
+    if Startup.tab == 0: Card {
+        vertical-stretch: 1;
+        pad: 14px;
+
+        Text {
+            x: 6px;
+            text: !Startup.loaded ? @tr("Loading...")
+                : Startup.rows.length == 0 ? @tr("No apps start with Windows.")
+                : @tr("{} of {} start with Windows. Changes count from the next sign-in.", Startup.enabled-count, Startup.rows.length);
+            color: Theme.text;
+            font-weight: 600;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for row[i] in Startup.rows: HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 14px;
+                Toggle {
+                    text: row.name;
+                    detail: (row.publisher != "" ? row.publisher + "  ·  " : "")
+                        + (row.all-users ? @tr("All users") : @tr("This user"))
+                        + (row.memory != "" ? "  ·  " + @tr("{} in use now", row.memory) : "");
+                    checked: row.enabled;
+                    toggled(on) => { Startup.toggled(i, on); }
+                }
+            }
+        }
+    }
+}
