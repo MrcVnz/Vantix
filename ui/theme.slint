@@ -24,7 +24,9 @@ export global Theme {
     out property <length> radius-small: 10px;
     out property <length> gap: 16px;
 
-    out property <string> display-font: "Segoe UI Variable Display";
+    // Set from main.rs: Segoe UI Variable on Windows 11, Segoe UI on Windows 10.
+    in-out property <string> text-font: "Segoe UI Variable Text";
+    in-out property <string> display-font: "Segoe UI Variable Display";
 }
 
 // Paths from Lucide (ISC license), 24x24 viewbox, stroked.

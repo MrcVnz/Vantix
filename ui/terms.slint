@@ -1,5 +1,5 @@
 import { Theme, Icons, Icon, Button } from "theme.slint";
-import { CheckBox } from "std-widgets.slint";
+import { CheckBox, ScrollView } from "std-widgets.slint";
 
 export struct TermsLine {
     words: [string],
@@ -68,92 +68,100 @@ export component TermsSheet inherits Rectangle {
 
     TouchArea {}
 
-    Rectangle {
-        opacity: Terms.shown ? 1 : 0;
-        animate opacity { duration: 220ms; easing: ease-out; }
-        width: 620px;
-        height: content.preferred-height;
-        y: (parent.height - self.height) / 2 + (Terms.shown ? 0 : 16px);
-        animate y { duration: 260ms; easing: ease-out-quart; }
-        background: Theme.surface;
-        border-radius: Theme.radius;
-        border-width: 1px;
-        border-color: Theme.border-strong;
+    // On a short screen the card is taller than the window, so it scrolls instead of
+    // leaving the buttons out of reach.
+    scroll := ScrollView {
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, card.height + 40px);
 
-        content := VerticalLayout {
-            padding: 30px;
-            spacing: 20px;
+        card := Rectangle {
+            opacity: Terms.shown ? 1 : 0;
+            animate opacity { duration: 220ms; easing: ease-out; }
+            x: (scroll.content-width - self.width) / 2;
+            width: 620px;
+            height: content.preferred-height;
+            y: (scroll.content-height - self.height) / 2 + (Terms.shown ? 0 : 16px);
+            animate y { duration: 260ms; easing: ease-out-quart; }
+            background: Theme.surface;
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: Theme.border-strong;
 
-            HorizontalLayout {
-                spacing: 14px;
-                alignment: start;
+            content := VerticalLayout {
+                padding: 30px;
+                spacing: 20px;
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 44px;
+                        height: 44px;
+                        border-radius: 12px;
+                        background: Theme.warn.with-alpha(0.12);
+                        Icon {
+                            data: Icons.alert;
+                            size: 22px;
+                            tint: Theme.warn;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: @tr("Before you start");
+                            color: Theme.text;
+                            font-family: Theme.display-font;
+                            font-size: 22px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: @tr("Please read this once. It takes a minute.");
+                            color: Theme.muted;
+                        }
+                    }
+                }
 
                 Rectangle {
-                    width: 44px;
-                    height: 44px;
-                    border-radius: 12px;
-                    background: Theme.warn.with-alpha(0.12);
-                    Icon {
-                        data: Icons.alert;
-                        size: 22px;
-                        tint: Theme.warn;
+                    background: Theme.background;
+                    border-radius: Theme.radius-small;
+                    border-width: 1px;
+                    border-color: Theme.border;
+
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 14px;
+
+                        Paragraph { index: 0; }
+                        Paragraph { index: 1; }
+                        Paragraph {
+                            index: 2;
+                            tint: Theme.text;
+                        }
+                        Paragraph { index: 3; }
                     }
                 }
 
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 2px;
-                    Text {
-                        text: @tr("Before you start");
-                        color: Theme.text;
-                        font-family: Theme.display-font;
-                        font-size: 22px;
-                        font-weight: 700;
-                    }
-                    Text {
-                        text: @tr("Please read this once. It takes a minute.");
-                        color: Theme.muted;
-                    }
+                CheckBox {
+                    text: @tr("I have read and understand the risks");
+                    checked <=> root.understood;
                 }
-            }
 
-            Rectangle {
-                background: Theme.background;
-                border-radius: Theme.radius-small;
-                border-width: 1px;
-                border-color: Theme.border;
-
-                VerticalLayout {
-                    padding: 20px;
-                    spacing: 14px;
-
-                    Paragraph { index: 0; }
-                    Paragraph { index: 1; }
-                    Paragraph {
-                        index: 2;
-                        tint: Theme.text;
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 10px;
+                    Button {
+                        text: @tr("Decline");
+                        clicked => { Terms.declined(); }
                     }
-                    Paragraph { index: 3; }
-                }
-            }
-
-            CheckBox {
-                text: @tr("I have read and understand the risks");
-                checked <=> root.understood;
-            }
-
-            HorizontalLayout {
-                alignment: end;
-                spacing: 10px;
-                Button {
-                    text: @tr("Decline");
-                    clicked => { Terms.declined(); }
-                }
-                Button {
-                    text: @tr("Accept");
-                    primary: true;
-                    enabled: root.understood;
-                    clicked => { Terms.accepted(); }
+                    Button {
+                        text: @tr("Accept");
+                        primary: true;
+                        enabled: root.understood;
+                        clicked => { Terms.accepted(); }
+                    }
                 }
             }
         }

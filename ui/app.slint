@@ -1,4 +1,5 @@
 import { Theme, Icons, Icon, Card, Segmented, Toggle, Button } from "theme.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Memory, MemoryPage, CleanState, HistoryRow } from "memory.slint";
 import { Protection, ProtectionPage, Job, JobState, JobSheet, RestorePoint } from "protection.slint";
 import { Storage, StoragePage, CleanupRow, RowState } from "storage.slint";
@@ -10,7 +11,7 @@ import { Net, InternetPage, PingRow, BloatResult, DnsRow, UsageRow } from "inter
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -67,6 +68,16 @@ component NavItem inherits Rectangle {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
+}
+
+/// Holds one page. It only scrolls when the window is shorter than what the page needs,
+/// so on a large screen pages fill the space as before.
+component PageScroll inherits ScrollView {
+    in property <length> needs;
+    width: 100%;
+    height: 100%;
+    content-width: self.visible-width;
+    content-height: max(self.visible-height, self.needs);
 }
 
 component SettingsPage inherits VerticalLayout {
@@ -191,11 +202,12 @@ export component AppWindow inherits Window {
     // Fixed so the window never resizes when switching pages; the Memory page is the largest.
     preferred-width: 1180px;
     preferred-height: 800px;
-    // Also set by hand on the native window, see limit_size in main.rs.
-    min-width: 1100px;
-    min-height: 760px;
+    // Pages scroll below this. Also set by hand on the native window and lowered there to
+    // fit small screens, see fit_to_screen in main.rs.
+    min-width: 1000px;
+    min-height: 560px;
     background: root.repaint ? Theme.background : Theme.background.brighter(0.004);
-    default-font-family: "Segoe UI Variable Text";
+    default-font-family: Theme.text-font;
     default-font-size: 13px;
 
     // Faint glow from the top right corner so the background isn't a flat slab.
@@ -342,62 +354,91 @@ export component AppWindow inherits Window {
 
             // A plain Rectangle instead of a layout, so the active page's size hints
             // don't propagate up and resize the window.
+            // Each page sits in a PageScroll, which only scrolls when the window is shorter
+            // than the page needs, as on a 1366 x 768 laptop or 1080p at 150%.
             Rectangle {
                 vertical-stretch: 1;
-                if root.page == 0: MemoryPage {
-                    width: parent.width;
-                    height: parent.height;
-                }
-                if root.page == 1: SettingsPage {
-                    width: parent.width;
-                    height: parent.height;
-                }
-                if root.page == 2: ProtectionPage {
-                    width: parent.width;
-                    height: parent.height;
-                }
-                if root.page == 3: StoragePage {
-                    width: parent.width;
-                    height: parent.height;
-                }
-                if root.page == 4: SectionPage {
-                    width: parent.width;
-                    height: parent.height;
-                    title: @tr("Performance");
-                    subtitle: @tr("Power and CPU settings that trade efficiency for speed. They apply to the active power plan, while plugged in.");
-                    rows: Tweaks.performance;
-                    VerticalLayout {
-                        padding-bottom: 12px;
-                        padding-right: 12px;
-                        ProBalanceCard {}
+                if root.page == 0: s0 := PageScroll {
+                    needs: p0.min-height;
+                    p0 := MemoryPage {
+                        width: s0.visible-width;
+                        height: s0.content-height;
                     }
                 }
-                if root.page == 5: SectionPage {
-                    width: parent.width;
-                    height: parent.height;
-                    title: @tr("Games");
-                    subtitle: @tr("Windows settings that affect frame rate, latency and stutter in games.");
-                    rows: Tweaks.games;
-                    VerticalLayout {
-                        padding-bottom: 12px;
-                        padding-right: 12px;
-                        GameModeCard {}
+                if root.page == 1: s1 := PageScroll {
+                    needs: p1.min-height;
+                    p1 := SettingsPage {
+                        width: s1.visible-width;
+                        height: s1.content-height;
                     }
                 }
-                if root.page == 6: SectionPage {
-                    width: parent.width;
-                    height: parent.height;
-                    title: @tr("Input");
-                    subtitle: @tr("Mouse and keyboard behavior that gets in the way during games.");
-                    rows: Tweaks.input;
+                if root.page == 2: s2 := PageScroll {
+                    needs: p2.min-height;
+                    p2 := ProtectionPage {
+                        width: s2.visible-width;
+                        height: s2.content-height;
+                    }
                 }
-                if root.page == 7: BackgroundPage {
-                    width: parent.width;
-                    height: parent.height;
+                if root.page == 3: s3 := PageScroll {
+                    needs: p3.min-height;
+                    p3 := StoragePage {
+                        width: s3.visible-width;
+                        height: s3.content-height;
+                    }
                 }
-                if root.page == 8: InternetPage {
-                    width: parent.width;
-                    height: parent.height;
+                if root.page == 4: s4 := PageScroll {
+                    needs: p4.min-height;
+                    p4 := SectionPage {
+                        width: s4.visible-width;
+                        height: s4.content-height;
+                        title: @tr("Performance");
+                        subtitle: @tr("Power and CPU settings that trade efficiency for speed. They apply to the active power plan, while plugged in.");
+                        rows: Tweaks.performance;
+                        VerticalLayout {
+                            padding-bottom: 12px;
+                            padding-right: 12px;
+                            ProBalanceCard {}
+                        }
+                    }
+                }
+                if root.page == 5: s5 := PageScroll {
+                    needs: p5.min-height;
+                    p5 := SectionPage {
+                        width: s5.visible-width;
+                        height: s5.content-height;
+                        title: @tr("Games");
+                        subtitle: @tr("Windows settings that affect frame rate, latency and stutter in games.");
+                        rows: Tweaks.games;
+                        VerticalLayout {
+                            padding-bottom: 12px;
+                            padding-right: 12px;
+                            GameModeCard {}
+                        }
+                    }
+                }
+                if root.page == 6: s6 := PageScroll {
+                    needs: p6.min-height;
+                    p6 := SectionPage {
+                        width: s6.visible-width;
+                        height: s6.content-height;
+                        title: @tr("Input");
+                        subtitle: @tr("Mouse and keyboard behavior that gets in the way during games.");
+                        rows: Tweaks.input;
+                    }
+                }
+                if root.page == 7: s7 := PageScroll {
+                    needs: p7.min-height;
+                    p7 := BackgroundPage {
+                        width: s7.visible-width;
+                        height: s7.content-height;
+                    }
+                }
+                if root.page == 8: s8 := PageScroll {
+                    needs: p8.min-height;
+                    p8 := InternetPage {
+                        width: s8.visible-width;
+                        height: s8.content-height;
+                    }
                 }
             }
         }

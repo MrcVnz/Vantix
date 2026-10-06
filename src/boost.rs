@@ -272,6 +272,15 @@ power_tweak!(
 const HVCI_KEY: &str =
     r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
 
+/// Only where Memory integrity is on or was set either way. On a PC where it never ran
+/// there's nothing to gain, and the card would offer to turn it on as its "undo".
+pub fn shows_hvci() -> bool {
+    match reg::get_dword(HKEY_LOCAL_MACHINE, HVCI_KEY, "Enabled") {
+        Ok(Some(_)) => true,
+        _ => hvci_running().unwrap_or(false),
+    }
+}
+
 pub fn hvci_off() -> Result<bool> {
     match reg::get_dword(HKEY_LOCAL_MACHINE, HVCI_KEY, "Enabled")? {
         Some(0) => Ok(true),
@@ -564,13 +573,64 @@ dword_tweak!(
     None
 );
 
-/// Windows 11 is what started ignoring timer requests from hidden windows.
-pub fn is_windows_11() -> bool {
+/// The Windows build, as in 19045 for Windows 10 22H2. 0 when it can't be read, which
+/// hides whatever needs a newer build.
+pub fn windows_build() -> u32 {
     reg::get_string(HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "CurrentBuildNumber")
         .ok()
         .flatten()
-        .and_then(|build| build.parse::<u32>().ok())
-        .is_some_and(|build| build >= 22000)
+        .and_then(|build| build.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Windows 11 is what started ignoring timer requests from hidden windows.
+pub fn is_windows_11() -> bool {
+    windows_build() >= 22000
+}
+
+/// "Variable refresh rate" in Graphics settings arrived in Windows 10 1903.
+pub fn has_windowed_vrr() -> bool {
+    windows_build() >= 18362
+}
+
+/// Hardware scheduling needs Windows 10 2004 and a GPU driver that offers it, the same
+/// check Windows makes before showing the switch in Graphics settings.
+pub fn has_hags() -> bool {
+    use windows::Wdk::Graphics::Direct3D::{
+        D3DKMT_ADAPTERINFO, D3DKMT_CLOSEADAPTER, D3DKMT_ENUMADAPTERS2, D3DKMT_QUERYADAPTERINFO,
+        D3DKMT_WDDM_2_7_CAPS, D3DKMTCloseAdapter, D3DKMTEnumAdapters2, D3DKMTQueryAdapterInfo,
+        KMTQAITYPE_WDDM_2_7_CAPS,
+    };
+    if windows_build() < 19041 {
+        return false;
+    }
+    unsafe {
+        let mut enumerate = D3DKMT_ENUMADAPTERS2::default();
+        if D3DKMTEnumAdapters2(&mut enumerate).is_err() || enumerate.NumAdapters == 0 {
+            return false;
+        }
+        let mut adapters = vec![D3DKMT_ADAPTERINFO::default(); enumerate.NumAdapters as usize];
+        enumerate.pAdapters = adapters.as_mut_ptr();
+        if D3DKMTEnumAdapters2(&mut enumerate).is_err() {
+            return false;
+        }
+        let mut supported = false;
+        for adapter in &adapters[..enumerate.NumAdapters as usize] {
+            let mut caps = D3DKMT_WDDM_2_7_CAPS::default();
+            let mut query = D3DKMT_QUERYADAPTERINFO {
+                hAdapter: adapter.hAdapter,
+                Type: KMTQAITYPE_WDDM_2_7_CAPS,
+                pPrivateDriverData: (&raw mut caps).cast(),
+                PrivateDriverDataSize: size_of::<D3DKMT_WDDM_2_7_CAPS>() as u32,
+            };
+            // Bit 0 is HwSchSupported.
+            if D3DKMTQueryAdapterInfo(&mut query).is_ok() && caps.Anonymous.Value & 1 != 0 {
+                supported = true;
+            }
+            let _ = D3DKMTCloseAdapter(&D3DKMT_CLOSEADAPTER { hAdapter: adapter.hAdapter });
+        }
+        supported
+    }
 }
 
 // Mouse acceleration: the third SPI_GETMOUSE value is "Enhance pointer precision".

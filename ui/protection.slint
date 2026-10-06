@@ -1,5 +1,5 @@
 import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
-import { LineEdit, ListView } from "std-widgets.slint";
+import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 import { Tweaks, TweakText, LevelTag, RebootChip } from "tweaks.slint";
 
 export struct RestorePoint {
@@ -83,172 +83,180 @@ export component JobSheet inherits Rectangle {
         triggered => { Job.elapsed += 1; }
     }
 
-    Rectangle {
-        width: 440px;
-        height: content.preferred-height;
-        background: Theme.surface;
-        border-radius: Theme.radius;
-        border-width: 1px;
-        border-color: Theme.border-strong;
+    // Scrolls only when the window is shorter than the card.
+    scroll := ScrollView {
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, card.height + 32px);
 
-        content := VerticalLayout {
-            padding: 26px;
-            spacing: 14px;
+        card := Rectangle {
+            x: (scroll.content-width - self.width) / 2;
+            y: (scroll.content-height - self.height) / 2;
+            width: 440px;
+            height: content.preferred-height;
+            background: Theme.surface;
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: Theme.border-strong;
 
-            HorizontalLayout {
+            content := VerticalLayout {
+                padding: 26px;
                 spacing: 14px;
-                alignment: start;
 
-                Rectangle {
-                    width: 42px;
-                    height: 42px;
-                    border-radius: 12px;
-                    background: (root.failed ? Theme.bad : Theme.accent).with-alpha(0.12);
-                    Icon {
-                        data: root.failed ? Icons.alert : Job.state == JobState.done ? Icons.check
-                            : Job.state == JobState.confirm && Job.undo ? Icons.history : Icons.shield;
-                        size: 20px;
-                        tint: root.failed ? Theme.bad : Theme.accent;
-                    }
-                }
-
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 2px;
-                    Text {
-                        text: Job.state == JobState.confirm
-                                ? (Job.undo && Job.tweak < 0 ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?")
-                                    : Job.reset ? @tr("Turn this tweak off?") : @tr("Apply this change?"))
-                            : Job.state == JobState.creating-point ? @tr("Creating a restore point")
-                            : Job.state == JobState.applying
-                                ? (Job.undo ? @tr("Undoing changes") : Job.reset ? @tr("Turning off") : @tr("Applying changes"))
-                            : Job.state == JobState.point-failed ? @tr("Couldn't create the restore point")
-                            : Job.state == JobState.done
-                                ? (Job.undo && Job.tweak < 0 ? @tr("Every change undone") : Job.undo ? @tr("Change undone")
-                                    : Job.reset ? @tr("Turned off") : Job.toggle ? @tr("Applied") : @tr("Done"))
-                            : @tr("Something went wrong");
-                        color: Theme.text;
-                        font-size: 16px;
-                        font-weight: 700;
-                    }
-                    Text {
-                        text: Job.subject;
-                        color: Theme.muted;
-                        overflow: elide;
-                    }
-                }
-            }
-
-            if Job.state == JobState.confirm: VerticalLayout {
-                spacing: 12px;
-                if Job.reset: Text {
-                    text: @tr("This was already set before Vantix. Turning it off puts the setting the other way, and you can undo it later from the card or from Protection.");
-                    color: Theme.muted;
-                    wrap: word-wrap;
-                    width: root.text-width;
-                }
-                if !Job.undo && !Job.reset: HorizontalLayout {
-                    spacing: 18px;
-                    alignment: start;
-                    LevelTag { level: Job.gain; }
-                    LevelTag {
-                        is-cost: true;
-                        level: Job.cost;
-                    }
-                    RebootChip { reboot: Job.reboot; }
-                }
-                if !Job.undo && !Job.reset && Job.tweak >= 0 && TweakText.notes[Job.tweak] != "": Text {
-                    text: TweakText.notes[Job.tweak];
-                    color: Theme.warn;
-                    wrap: word-wrap;
-                    width: root.text-width;
-                }
-                Text {
-                    text: Job.undo ? @tr("Puts back how it was before Vantix changed it.")
-                        : Job.with-point ? @tr("This is the first change, so Vantix creates a restore point first.")
-                        : Job.baseline ? @tr("The restore point made before Vantix's first change still covers this one, and Vantix keeps its own record to undo it.")
-                        : Job.protection-off ? @tr("System protection is off, so there won't be a restore point. Vantix still keeps its own record to undo this.")
-                        : @tr("Nothing to back up for this one, it runs right away.");
-                    color: Theme.muted;
-                    wrap: word-wrap;
-                    width: root.text-width;
-                }
-            }
-
-            if root.busy: VerticalLayout {
-                spacing: 10px;
-                Rectangle {
-                    height: 4px;
-                    border-radius: 2px;
-                    background: Theme.raised;
-                    clip: true;
-                    Rectangle {
-                        width: parent.width * 0.35;
-                        x: (1 - cos(animation-tick() / 4ms * 1deg)) / 2 * (parent.width - self.width);
-                        border-radius: 2px;
-                        background: Theme.accent;
-                    }
-                }
                 HorizontalLayout {
-                    Text {
-                        text: Job.state == JobState.creating-point
-                            ? @tr("This can take up to two minutes. Keep the PC on.")
-                            : Job.slow ? @tr("This one takes several minutes. You can keep using the PC.")
-                            : @tr("Almost there.");
+                    spacing: 14px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 42px;
+                        height: 42px;
+                        border-radius: 12px;
+                        background: (root.failed ? Theme.bad : Theme.accent).with-alpha(0.12);
+                        Icon {
+                            data: root.failed ? Icons.alert : Job.state == JobState.done ? Icons.check
+                                : Job.state == JobState.confirm && Job.undo ? Icons.history : Icons.shield;
+                            size: 20px;
+                            tint: root.failed ? Theme.bad : Theme.accent;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: Job.state == JobState.confirm
+                                    ? (Job.undo && Job.tweak < 0 ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?")
+                                        : Job.reset ? @tr("Turn this tweak off?") : @tr("Apply this change?"))
+                                : Job.state == JobState.creating-point ? @tr("Creating a restore point")
+                                : Job.state == JobState.applying
+                                    ? (Job.undo ? @tr("Undoing changes") : Job.reset ? @tr("Turning off") : @tr("Applying changes"))
+                                : Job.state == JobState.point-failed ? @tr("Couldn't create the restore point")
+                                : Job.state == JobState.done
+                                    ? (Job.undo && Job.tweak < 0 ? @tr("Every change undone") : Job.undo ? @tr("Change undone")
+                                        : Job.reset ? @tr("Turned off") : Job.toggle ? @tr("Applied") : @tr("Done"))
+                                : @tr("Something went wrong");
+                            color: Theme.text;
+                            font-size: 16px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: Job.subject;
+                            color: Theme.muted;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                if Job.state == JobState.confirm: VerticalLayout {
+                    spacing: 12px;
+                    if Job.reset: Text {
+                        text: @tr("This was already set before Vantix. Turning it off puts the setting the other way, and you can undo it later from the card or from Protection.");
                         color: Theme.muted;
                         wrap: word-wrap;
-                        horizontal-stretch: 1;
+                        width: root.text-width;
+                    }
+                    if !Job.undo && !Job.reset: HorizontalLayout {
+                        spacing: 18px;
+                        alignment: start;
+                        LevelTag { level: Job.gain; }
+                        LevelTag {
+                            is-cost: true;
+                            level: Job.cost;
+                        }
+                        RebootChip { reboot: Job.reboot; }
+                    }
+                    if !Job.undo && !Job.reset && Job.tweak >= 0 && TweakText.notes[Job.tweak] != "": Text {
+                        text: TweakText.notes[Job.tweak];
+                        color: Theme.warn;
+                        wrap: word-wrap;
+                        width: root.text-width;
                     }
                     Text {
-                        text: Job.elapsed + " s";
-                        color: Theme.faint;
+                        text: Job.undo ? @tr("Puts back how it was before Vantix changed it.")
+                            : Job.with-point ? @tr("This is the first change, so Vantix creates a restore point first.")
+                            : Job.baseline ? @tr("The restore point made before Vantix's first change still covers this one, and Vantix keeps its own record to undo it.")
+                            : Job.protection-off ? @tr("System protection is off, so there won't be a restore point. Vantix still keeps its own record to undo this.")
+                            : @tr("Nothing to back up for this one, it runs right away.");
+                        color: Theme.muted;
+                        wrap: word-wrap;
+                        width: root.text-width;
                     }
                 }
-            }
 
-            if Job.state == JobState.done && Job.freed != "": Text {
-                text: @tr("Freed {}", Job.freed);
-                color: Theme.accent;
-                font-weight: 600;
-            }
-
-            if Job.state == JobState.done && Job.reboot: Text {
-                text: @tr("Takes effect after a restart.");
-                color: Theme.muted;
-                wrap: word-wrap;
-                width: root.text-width;
-            }
-
-            if (root.failed || Job.state == JobState.done) && Job.detail != "": Text {
-                text: Job.detail;
-                color: Theme.muted;
-                wrap: word-wrap;
-                width: root.text-width;
-            }
-
-            if Job.state == JobState.point-failed && Job.has-change: Text {
-                text: @tr("You can still apply the change without a restore point. Vantix keeps its own record to undo it.");
-                color: Theme.muted;
-                wrap: word-wrap;
-                width: root.text-width;
-            }
-
-            if !root.busy: HorizontalLayout {
-                alignment: end;
-                spacing: 10px;
-                Button {
-                    text: Job.state == JobState.confirm || (Job.state == JobState.point-failed && Job.has-change) ? @tr("Cancel") : @tr("Close");
-                    clicked => { Job.dismiss(); }
+                if root.busy: VerticalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.raised;
+                        clip: true;
+                        Rectangle {
+                            width: parent.width * 0.35;
+                            x: (1 - cos(animation-tick() / 4ms * 1deg)) / 2 * (parent.width - self.width);
+                            border-radius: 2px;
+                            background: Theme.accent;
+                        }
+                    }
+                    HorizontalLayout {
+                        Text {
+                            text: Job.state == JobState.creating-point
+                                ? @tr("This can take up to two minutes. Keep the PC on.")
+                                : Job.slow ? @tr("This one takes several minutes. You can keep using the PC.")
+                                : @tr("Almost there.");
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: Job.elapsed + " s";
+                            color: Theme.faint;
+                        }
+                    }
                 }
-                if Job.state == JobState.confirm: Button {
-                    text: Job.undo ? @tr("Undo") : Job.reset ? @tr("Turn off") : @tr("Apply");
-                    primary: true;
-                    clicked => { Job.confirm(); }
+
+                if Job.state == JobState.done && Job.freed != "": Text {
+                    text: @tr("Freed {}", Job.freed);
+                    color: Theme.accent;
+                    font-weight: 600;
                 }
-                if Job.state == JobState.point-failed && Job.has-change: Button {
-                    text: @tr("Apply without a restore point");
-                    primary: true;
-                    clicked => { Job.proceed-without-point(); }
+
+                if Job.state == JobState.done && Job.reboot: Text {
+                    text: @tr("Takes effect after a restart.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+
+                if (root.failed || Job.state == JobState.done) && Job.detail != "": Text {
+                    text: Job.detail;
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+
+                if Job.state == JobState.point-failed && Job.has-change: Text {
+                    text: @tr("You can still apply the change without a restore point. Vantix keeps its own record to undo it.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+
+                if !root.busy: HorizontalLayout {
+                    alignment: end;
+                    spacing: 10px;
+                    Button {
+                        text: Job.state == JobState.confirm || (Job.state == JobState.point-failed && Job.has-change) ? @tr("Cancel") : @tr("Close");
+                        clicked => { Job.dismiss(); }
+                    }
+                    if Job.state == JobState.confirm: Button {
+                        text: Job.undo ? @tr("Undo") : Job.reset ? @tr("Turn off") : @tr("Apply");
+                        primary: true;
+                        clicked => { Job.confirm(); }
+                    }
+                    if Job.state == JobState.point-failed && Job.has-change: Button {
+                        text: @tr("Apply without a restore point");
+                        primary: true;
+                        clicked => { Job.proceed-without-point(); }
+                    }
                 }
             }
         }

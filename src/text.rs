@@ -3,9 +3,26 @@
 
 use std::sync::OnceLock;
 
-/// The UI font, see `default-font-family` in ui/app.slint. Its default instance is the
-/// "Text" optical size at regular weight, which is what Slint renders.
-const FONT: &str = "SegUIVar.ttf";
+/// Segoe UI Variable, Windows 11's UI font. Its default instance is the "Text" optical
+/// size at regular weight, which is what Slint renders.
+const VARIABLE: &str = "SegUIVar.ttf";
+
+/// Family names for body text and headings: Segoe UI Variable where it exists, plain
+/// Segoe UI on Windows 10.
+pub fn ui_fonts() -> (&'static str, &'static str) {
+    if font_path(VARIABLE).exists() {
+        ("Segoe UI Variable Text", "Segoe UI Variable Display")
+    } else {
+        ("Segoe UI", "Segoe UI")
+    }
+}
+
+fn font_path(file: &str) -> std::path::PathBuf {
+    let mut buffer = [0u16; 260];
+    let len = unsafe { windows::Win32::System::SystemInformation::GetWindowsDirectoryW(Some(&mut buffer)) };
+    let dir = String::from_utf16_lossy(&buffer[..(len as usize).min(buffer.len())]);
+    std::path::Path::new(&dir).join("Fonts").join(file)
+}
 
 pub struct Line {
     pub words: Vec<String>,
@@ -51,13 +68,7 @@ pub fn justify(text: &str, size: f32, width: f32) -> Option<Vec<Line>> {
 
 fn font() -> Option<&'static [u8]> {
     static DATA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
-    DATA.get_or_init(|| {
-        let mut buffer = [0u16; 260];
-        let len =
-            unsafe { windows::Win32::System::SystemInformation::GetWindowsDirectoryW(Some(&mut buffer)) };
-        let dir = String::from_utf16_lossy(&buffer[..(len as usize).min(buffer.len())]);
-        std::fs::read(format!(r"{dir}\Fonts\{FONT}")).ok()
-    })
+    DATA.get_or_init(|| std::fs::read(font_path(VARIABLE)).or_else(|_| std::fs::read(font_path("segoeui.ttf"))).ok())
     .as_deref()
 }
 

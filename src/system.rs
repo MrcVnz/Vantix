@@ -10,7 +10,7 @@ use windows::Win32::Foundation::{
     COLORREF, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, VARIANT_FALSE, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
-    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWINDOWATTRIBUTE,
     DwmSetWindowAttribute,
 };
 use windows::Win32::System::Com::{
@@ -91,6 +91,21 @@ pub fn show_requested() -> bool {
     unsafe { WaitForSingleObject(HANDLE(event as _), 0) == WAIT_OBJECT_0 }
 }
 
+/// The part of the window's monitor not taken by the taskbar, in physical pixels, as
+/// left, top, right and bottom.
+pub fn work_area(window: &slint::Window) -> Option<(i32, i32, i32, i32)> {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow};
+    let handle = window.window_handle();
+    let RawWindowHandle::Win32(handle) = handle.window_handle().ok()?.as_raw() else { return None };
+    let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    unsafe {
+        let monitor = MonitorFromWindow(HWND(handle.hwnd.get() as _), MONITOR_DEFAULTTONEAREST);
+        GetMonitorInfoW(monitor, &mut info).as_bool().then_some(())?;
+    }
+    let r = info.rcWork;
+    Some((r.left, r.top, r.right, r.bottom))
+}
+
 /// Paints the native title bar in the app's colors and sets the window icons from the
 /// exe's icon resource. Returns false while the native window doesn't exist yet: Slint
 /// only creates it once the event loop runs, not on `show()`.
@@ -107,7 +122,11 @@ pub fn style_window(window: &slint::Window) -> bool {
         let set = |attribute, value: *const u32| {
             let _ = DwmSetWindowAttribute(hwnd, attribute, value.cast(), 4);
         };
-        set(DWMWA_USE_IMMERSIVE_DARK_MODE, &dark);
+        // Windows 10 before 2004 knows dark mode only as attribute 19. The colors below
+        // are Windows 11 only and do nothing on 10, where the bar is just dark.
+        if DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, (&raw const dark).cast(), 4).is_err() {
+            set(DWMWINDOWATTRIBUTE(19), &dark);
+        }
         set(DWMWA_CAPTION_COLOR, &rgb(0x0a, 0x0b, 0x0d).0);
         set(DWMWA_BORDER_COLOR, &rgb(0x1f, 0x23, 0x2a).0);
         set(DWMWA_TEXT_COLOR, &rgb(0x8a, 0x91, 0x9c).0);

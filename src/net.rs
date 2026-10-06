@@ -82,7 +82,12 @@ pub fn connection() -> Option<Connection> {
                 let mut next = a.FirstDnsServerAddress;
                 while !next.is_null() {
                     let entry = unsafe { &*next };
-                    dns.extend(socket_ip(&entry.Address));
+                    // Windows lists fec0:0:0:ffff::1 to 3 when IPv6 has no DNS server of its
+                    // own. Nothing answers there; they're placeholders, not servers.
+                    dns.extend(socket_ip(&entry.Address).filter(|ip| match ip {
+                        IpAddr::V6(v6) => v6.segments()[0] & 0xffc0 != 0xfec0,
+                        IpAddr::V4(_) => true,
+                    }));
                     next = entry.Next;
                 }
                 return Some(Connection {

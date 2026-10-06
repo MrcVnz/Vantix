@@ -301,6 +301,9 @@ impl App {
         }
 
         let ui = AppWindow::new()?;
+        let (text_font, display_font) = text::ui_fonts();
+        ui.global::<Theme>().set_text_font(text_font.into());
+        ui.global::<Theme>().set_display_font(display_font.into());
         {
             let state = self.state.borrow();
             apply_language(state.settings.language);
@@ -1884,7 +1887,7 @@ fn style_when_ready<T: ComponentHandle + 'static>(component: slint::Weak<T>, att
     Timer::single_shot(Duration::from_millis(if attempt == 0 { 0 } else { 50 }), move || {
         let Some(strong) = component.upgrade() else { return };
         if system::style_window(strong.window()) {
-            limit_size(strong.window());
+            fit_to_screen(strong.window());
         } else if attempt < 20 {
             style_when_ready(component, attempt + 1);
         }
@@ -1892,15 +1895,36 @@ fn style_when_ready<T: ComponentHandle + 'static>(component: slint::Weak<T>, att
 }
 
 /// The same as min-width and min-height in ui/app.slint.
-const MIN_SIZE: (f64, f64) = (1100.0, 760.0);
+const MIN_SIZE: (f64, f64) = (1000.0, 560.0);
 
 /// Slint 1.18 never hands the window's min-width and min-height to Windows, so the window
-/// could be dragged or restored smaller than the layout, which then got cut off.
-fn limit_size(window: &slint::Window) {
+/// could be dragged or restored smaller than the layout, which then got cut off. Both the
+/// minimum and the opening size are also capped to the screen's free area: on a small
+/// laptop screen, or 1080p at 150%, 1180 x 800 doesn't fit, and pages scroll instead.
+fn fit_to_screen(window: &slint::Window) {
     use slint::winit_030::WinitWindowAccessor;
-    use slint::winit_030::winit::dpi::LogicalSize;
+    use slint::winit_030::winit::dpi::{LogicalSize, PhysicalPosition};
 
-    window.with_winit_window(|winit| winit.set_min_inner_size(Some(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))));
+    let Some((left, top, right, bottom)) = system::work_area(window) else { return };
+    let scale = f64::from(window.scale_factor());
+    window.with_winit_window(|winit| {
+        let (inner, outer) = (winit.inner_size(), winit.outer_size());
+        let frame = (outer.width.saturating_sub(inner.width) as i32, outer.height.saturating_sub(inner.height) as i32);
+        let fits = |space: i32, frame: i32| f64::from((space - frame).max(1)) / scale;
+        let (max_width, max_height) = (fits(right - left, frame.0), fits(bottom - top, frame.1));
+        winit.set_min_inner_size(Some(LogicalSize::new(MIN_SIZE.0.min(max_width), MIN_SIZE.1.min(max_height))));
+
+        let (width, height) = (f64::from(inner.width) / scale, f64::from(inner.height) / scale);
+        if width > max_width || height > max_height {
+            let (width, height) = (width.min(max_width), height.min(max_height));
+            let _ = winit.request_inner_size(LogicalSize::new(width, height));
+            let outer_width = (width * scale) as i32 + frame.0;
+            let outer_height = (height * scale) as i32 + frame.1;
+            let x = left + (right - left - outer_width) / 2;
+            let y = top + (bottom - top - outer_height) / 2;
+            winit.set_outer_position(PhysicalPosition::new(x.max(left), y.max(top)));
+        }
+    });
 }
 
 /// Breaks the terms into justified lines, in whatever language the UI is in now.
