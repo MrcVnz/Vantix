@@ -1122,3 +1122,18 @@ msgstr "Uso da rede"
 
 msgid "Repair"
 msgstr "Reparar"
+
+msgid "Change the DNS servers"
+msgstr "Trocar os servidores DNS"
+
+msgid "The connection in use asks the chosen service for every name, through its main and backup servers, and over IPv6 too when the connection has it. Takes effect at once."
+msgstr "A conexão em uso passa a consultar todos os nomes no serviço escolhido, pelos servidores principal e reserva, e também por IPv6 quando a conexão tem. Vale na hora."
+
+msgid "Quad9 blocks known malicious sites and AdGuard blocks ads, so a site can fail to load with them. On public Wi-Fi with a sign-in page, undo this if the page doesn't open."
+msgstr "O Quad9 bloqueia sites maliciosos conhecidos e o AdGuard bloqueia anúncios, então algum site pode não abrir com eles. Em Wi-Fi público com página de login, desfaça isto se a página não abrir."
+
+msgid "Use"
+msgstr "Usar"
+
+msgid "Vantix only changes the DNS of a cable, Wi-Fi or PPPoE connection. A VPN sets its own."
+msgstr "O Vantix só troca o DNS de conexões por cabo, Wi-Fi ou PPPoE. Uma VPN define o dela."

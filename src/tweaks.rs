@@ -33,6 +33,8 @@ pub enum Section {
     Performance,
     Games,
     Internet,
+    /// Set from the DNS tab, not listed as a card.
+    Dns,
     Input,
     Storage,
     Background,
@@ -553,6 +555,18 @@ pub const CATALOG: &[Tweak] = &[
         slow: false,
         on_plan: false,
         kind: Kind::Action { run: net::reset_stack },
+    },
+    Tweak {
+        id: net::DNS_TWEAK,
+        section: Section::Dns,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Toggle { read: net::dns_set, apply: net::set_dns, revert: net::restore_dns, reset: net::reset_dns },
     },
 ];
 

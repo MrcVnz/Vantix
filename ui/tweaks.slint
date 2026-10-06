@@ -91,6 +91,7 @@ export global TweakText {
         @tr("Clear the DNS cache"),
         @tr("Renew the IP address"),
         @tr("Reset the network stack"),
+        @tr("Change the DNS servers"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -122,6 +123,7 @@ export global TweakText {
         @tr("Windows forgets every name it looked up. Fixes a site that moved to a new address and still won't load on this PC."),
         @tr("Asks the router for the address lease again. Fixes a connection that shows no internet after the router restarted."),
         @tr("Puts Winsock and TCP/IP back to how Windows installs them. For a connection that nothing else fixes."),
+        @tr("The connection in use asks the chosen service for every name, through its main and backup servers, and over IPv6 too when the connection has it. Takes effect at once."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -153,6 +155,7 @@ export global TweakText {
         "",
         @tr("The connection can drop for a few seconds."),
         @tr("IP addresses and DNS servers set by hand are cleared, and VPN or firewall software may need to be reinstalled."),
+        @tr("Quad9 blocks known malicious sites and AdGuard blocks ads, so a site can fail to load with them. On public Wi-Fi with a sign-in page, undo this if the page doesn't open."),
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }

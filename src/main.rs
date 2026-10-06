@@ -454,6 +454,18 @@ impl App {
         }));
         internet.on_run_bloat(bind(self, |app| app.run_bloat()));
         internet.on_run_dns(bind(self, |app| app.run_dns()));
+        internet.on_use_dns(bind_with(self, |app, row: i32| {
+            let provider = app.state.borrow().dns.get(row as usize).and_then(|r| r.provider);
+            if let (Some(provider), Some(tweak)) = (provider, dns_tweak()) {
+                net::choose_dns(provider);
+                app.ask(Ask::Apply(tweak));
+            }
+        }));
+        internet.on_undo_dns(bind(self, |app| {
+            if let Some(tweak) = dns_tweak() {
+                app.ask(Ask::Undo(tweak));
+            }
+        }));
         self.show_bloat(&ui);
         self.show_dns(&ui);
 
@@ -1152,7 +1164,13 @@ impl App {
             Ask::UndoAll => (None, true),
         };
         let reset = matches!(ask, Ask::Reset(_));
-        let subject = index.map(|i| self.tweak_title(i)).unwrap_or_default();
+        let mut subject = index.map(|i| self.tweak_title(i)).unwrap_or_default();
+        // Which service is about to be set, right in the title.
+        if let (Ask::Apply(i), Some(name)) = (ask, net::chosen_dns())
+            && CATALOG[i].id == net::DNS_TWEAK
+        {
+            subject = format!("{subject}: {name}");
+        }
         // Only changes that can be undone need a restore point; a retrim has nothing to save.
         // One point covers them all: the one made before Vantix's first change.
         let toggle = index.is_some_and(|i| matches!(CATALOG[i].kind, Kind::Toggle { .. }));
@@ -1363,7 +1381,10 @@ impl App {
                         app.set_job(JobState::Done, "");
                     }
                 }
-                app.with_ui(|ui| app.show_tweaks(ui));
+                app.with_ui(|ui| {
+                    app.show_tweaks(ui);
+                    app.show_dns(ui);
+                });
                 app.refresh_tweaks();
                 app.refresh_protection();
             },
@@ -1530,9 +1551,13 @@ impl App {
         let state = self.state.borrow();
         let internet = ui.global::<Net>();
         let resolvers = &state.dns;
+        // Read again rather than taken from the benchmark, which may predate a change.
+        let in_use = net::current_dns();
+        let is_current = |r: &net::Resolver| in_use.contains(&r.address);
+        let changed = state.changes.iter().any(|c| c.id == net::DNS_TWEAK && !c.reset);
         // Sorted best first, so the first of each kind is the one to compare.
         let best = resolvers.first().filter(|r| r.reliable());
-        let current = resolvers.iter().find(|r| r.current);
+        let current = resolvers.iter().find(|r| is_current(r));
         let name = |r: &net::Resolver| if r.name.is_empty() { r.address.to_string() } else { r.name.clone() };
         let verdict = match (best, current) {
             (Some(best), Some(current)) if !current.reliable() => {
@@ -1562,10 +1587,13 @@ impl App {
                 uncached: r.uncached.map(format_ms).unwrap_or_else(|| "-".into()).into(),
                 failed: r.failed as i32,
                 sent: r.sent as i32,
-                current: r.current,
+                current: is_current(r),
                 best: best.is_some_and(|b| b.address == r.address),
+                provider: r.provider.is_some(),
+                vantix: changed && is_current(r) && r.provider.is_some(),
             })
             .collect();
+        internet.set_dns_settable(net::dns_adapter().is_some());
         internet.set_dns_verdict(verdict);
         internet.set_dns(ModelRc::new(VecModel::from(rows)));
         internet.set_dns_running(state.dns_running);
@@ -1583,6 +1611,10 @@ impl App {
 const INTERNET_PAGE: i32 = 8;
 /// Ping targets the user can add, on top of the router and Cloudflare.
 const MAX_HOSTS: usize = 5;
+
+fn dns_tweak() -> Option<usize> {
+    CATALOG.iter().position(|t| t.id == net::DNS_TWEAK)
+}
 
 fn show_pings(ui: &AppWindow) {
     let readings = net::readings();

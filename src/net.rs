@@ -33,27 +33,44 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{GUID, HSTRING, PCWSTR, PWSTR};
 
-use crate::tweaks;
+use crate::{reg, tweaks};
 
 /// Anycast, so it answers from close by nearly everywhere, and the same network as the
 /// speed test server.
 const CLOUDFLARE: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 
-/// The adapter Windows sends internet traffic through.
+/// A network adapter, as far as Vantix cares.
 #[derive(Clone, Default)]
 pub struct Connection {
     pub name: String,
+    /// As in the registry, "{7BA715F8-...}". Stays the same across restarts, unlike the index.
+    pub guid: String,
+    pub index: u32,
+    pub up: bool,
     pub gateway: Option<Ipv4Addr>,
     pub dns: Vec<IpAddr>,
     pub dhcp: bool,
+    /// Cable, Wi-Fi or a PPPoE dial-up. VPN and virtual adapters get their DNS from
+    /// whatever made them, so Vantix leaves those alone.
+    pub physical: bool,
+    /// Has a global IPv6 address, so IPv6 DNS servers can be reached through it.
+    pub ipv6: bool,
 }
 
+/// The adapter Windows sends internet traffic through.
 pub fn connection() -> Option<Connection> {
-    const DHCP_ENABLED: u32 = 0x4;
     let mut index = 0;
     if unsafe { GetBestInterface(u32::from_ne_bytes(CLOUDFLARE.octets()), &mut index) } != 0 {
         return None;
     }
+    adapters().into_iter().find(|a| a.index == index && a.up)
+}
+
+pub fn adapters() -> Vec<Connection> {
+    const DHCP_ENABLED: u32 = 0x4;
+    const ETHERNET: u32 = 6;
+    const PPP: u32 = 23;
+    const WIFI: u32 = 71;
     let flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST;
     let mut size = 16 * 1024;
     // The list can grow between the size query and the read, hence the retry.
@@ -63,12 +80,13 @@ pub fn connection() -> Option<Connection> {
         match unsafe { GetAdaptersAddresses(0, flags, None, Some(first), &mut size) } {
             0 => {}
             111 => continue, // ERROR_BUFFER_OVERFLOW, size now holds what's needed
-            _ => return None,
+            _ => return Vec::new(),
         }
+        let mut list = Vec::new();
         let mut adapter = first;
         while !adapter.is_null() {
             let a = unsafe { &*adapter };
-            if unsafe { a.Anonymous1.Anonymous.IfIndex } == index && a.OperStatus == IfOperStatusUp {
+            {
                 let mut gateway = None;
                 let mut next = a.FirstGatewayAddress;
                 while !next.is_null() && gateway.is_none() {
@@ -90,18 +108,32 @@ pub fn connection() -> Option<Connection> {
                     }));
                     next = entry.Next;
                 }
-                return Some(Connection {
+                let mut ipv6 = false;
+                let mut next = a.FirstUnicastAddress;
+                while !next.is_null() {
+                    let entry = unsafe { &*next };
+                    if let Some(IpAddr::V6(v6)) = socket_ip(&entry.Address) {
+                        ipv6 |= v6.segments()[0] & 0xe000 == 0x2000;
+                    }
+                    next = entry.Next;
+                }
+                list.push(Connection {
                     name: unsafe { a.FriendlyName.to_string() }.unwrap_or_default(),
+                    guid: unsafe { a.AdapterName.to_string() }.unwrap_or_default(),
+                    index: unsafe { a.Anonymous1.Anonymous.IfIndex },
+                    up: a.OperStatus == IfOperStatusUp,
                     gateway,
                     dns,
                     dhcp: unsafe { a.Anonymous2.Flags } & DHCP_ENABLED != 0,
+                    physical: matches!(a.IfType, ETHERNET | WIFI | PPP),
+                    ipv6,
                 });
             }
             adapter = a.Next;
         }
-        return None;
+        return list;
     }
-    None
+    Vec::new()
 }
 
 fn socket_ip(address: &SOCKET_ADDRESS) -> Option<IpAddr> {
@@ -640,22 +672,70 @@ const DOMAINS: [&str; 20] = [
     "x.com", "tiktok.com", "cloudflare.com", "github.com", "spotify.com", "epicgames.com",
 ];
 
-/// Well known public resolvers, primary address only.
-const PUBLIC_DNS: [(&str, Ipv4Addr); 5] = [
-    ("Cloudflare", Ipv4Addr::new(1, 1, 1, 1)),
-    ("Google", Ipv4Addr::new(8, 8, 8, 8)),
-    ("Quad9", Ipv4Addr::new(9, 9, 9, 9)),
-    ("OpenDNS", Ipv4Addr::new(208, 67, 222, 222)),
-    ("AdGuard", Ipv4Addr::new(94, 140, 14, 14)),
+/// A public DNS service: main and backup servers for IPv4 and IPv6. The benchmark times
+/// the first IPv4 one; setting it sets all of them.
+pub struct Provider {
+    pub name: &'static str,
+    v4: [Ipv4Addr; 2],
+    v6: [Ipv6Addr; 2],
+}
+
+pub const PROVIDERS: [Provider; 5] = [
+    Provider {
+        name: "Cloudflare",
+        v4: [Ipv4Addr::new(1, 1, 1, 1), Ipv4Addr::new(1, 0, 0, 1)],
+        v6: [Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111), Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001)],
+    },
+    Provider {
+        name: "Google",
+        v4: [Ipv4Addr::new(8, 8, 8, 8), Ipv4Addr::new(8, 8, 4, 4)],
+        v6: [Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888), Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8844)],
+    },
+    Provider {
+        name: "Quad9",
+        v4: [Ipv4Addr::new(9, 9, 9, 9), Ipv4Addr::new(149, 112, 112, 112)],
+        v6: [Ipv6Addr::new(0x2620, 0xfe, 0, 0, 0, 0, 0, 0xfe), Ipv6Addr::new(0x2620, 0xfe, 0, 0, 0, 0, 0, 0x9)],
+    },
+    Provider {
+        name: "OpenDNS",
+        v4: [Ipv4Addr::new(208, 67, 222, 222), Ipv4Addr::new(208, 67, 220, 220)],
+        v6: [Ipv6Addr::new(0x2620, 0x119, 0x35, 0, 0, 0, 0, 0x35), Ipv6Addr::new(0x2620, 0x119, 0x53, 0, 0, 0, 0, 0x53)],
+    },
+    Provider {
+        name: "AdGuard",
+        v4: [Ipv4Addr::new(94, 140, 14, 14), Ipv4Addr::new(94, 140, 15, 15)],
+        v6: [Ipv6Addr::new(0x2a10, 0x50c0, 0, 0, 0, 0, 0xad1, 0xff), Ipv6Addr::new(0x2a10, 0x50c0, 0, 0, 0, 0, 0xad2, 0xff)],
+    },
 ];
+
+/// The service an address belongs to, any of its four servers.
+fn provider_of(address: IpAddr) -> Option<usize> {
+    PROVIDERS.iter().position(|p| match address {
+        IpAddr::V4(v4) => p.v4.contains(&v4),
+        IpAddr::V6(v6) => p.v6.contains(&v6),
+    })
+}
+
+/// The DNS servers in use, with a known service's backup and IPv6 servers folded into
+/// its main one, so it shows once.
+pub fn current_dns() -> Vec<IpAddr> {
+    let mut list: Vec<IpAddr> = Vec::new();
+    for address in connection().map(|c| c.dns).unwrap_or_default() {
+        let address = provider_of(address).map_or(address, |p| IpAddr::V4(PROVIDERS[p].v4[0]));
+        if !list.contains(&address) {
+            list.push(address);
+        }
+    }
+    list
+}
 
 #[derive(Clone, Debug)]
 pub struct Resolver {
+    /// Index into PROVIDERS, `None` for one that isn't a known public service, like the router.
+    pub provider: Option<usize>,
     /// Empty for a resolver that isn't a known public one, like the router.
     pub name: String,
     pub address: IpAddr,
-    /// One of the servers Windows uses now.
-    pub current: bool,
     /// Median time for names the resolver already has cached, in ms.
     pub cached: Option<f64>,
     /// Median time for names it has to look up, in ms.
@@ -678,26 +758,19 @@ impl Resolver {
 
 /// The servers in use and the public ones, fastest first. Takes a few seconds.
 pub fn dns_benchmark() -> Vec<Resolver> {
-    let current = connection().map(|c| c.dns).unwrap_or_default();
-    let mut resolvers: Vec<(String, IpAddr)> = current
-        .iter()
-        .map(|&address| {
-            let name = PUBLIC_DNS.iter().find(|(_, a)| IpAddr::V4(*a) == address).map(|(n, _)| n.to_string());
-            (name.unwrap_or_default(), address)
-        })
-        .collect();
-    for (name, address) in PUBLIC_DNS {
-        if !current.contains(&IpAddr::V4(address)) {
-            resolvers.push((name.to_string(), IpAddr::V4(address)));
+    let mut resolvers = current_dns();
+    for provider in &PROVIDERS {
+        let address = IpAddr::V4(provider.v4[0]);
+        if !resolvers.contains(&address) {
+            resolvers.push(address);
         }
     }
     let scope = connection_scope();
     let mut results: Vec<Resolver> = std::thread::scope(|s| {
         let jobs: Vec<_> = resolvers
             .into_iter()
-            .map(|(name, address)| {
-                let current = current.contains(&address);
-                s.spawn(move || measure_resolver(name, address, current, scope))
+            .map(|address| {
+                s.spawn(move || measure_resolver(address, scope))
             })
             .collect();
         jobs.into_iter().filter_map(|job| job.join().ok()).collect()
@@ -715,8 +788,10 @@ fn connection_scope() -> u32 {
     index
 }
 
-fn measure_resolver(name: String, address: IpAddr, current: bool, scope: u32) -> Resolver {
-    let mut resolver = Resolver { name, address, current, cached: None, uncached: None, failed: 0, sent: 0 };
+fn measure_resolver(address: IpAddr, scope: u32) -> Resolver {
+    let provider = provider_of(address);
+    let name = provider.map(|p| PROVIDERS[p].name.to_string()).unwrap_or_default();
+    let mut resolver = Resolver { provider, name, address, cached: None, uncached: None, failed: 0, sent: 0 };
     let target = match address {
         IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80 => SocketAddr::V6(SocketAddrV6::new(v6, 53, 0, scope)),
         _ => SocketAddr::new(address, 53),
@@ -746,6 +821,160 @@ fn measure_resolver(name: String, address: IpAddr, current: bool, scope: u32) ->
     resolver.cached = median(cached);
     resolver.uncached = median(uncached);
     resolver
+}
+
+// Setting the DNS servers, from the DNS tab. What was there before is saved per family,
+// DHCP or a fixed list, with the adapter's GUID, so undo puts back exactly that, even
+// after a restart or with another adapter in use. netsh rather than SetInterfaceDnsSettings,
+// which only exists from Windows 10 2004.
+
+pub const DNS_TWEAK: &str = "dns-servers";
+const V4_INTERFACES: &str = r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces";
+const V6_INTERFACES: &str = r"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces";
+
+/// The service the next apply sets, picked in the DNS tab right before asking.
+static CHOSEN: Mutex<Option<usize>> = Mutex::new(None);
+
+pub fn choose_dns(provider: usize) {
+    *CHOSEN.lock().unwrap() = Some(provider);
+}
+
+pub fn chosen_dns() -> Option<&'static str> {
+    CHOSEN.lock().unwrap().map(|p| PROVIDERS[p].name)
+}
+
+/// One adapter's own DNS settings. An empty list means the servers come from DHCP.
+struct SavedDns {
+    guid: String,
+    v4: Vec<String>,
+    v6: Vec<String>,
+}
+
+impl SavedDns {
+    fn read(guid: &str) -> Self {
+        Self { guid: guid.into(), v4: fixed_dns(V4_INTERFACES, guid), v6: fixed_dns(V6_INTERFACES, guid) }
+    }
+
+    /// "{guid};1.1.1.1,1.0.0.1;dhcp"
+    fn encode(&self) -> String {
+        let list = |servers: &[String]| if servers.is_empty() { "dhcp".to_string() } else { servers.join(",") };
+        format!("{};{};{}", self.guid, list(&self.v4), list(&self.v6))
+    }
+
+    fn decode(text: &str) -> Option<Self> {
+        let mut parts = text.split(';');
+        let guid = parts.next()?.to_string();
+        let list = |part: Option<&str>| -> Option<Vec<String>> {
+            let part = part?;
+            Some(if part == "dhcp" { Vec::new() } else { part.split(',').map(String::from).collect() })
+        };
+        Some(Self { guid, v4: list(parts.next())?, v6: list(parts.next())? })
+    }
+
+    /// What the journal says was there before Vantix's DNS change, if one is in place.
+    fn from_journal() -> Option<Self> {
+        let changes = crate::settings::load_changes();
+        changes.iter().find(|c| c.id == DNS_TWEAK)?.previous.as_deref().and_then(Self::decode)
+    }
+
+    fn put_back(&self) -> windows::core::Result<()> {
+        // An adapter that was removed has nothing left to put back.
+        let Some(adapter) = adapters().into_iter().find(|a| a.guid.eq_ignore_ascii_case(&self.guid)) else {
+            return Ok(());
+        };
+        set_family("ipv4", adapter.index, &self.v4)?;
+        // IPv6 can be off on the adapter, which fails here; it had DHCP then anyway.
+        if let Err(e) = set_family("ipv6", adapter.index, &self.v6)
+            && !self.v6.is_empty()
+        {
+            return Err(e);
+        }
+        let _ = flush_dns();
+        Ok(())
+    }
+}
+
+/// The fixed servers of one family, empty when DHCP provides them.
+fn fixed_dns(interfaces: &str, guid: &str) -> Vec<String> {
+    reg::get_string(reg::HKEY_LOCAL_MACHINE, &format!(r"{interfaces}\{guid}"), "NameServer")
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .split([',', ' '])
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Sets one family's servers by interface index, which netsh takes in every language;
+/// an empty list goes back to DHCP. validate=no skips netsh's own slow reachability test.
+fn set_family(family: &str, index: u32, servers: &[String]) -> windows::core::Result<()> {
+    let name = format!("name={index}");
+    let Some(first) = servers.first() else {
+        return tweaks::run("netsh.exe", &["interface", family, "set", "dnsservers", &name, "source=dhcp"]).map(drop);
+    };
+    let address = format!("address={first}");
+    let args = ["interface", family, "set", "dnsservers", &name, "source=static", &address, "register=primary", "validate=no"];
+    tweaks::run("netsh.exe", &args)?;
+    for (i, server) in servers.iter().enumerate().skip(1) {
+        let (address, index) = (format!("address={server}"), format!("index={}", i + 1));
+        tweaks::run("netsh.exe", &["interface", family, "add", "dnsservers", &name, &address, &index, "validate=no"])?;
+    }
+    Ok(())
+}
+
+fn dns_error(message: &str) -> windows::core::Error {
+    windows::core::Error::new(windows::Win32::Foundation::E_FAIL, message)
+}
+
+/// The adapter in use if Vantix may set its DNS: cable, Wi-Fi or PPPoE.
+pub fn dns_adapter() -> Option<Connection> {
+    connection().filter(|c| c.physical && !c.guid.is_empty())
+}
+
+/// On while a known service is set by hand on the adapter Vantix changed, or on the one
+/// in use when nothing was changed yet.
+pub fn dns_set() -> windows::core::Result<bool> {
+    let guid = match SavedDns::from_journal() {
+        Some(saved) => saved.guid,
+        None => dns_adapter().map(|a| a.guid).unwrap_or_default(),
+    };
+    let fixed = fixed_dns(V4_INTERFACES, &guid);
+    Ok(fixed.first().and_then(|s| s.parse().ok()).is_some_and(|ip| provider_of(IpAddr::V4(ip)).is_some()))
+}
+
+pub fn set_dns() -> windows::core::Result<Option<String>> {
+    let provider = (*CHOSEN.lock().unwrap()).ok_or_else(|| dns_error("no DNS service picked"))?;
+    let adapter = dns_adapter().ok_or_else(|| dns_error("no cable or Wi-Fi connection"))?;
+    // Switching from one service to another keeps what was there before Vantix. A change
+    // left on another adapter is put back first, since this one replaces it in the journal.
+    let saved = match SavedDns::from_journal() {
+        Some(saved) if saved.guid.eq_ignore_ascii_case(&adapter.guid) => saved,
+        Some(other) => {
+            other.put_back()?;
+            SavedDns::read(&adapter.guid)
+        }
+        None => SavedDns::read(&adapter.guid),
+    };
+    let provider = &PROVIDERS[provider];
+    set_family("ipv4", adapter.index, &provider.v4.map(|ip| ip.to_string()))?;
+    // Only with IPv6 internet: IPv6 servers the PC can't reach would make every lookup
+    // wait for them first.
+    if adapter.ipv6 {
+        set_family("ipv6", adapter.index, &provider.v6.map(|ip| ip.to_string()))?;
+    }
+    let _ = flush_dns();
+    Ok(Some(saved.encode()))
+}
+
+pub fn restore_dns(previous: Option<&str>) -> windows::core::Result<()> {
+    previous.and_then(SavedDns::decode).ok_or_else(|| dns_error("nothing saved to put back"))?.put_back()
+}
+
+/// Back to DHCP on the adapter in use, for DNS that was set before Vantix.
+pub fn reset_dns() -> windows::core::Result<()> {
+    let adapter = dns_adapter().ok_or_else(|| dns_error("no cable or Wi-Fi connection"))?;
+    SavedDns { guid: adapter.guid, v4: Vec::new(), v6: Vec::new() }.put_back()
 }
 
 /// Time to an answer in ms, `None` on a timeout or a server failure.
@@ -981,7 +1210,10 @@ mod tests {
     #[ignore]
     fn net_connection() {
         let c = connection().expect("no connection");
-        println!("{} gateway={:?} dhcp={} dns={:?}", c.name, c.gateway, c.dhcp, c.dns);
+        println!(
+            "{} {} index={} physical={} ipv6={} gateway={:?} dhcp={} dns={:?} current={:?} set={:?}",
+            c.name, c.guid, c.index, c.physical, c.ipv6, c.gateway, c.dhcp, c.dns, current_dns(), dns_set()
+        );
         let icmp = Icmp::new().unwrap();
         for target in [c.gateway.unwrap(), CLOUDFLARE] {
             let times: Vec<_> = (0..5).map(|_| icmp.ping(target, Duration::from_secs(1))).collect();
@@ -996,8 +1228,8 @@ mod tests {
         let start = Instant::now();
         for r in dns_benchmark() {
             println!(
-                "{:<12} {:<16} current={} cached={:.1?} uncached={:.1?} failed={}/{}",
-                r.name, r.address, r.current, r.cached, r.uncached, r.failed, r.sent
+                "{:<12} {:<16} cached={:.1?} uncached={:.1?} failed={}/{}",
+                r.name, r.address, r.cached, r.uncached, r.failed, r.sent
             );
         }
         println!("took {:?}", start.elapsed());
@@ -1023,6 +1255,36 @@ mod tests {
         for (name, [down, up]) in totals.iter().take(8) {
             println!("{name:<28} down {down:>12} up {up:>10}");
         }
+    }
+
+    #[test]
+    fn saved_dns_text() {
+        let saved = SavedDns { guid: "{A}".into(), v4: vec!["192.168.0.1".into(), "8.8.8.8".into()], v6: Vec::new() };
+        let text = saved.encode();
+        assert_eq!(text, "{A};192.168.0.1,8.8.8.8;dhcp");
+        let back = SavedDns::decode(&text).unwrap();
+        assert_eq!((back.guid, back.v4, back.v6), (saved.guid, saved.v4, saved.v6));
+        assert!(SavedDns::decode("{A};dhcp").is_none());
+    }
+
+    /// Sets Quad9 on the adapter in use, checks it, puts the old settings back and checks
+    /// again: `cargo test net_dns_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn net_dns_round_trip() {
+        let adapter = dns_adapter().expect("no cable or Wi-Fi connection");
+        let before = SavedDns::read(&adapter.guid).encode();
+        choose_dns(2);
+        let previous = set_dns().unwrap();
+        assert_eq!(previous.as_deref(), Some(before.as_str()));
+        let during = SavedDns::read(&adapter.guid);
+        println!("before {before}\nduring {}", during.encode());
+        assert_eq!(during.v4, ["9.9.9.9", "149.112.112.112"]);
+        assert!(dns_set().unwrap());
+        restore_dns(previous.as_deref()).unwrap();
+        let after = SavedDns::read(&adapter.guid).encode();
+        println!("after  {after}");
+        assert_eq!(after, before);
     }
 
     /// About 25 s and real data: `cargo test net_bufferbloat -- --ignored --nocapture`

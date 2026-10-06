@@ -42,6 +42,10 @@ export struct DnsRow {
     sent: int,
     current: bool,
     best: bool,
+    /// A public service Vantix can set.
+    provider: bool,
+    /// In use because Vantix set it, so it can be undone here.
+    vantix: bool,
 }
 
 export struct UsageRow {
@@ -86,7 +90,12 @@ export global Net {
     in property <string> dns-best;
     in property <string> dns-gain;
     in property <int> dns-missed;
+    /// The connection is cable, Wi-Fi or PPPoE, whose DNS Vantix can change.
+    in property <bool> dns-settable;
     callback run-dns();
+    /// Row index into `dns`.
+    callback use-dns(int);
+    callback undo-dns();
 
     in property <[UsageRow]> usage;
     in property <bool> usage-failed;
@@ -453,11 +462,12 @@ component DnsTab inherits Card {
         Heading { width: 110px; text: @tr("Cached names"); horizontal-alignment: right; }
         Heading { width: 110px; text: @tr("New names"); horizontal-alignment: right; }
         Heading { width: 90px; text: @tr("Missed"); horizontal-alignment: right; }
+        Rectangle { width: 96px; }
     }
 
     if Net.dns.length > 0: ListView {
         vertical-stretch: 1;
-        for row in Net.dns: HorizontalLayout {
+        for row[i] in Net.dns: HorizontalLayout {
             spacing: 16px;
             padding-left: 6px;
             padding-right: 14px;
@@ -497,7 +507,38 @@ component DnsTab inherits Card {
                 text: row.failed + " / " + row.sent;
                 color: row.failed > 1 ? Theme.bad : row.failed == 1 ? Theme.warn : Theme.muted;
             }
+            HorizontalLayout {
+                width: 96px;
+                alignment: end;
+                if row.vantix: VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: @tr("Undo");
+                        tall: 32px;
+                        enabled: !Tweaks.busy;
+                        clicked => { Net.undo-dns(); }
+                    }
+                }
+                if !row.vantix && row.provider && !row.current && Net.dns-settable: VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: @tr("Use");
+                        tall: 32px;
+                        primary: row.best;
+                        enabled: !Tweaks.busy;
+                        clicked => { Net.use-dns(i); }
+                    }
+                }
+            }
         }
+    }
+
+    if Net.dns.length > 0 && !Net.dns-settable: Text {
+        x: 6px;
+        text: @tr("Vantix only changes the DNS of a cable, Wi-Fi or PPPoE connection. A VPN sets its own.");
+        color: Theme.muted;
+        font-size: 12px;
+        wrap: word-wrap;
     }
 
     if Net.dns.length == 0: Rectangle { vertical-stretch: 1; }
