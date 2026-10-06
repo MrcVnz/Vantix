@@ -56,6 +56,7 @@ fn main() -> Result<(), slint::PlatformError> {
     if !system::single_instance() {
         return Ok(());
     }
+    system::init_com();
     memory::enable_privileges();
 
     let app = Rc::new(App {
@@ -148,7 +149,9 @@ fn bind(app: &Rc<App>, f: impl Fn(&Rc<App>) + 'static) -> impl Fn() + 'static {
 
 impl App {
     fn start(self: &Rc<Self>, open_window: bool) -> Result<(), slint::PlatformError> {
-        let _ = system::register_notifications();
+        if let Err(e) = system::register_notifications() {
+            system::log_error("notification registration", &e);
+        }
         self.ticker.start(TimerMode::Repeated, Duration::from_secs(1), bind(self, |app| app.tick()));
 
         let tray = Tray::new()?;
@@ -194,11 +197,16 @@ impl App {
 
             let mut state = app.state.borrow_mut();
             if !state.settings.tray_hint_shown {
-                state.settings.tray_hint_shown = true;
-                let _ = state.settings.save();
+                // Only marked as shown once Windows took it, so a failed toast is retried
+                // on the next close.
+                let mut shown = false;
                 app.with_tray(|tray| {
-                    let _ = system::notify(&tray.invoke_hint_title(), &tray.invoke_hint_body());
+                    shown = system::notify(&tray.invoke_hint_title(), &tray.invoke_hint_body())
                 });
+                if shown {
+                    state.settings.tray_hint_shown = true;
+                    let _ = state.settings.save();
+                }
             }
         });
     }
@@ -401,7 +409,7 @@ impl App {
                 if automatic && state.settings.notifications {
                     app.with_tray(|tray| {
                         let body = tray.invoke_freed_body(freed.as_str().into());
-                        let _ = system::notify(&tray.invoke_freed_title(), &body);
+                        system::notify(&tray.invoke_freed_title(), &body);
                     });
                 }
 

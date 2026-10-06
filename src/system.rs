@@ -1,5 +1,6 @@
 //! Integration with the Windows shell: single instance, title bar, logon task, toasts.
 
+use std::io::Write;
 use std::sync::OnceLock;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -45,6 +46,26 @@ pub const AUTOSTART_ARG: &str = "--autostart";
 
 /// Signaled by a second launch so the running instance brings its window up.
 static SHOW_EVENT: OnceLock<usize> = OnceLock::new();
+
+/// Toasts and the task scheduler are COM. winit only initializes it when it creates a
+/// window, so a tray-only start would otherwise run them on whatever apartment the
+/// windows crate falls back to.
+pub fn init_com() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    }
+}
+
+/// Appends a line to `vantix.log` in the data folder, for failures nothing else would show.
+pub fn log_error(what: &str, error: &dyn std::fmt::Display) {
+    let line = format!("{} {what}: {error}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+    let _ = std::fs::create_dir_all(data_dir());
+    if let Ok(mut file) =
+        std::fs::OpenOptions::new().create(true).append(true).open(data_dir().join("vantix.log"))
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
 
 /// Returns false when another instance is already running, after asking it to show itself.
 pub fn single_instance() -> bool {
@@ -127,7 +148,12 @@ pub fn register_notifications() -> Result<()> {
     unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_ID)) }
 }
 
-pub fn notify(title: &str, body: &str) -> Result<()> {
+/// Raises a toast, logging any failure. Returns whether Windows accepted it.
+pub fn notify(title: &str, body: &str) -> bool {
+    show_toast(title, body).inspect_err(|e| log_error("toast", e)).is_ok()
+}
+
+fn show_toast(title: &str, body: &str) -> Result<()> {
     let xml = XmlDocument::new()?;
     xml.LoadXml(&HSTRING::from(format!(
         r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
@@ -211,7 +237,7 @@ pub fn unregister_all() {
 
 fn task_service() -> Result<ITaskService> {
     unsafe {
-        // Already initialized on the UI thread by winit; S_FALSE is fine.
+        // Already initialized on the UI thread by init_com; S_FALSE is fine.
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)?;
         let none = VARIANT::default();
