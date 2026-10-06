@@ -91,6 +91,48 @@ pub fn show_requested() -> bool {
     unsafe { WaitForSingleObject(HANDLE(event as _), 0) == WAIT_OBJECT_0 }
 }
 
+/// Whether the taskbar exists yet. At logon Vantix can start before Explorer has it up.
+pub fn taskbar_ready() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) }.is_ok_and(|hwnd| !hwnd.is_invalid())
+}
+
+/// Whether our tray icon is really in the notification area. Slint 1.18 gives up for
+/// good when adding it fails, as at logon before Explorer is ready, and its hidden
+/// message-only window never hears Explorer restart either, so the icon can be gone
+/// with no error anywhere. An empty NIM_MODIFY only succeeds on an icon that exists.
+/// The class name and icon id are Slint's own, from i-slint-core's system_tray/windows.rs.
+pub fn tray_icon_present() -> bool {
+    use windows::Win32::UI::Shell::{NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW};
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowThreadProcessId, HWND_MESSAGE};
+    const SLINT_TRAY_ID: u32 = 1;
+    let own = std::process::id();
+    let mut after: Option<HWND> = None;
+    loop {
+        let Ok(hwnd) = (unsafe { FindWindowExW(Some(HWND_MESSAGE), after, w!("SlintSystemTrayWindow"), PCWSTR::null()) })
+        else {
+            return false;
+        };
+        if hwnd.is_invalid() {
+            return false;
+        }
+        let mut pid = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == own {
+            let data = NOTIFYICONDATAW {
+                cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+                hWnd: hwnd,
+                uID: SLINT_TRAY_ID,
+                ..Default::default()
+            };
+            if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool() {
+                return true;
+            }
+        }
+        after = Some(hwnd);
+    }
+}
+
 /// The part of the window's monitor not taken by the taskbar, in physical pixels, as
 /// left, top, right and bottom.
 pub fn work_area(window: &slint::Window) -> Option<(i32, i32, i32, i32)> {

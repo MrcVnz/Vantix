@@ -79,6 +79,10 @@ struct State {
     dns: Vec<net::Resolver>,
     /// Traffic totals at the last tick, to turn them into rates.
     traffic: Option<(Instant, HashMap<String, [u64; 2]>)>,
+    ticks: u32,
+    /// Since when the tray icon has been found missing, see check_tray.
+    tray_missing: Option<Instant>,
+    opened_without_tray: bool,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -153,6 +157,9 @@ fn main() -> Result<(), slint::PlatformError> {
             dns_running: false,
             dns: Vec::new(),
             traffic: None,
+            ticks: 0,
+            tray_missing: None,
+            opened_without_tray: false,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -230,8 +237,17 @@ impl App {
         net::end_leftover_trace();
         governor::start(live_config(&self.state.borrow().settings));
 
-        let tray = Tray::new()?;
         apply_language(self.state.borrow().settings.language);
+        // A tray that can't be made yet is retried from the ticker, see check_tray.
+        if let Err(e) = self.create_tray() {
+            system::log_error("tray", &e);
+        }
+
+        if open_window { self.open_window() } else { Ok(()) }
+    }
+
+    fn create_tray(self: &Rc<Self>) -> Result<(), slint::PlatformError> {
+        let tray = Tray::new()?;
         tray.set_auto_on(self.state.borrow().settings.auto_clean.mode != AutoMode::Off);
         tray.on_open(bind(self, |app| {
             let _ = app.open_window();
@@ -242,8 +258,42 @@ impl App {
             let _ = slint::quit_event_loop();
         });
         *self.tray.borrow_mut() = Some(tray);
+        Ok(())
+    }
 
-        if open_window { self.open_window() } else { Ok(()) }
+    /// Every few seconds, makes sure the tray icon is really there and makes it again when
+    /// it isn't: at logon Explorer may not be ready for it, and an Explorer restart takes
+    /// it away. If it still can't be shown after a minute, the window opens instead, so
+    /// Vantix never runs without a way to reach it.
+    fn check_tray(self: &Rc<Self>) {
+        const EVERY: u32 = 5;
+        const GIVE_UP: Duration = Duration::from_secs(60);
+        let missing_since = {
+            let mut state = self.state.borrow_mut();
+            state.ticks = state.ticks.wrapping_add(1);
+            if !state.ticks.is_multiple_of(EVERY) {
+                return;
+            }
+            if system::tray_icon_present() {
+                state.tray_missing = None;
+                state.opened_without_tray = false;
+                return;
+            }
+            *state.tray_missing.get_or_insert_with(Instant::now)
+        };
+        if system::taskbar_ready() {
+            self.tray.borrow_mut().take();
+            if let Err(e) = self.create_tray() {
+                system::log_error("tray", &e);
+            }
+        }
+        let mut state = self.state.borrow_mut();
+        if missing_since.elapsed() >= GIVE_UP && !state.opened_without_tray {
+            state.opened_without_tray = true;
+            drop(state);
+            system::log_error("tray", &"no tray icon after a minute, opening the window");
+            let _ = self.open_window();
+        }
     }
 
     /// Tray shortcut: turns automatic cleanup off, or back on with the last mode used.
@@ -517,6 +567,7 @@ impl App {
         if system::show_requested() {
             let _ = self.open_window();
         }
+        self.check_tray();
         let stats = memory::stats();
         self.with_tray(|tray| tray.set_load(stats.load as i32));
         let status = governor::status();
