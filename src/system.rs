@@ -6,7 +6,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 use windows::Win32::Foundation::{
-    COLORREF, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, VARIANT_FALSE, WAIT_OBJECT_0,
+    COLORREF, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, VARIANT_FALSE, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -15,6 +15,7 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::TaskScheduler::{
     IExecAction, ILogonTrigger, ITaskFolder, ITaskService, TASK_ACTION_EXEC, TASK_CREATE_OR_UPDATE,
     TASK_LOGON_INTERACTIVE_TOKEN, TASK_RUNLEVEL_HIGHEST, TASK_TRIGGER_LOGON, TaskScheduler,
@@ -23,8 +24,13 @@ use windows::Win32::System::Threading::{
     CreateEventW, CreateMutexW, EVENT_MODIFY_STATE, OpenEventW, SetEvent, WaitForSingleObject,
 };
 use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-use windows::core::{BSTR, HSTRING, Interface, Result, w};
+use windows::Win32::UI::WindowsAndMessaging::{
+    ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON, SM_CXSMICON, SendMessageW,
+    WM_SETICON,
+};
+use windows::core::{BSTR, HSTRING, Interface, PCWSTR, Result, w};
 
 use crate::reg;
 use crate::settings::data_dir;
@@ -64,13 +70,15 @@ pub fn show_requested() -> bool {
     unsafe { WaitForSingleObject(HANDLE(event as _), 0) == WAIT_OBJECT_0 }
 }
 
-/// Paints the native title bar in the app's colors so it blends with the window content.
-/// Needs the window to be shown first, that's when the HWND exists.
-pub fn style_title_bar(window: &slint::Window) {
+/// Paints the native title bar in the app's colors and sets the window icons from the
+/// exe's icon resource. Returns false while the native window doesn't exist yet: Slint
+/// only creates it once the event loop runs, not on `show()`.
+pub fn style_window(window: &slint::Window) -> bool {
     let handle = window.window_handle();
-    let Ok(handle) = handle.window_handle() else { return };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else { return };
+    let Ok(handle) = handle.window_handle() else { return false };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else { return false };
     let hwnd = HWND(handle.hwnd.get() as _);
+    set_icons(hwnd);
 
     let rgb = |r: u32, g: u32, b: u32| COLORREF(r | g << 8 | b << 16);
     let dark = 1u32;
@@ -83,15 +91,35 @@ pub fn style_title_bar(window: &slint::Window) {
         set(DWMWA_BORDER_COLOR, &rgb(0x1f, 0x23, 0x2a).0);
         set(DWMWA_TEXT_COLOR, &rgb(0x8a, 0x91, 0x9c).0);
     }
+    true
+}
+
+/// Loads each icon at the exact size Windows asks for, so it picks the hand drawn 16, 24
+/// or 32 px frame from the .ico instead of shrinking one big bitmap into a blur.
+fn set_icons(hwnd: HWND) {
+    unsafe {
+        let Ok(module) = GetModuleHandleW(None) else { return };
+        let dpi = GetDpiForWindow(hwnd);
+        for (kind, metric) in [(ICON_SMALL, SM_CXSMICON), (ICON_BIG, SM_CXICON)] {
+            let size = GetSystemMetricsForDpi(metric, dpi);
+            // Resource id 1, see res/vantix.rc.
+            if let Ok(icon) =
+                LoadImageW(Some(module.into()), PCWSTR(1 as _), IMAGE_ICON, size, size, LR_DEFAULTCOLOR)
+            {
+                SendMessageW(hwnd, WM_SETICON, Some(WPARAM(kind as usize)), Some(LPARAM(icon.0 as isize)));
+            }
+        }
+    }
 }
 
 /// Unpackaged apps can raise toasts once their AppUserModelID is registered under HKCU
 /// with a display name and icon.
 pub fn register_notifications() -> Result<()> {
+    const ICON: &[u8] = include_bytes!("../res/vantix.png");
     let icon = data_dir().join("icon.png");
-    if !icon.exists() {
+    if std::fs::read(&icon).ok().as_deref() != Some(ICON) {
         std::fs::create_dir_all(data_dir())?;
-        std::fs::write(&icon, include_bytes!("../res/vantix.png"))?;
+        std::fs::write(&icon, ICON)?;
     }
     let key = format!(r"Software\Classes\AppUserModelId\{APP_ID}");
     reg::set_string(reg::HKEY_CURRENT_USER, &key, "DisplayName", "Vantix")?;

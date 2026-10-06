@@ -13,7 +13,7 @@ export component Tray inherits SystemTrayIcon {
     public pure function hint-title() -> string { return @tr("Vantix is still running"); }
     public pure function hint-body() -> string { return @tr("It keeps working from the tray. Use Quit in the tray menu to close it."); }
 
-    icon: @image-url("../res/vantix.png");
+    icon: @image-url("../res/vantix-tray.png");
     tooltip: "Vantix - " + @tr("RAM {}%", root.load);
     clicked => { root.open(); }
 

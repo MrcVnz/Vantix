@@ -174,7 +174,6 @@ export component AppWindow inherits Window {
     property <int> page;
 
     title: "Vantix";
-    icon: @image-url("../res/vantix.png");
     // Fixed so the window never resizes when switching pages; the Memory page is the largest.
     preferred-width: 1180px;
     preferred-height: 800px;
@@ -206,18 +205,12 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: 12px;
                     padding-left: 4px;
-                    Rectangle {
-                        width: 36px;
-                        height: 36px;
-                        border-radius: 10px;
-                        background: Theme.accent.with-alpha(0.1);
-                        border-width: 1px;
-                        border-color: Theme.accent.with-alpha(0.25);
-                        Image {
-                            source: @image-url("../res/vantix.png");
-                            width: 24px;
-                            height: 24px;
-                        }
+                    Image {
+                        source: @image-url("../res/vantix.png");
+                        // 1/8 of the 256 px art, so every pixel stays the same size.
+                        width: 32px;
+                        height: 32px;
+                        image-rendering: pixelated;
                     }
                     VerticalLayout {
                         alignment: center;

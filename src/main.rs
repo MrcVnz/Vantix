@@ -104,7 +104,7 @@ fn ask_terms(app: &Rc<App>) -> Result<TermsWindow, slint::PlatformError> {
         CloseRequestResponse::HideWindow
     });
     terms.show()?;
-    system::style_title_bar(terms.window());
+    style_when_ready(terms.as_weak(), 0);
     Ok(terms)
 }
 
@@ -295,7 +295,7 @@ impl App {
         ui.window().on_close_requested(bind_close(self));
 
         ui.show()?;
-        system::style_title_bar(ui.window());
+        style_when_ready(ui.as_weak(), 0);
         *self.window.borrow_mut() = Some(ui);
         Ok(())
     }
@@ -593,6 +593,16 @@ fn format_bytes(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     let mb = bytes as f64 / MB;
     if mb >= 1024.0 { format!("{:.1} GB", mb / 1024.0) } else { format!("{mb:.0} MB") }
+}
+
+/// Retries every 50 ms until the native window exists, for at most a second.
+fn style_when_ready<T: ComponentHandle + 'static>(component: slint::Weak<T>, attempt: u32) {
+    Timer::single_shot(Duration::from_millis(if attempt == 0 { 0 } else { 50 }), move || {
+        let Some(strong) = component.upgrade() else { return };
+        if !system::style_window(strong.window()) && attempt < 20 {
+            style_when_ready(component, attempt + 1);
+        }
+    });
 }
 
 /// Needs at least one component to exist, Slint only loads the bundled catalogs then.
