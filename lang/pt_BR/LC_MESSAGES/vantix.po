@@ -10,7 +10,7 @@ msgid "Settings"
 msgstr "Configurações"
 
 msgid "Preferences are saved as soon as you change them."
-msgstr "As preferências são salvas assim que você muda."
+msgstr "As preferências são salvas na hora."
 
 msgid "Language"
 msgstr "Idioma"
@@ -34,7 +34,7 @@ msgid "Deep"
 msgstr "Profunda"
 
 msgid "{} installed, updated every second"
-msgstr "{} instalados, atualizado a cada segundo"
+msgstr "{} instalados, atualiza a cada segundo"
 
 msgid "Auto cleanup off"
 msgstr "Limpeza automática desligada"
@@ -64,19 +64,19 @@ msgid "Last 60 seconds"
 msgstr "Últimos 60 segundos"
 
 msgid "Committed {}"
-msgstr "Confirmada {}"
+msgstr "Alocada {}"
 
 msgid "Cleanup"
 msgstr "Limpeza"
 
 msgid "Trims apps, never stutters"
-msgstr "Reduz os apps, sem travar"
+msgstr "Enxuga os apps, sem travar"
 
 msgid "Also flushes modified pages"
-msgstr "Também grava as páginas modificadas"
+msgstr "Também libera a memória modificada"
 
 msgid "System-wide, may hitch briefly"
-msgstr "No sistema todo, pode travar por um instante"
+msgstr "No sistema todo, pode dar uma travadinha"
 
 msgid "Cleaning..."
 msgstr "Limpando..."
@@ -133,7 +133,7 @@ msgid "Before you start"
 msgstr "Antes de começar"
 
 msgid "Please read this once. It takes a minute."
-msgstr "Leia com atenção. Leva um minuto."
+msgstr "Leia com calma. Leva só um minuto."
 
 msgid "Vantix changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability."
 msgstr "O Vantix altera configurações do Windows, limpa memória e caches e pode modificar componentes do sistema. Os resultados dependem do seu hardware e da sua configuração, e algumas alterações podem reduzir a segurança, a duração da bateria ou a estabilidade."
@@ -169,22 +169,22 @@ msgid "Vantix is still running"
 msgstr "O Vantix continua aberto"
 
 msgid "It keeps working from the tray. Use Quit in the tray menu to close it."
-msgstr "Ele continua funcionando na bandeja. Use Sair no menu da bandeja para fechar."
+msgstr "Ele continua rodando na bandeja do sistema, perto do relógio. Para fechar, use Sair no menu do ícone."
 
 msgid "Startup and tray"
-msgstr "Inicialização e bandeja"
+msgstr "Inicialização e bandeja do sistema"
 
 msgid "Start with Windows"
 msgstr "Iniciar com o Windows"
 
 msgid "Runs at logon with admin rights, without a UAC prompt."
-msgstr "Abre ao entrar no Windows, como administrador e sem aviso do UAC."
+msgstr "Abre quando você entra no Windows, como administrador e sem a janela do UAC."
 
 msgid "Start minimized to the tray"
-msgstr "Iniciar minimizado na bandeja"
+msgstr "Iniciar minimizado na bandeja do sistema"
 
 msgid "Only when started with Windows."
-msgstr "Só quando iniciar com o Windows."
+msgstr "Só quando abrir junto com o Windows."
 
 msgid "Notifications"
 msgstr "Notificações"
@@ -196,7 +196,7 @@ msgid "Reset"
 msgstr "Redefinir"
 
 msgid "Removes the startup task, notification registration and all Vantix data, then closes the app."
-msgstr "Remove a tarefa de inicialização, o registro de notificações e todos os dados do Vantix, e depois fecha o app."
+msgstr "Remove a tarefa de inicialização, o cadastro das notificações e todos os dados do Vantix, e depois fecha o app."
 
 msgid "Click again to confirm"
 msgstr "Clique de novo para confirmar"
@@ -298,7 +298,7 @@ msgid "Storage"
 msgstr "Armazenamento"
 
 msgid "Finds space taken by caches and leftovers. Nothing is deleted until you choose."
-msgstr "Encontra espaço ocupado por caches e restos. Nada é apagado até você escolher."
+msgstr "Encontra espaço ocupado por caches e sobras. Nada é apagado até você escolher."
 
 msgid "Windows drive ({})"
 msgstr "Disco do Windows ({})"
@@ -310,7 +310,7 @@ msgid "+{} free"
 msgstr "+{} livres"
 
 msgid "Analyze to see what can be freed."
-msgstr "Analise para ver o que pode ser liberado."
+msgstr "Clique em Analisar para ver quanto espaço dá para liberar."
 
 msgid "Selected: {}"
 msgstr "Selecionado: {}"
@@ -325,13 +325,13 @@ msgid "Analyzing..."
 msgstr "Analisando..."
 
 msgid "Close {} first"
-msgstr "Feche o {} antes"
+msgstr "Feche o {} primeiro"
 
 msgid "{} files"
 msgstr "{} arquivos"
 
 msgid "{} in use, kept"
-msgstr "{} em uso, mantidos"
+msgstr "{} em uso, não apagados"
 
 msgid "Temporary files"
 msgstr "Arquivos temporários"
@@ -346,7 +346,7 @@ msgid "Delivery Optimization cache"
 msgstr "Cache da Otimização de Entrega"
 
 msgid "Crash dumps"
-msgstr "Despejos de falhas"
+msgstr "Arquivos de despejo de memória"
 
 msgid "Error reports"
 msgstr "Relatórios de erro"
@@ -364,28 +364,28 @@ msgid "Recycle Bin"
 msgstr "Lixeira"
 
 msgid "Left behind by apps and installers, older than a day."
-msgstr "Deixados por apps e instaladores, com mais de um dia."
+msgstr "Sobras de apps e instaladores, com mais de um dia."
 
 msgid "System temp folder, older than a day."
-msgstr "Pasta temporária do sistema, com mais de um dia."
+msgstr "Pasta temporária do sistema, arquivos com mais de um dia."
 
 msgid "Updates already installed. The service pauses while cleaning."
-msgstr "Atualizações já instaladas. O serviço pausa durante a limpeza."
+msgstr "Atualizações que já foram instaladas. O serviço é pausado durante a limpeza."
 
 msgid "Update pieces shared with other PCs."
 msgstr "Partes de atualizações compartilhadas com outros PCs."
 
 msgid "Diagnostic files written when something crashed."
-msgstr "Arquivos de diagnóstico gravados quando algo travou."
+msgstr "Arquivos de diagnóstico criados quando um programa ou o Windows fechou com erro."
 
 msgid "Windows Error Reporting queue and archive."
-msgstr "Fila e arquivo do Relatório de Erros do Windows."
+msgstr "Relatórios de erro do Windows na fila ou já arquivados."
 
 msgid "DirectX, NVIDIA, AMD and Intel shader caches."
 msgstr "Caches de shaders do DirectX, NVIDIA, AMD e Intel."
 
 msgid "Explorer thumbnail database."
-msgstr "Banco de miniaturas do Explorador."
+msgstr "Cache de miniaturas do Explorador de Arquivos."
 
 msgid "Chrome, Edge, Brave and Firefox cache only."
 msgstr "Só o cache do Chrome, Edge, Brave e Firefox."
@@ -394,13 +394,13 @@ msgid "Everything currently in the Recycle Bin."
 msgstr "Tudo o que está na Lixeira agora."
 
 msgid "Games rebuild shaders on the next launch and may stutter for a bit."
-msgstr "Os jogos recompilam os shaders na próxima abertura e podem engasgar um pouco."
+msgstr "Os jogos recriam os shaders na próxima vez que abrirem e podem dar umas travadas no começo."
 
 msgid "Explorer rebuilds thumbnails when you open folders."
-msgstr "O Explorador recria as miniaturas ao abrir pastas."
+msgstr "O Explorador de Arquivos recria as miniaturas quando você abre as pastas."
 
 msgid "Pages load slower until the cache refills. Logins and history stay."
-msgstr "As páginas carregam mais devagar até o cache encher. Logins e histórico ficam."
+msgstr "Os sites carregam mais devagar até o cache encher de novo. Logins e histórico continuam."
 
 msgid "Deleted files can no longer be restored."
 msgstr "Os arquivos apagados não poderão mais ser recuperados."
@@ -412,7 +412,144 @@ msgid "Next cleanup in {}"
 msgstr "Próxima limpeza em {}"
 
 msgid "Watching: now {}%, cleans above {}%"
-msgstr "Monitorando: agora {}%, limpa acima de {}%"
+msgstr "De olho: agora em {}%, limpa acima de {}%"
 
 msgid "Cleaned. Waits for usage to drop below {}% before cleaning again."
-msgstr "Limpou. Espera o uso cair abaixo de {}% antes de limpar de novo."
+msgstr "Limpeza feita. Espera o uso ficar abaixo de {}% para limpar de novo."
+
+msgid "Turn off hibernation"
+msgstr "Desligar a hibernação"
+
+msgid "Turn off reserved storage"
+msgstr "Desligar o armazenamento reservado"
+
+msgid "Compress Windows (CompactOS)"
+msgstr "Compactar o Windows (CompactOS)"
+
+msgid "Stop recording last access time"
+msgstr "Parar de registrar o último acesso"
+
+msgid "Retrim SSDs"
+msgstr "Executar TRIM nos SSDs"
+
+msgid "Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."
+msgstr "Apaga o hiberfil.sys, um arquivo do tamanho de boa parte da sua RAM que só a hibernação usa."
+
+msgid "Windows keeps about 7 GB aside for updates. This gives that space back."
+msgstr "O Windows separa cerca de 7 GB para as atualizações. Isso devolve esse espaço."
+
+msgid "Stores the Windows files compressed and frees 2 to 4 GB. Takes 5 to 20 minutes."
+msgstr "Guarda os arquivos do Windows compactados e libera de 2 a 4 GB. Leva de 5 a 20 minutos."
+
+msgid "NTFS stops writing the last access date every time a file is read. Less writing to the drive."
+msgstr "O Windows para de anotar a data de último acesso toda vez que um arquivo é lido. Menos gravação no disco."
+
+msgid "Tells your SSDs about all the free space at once. Windows already does this every week on its own."
+msgstr "Informa aos SSDs todo o espaço livre de uma vez. O Windows já faz isso sozinho toda semana."
+
+msgid "The PC can no longer hibernate and Windows Fast Startup turns off with it."
+msgstr "O PC deixa de hibernar e a Inicialização rápida do Windows também é desligada."
+
+msgid "With the drive almost full, Windows updates may fail to install."
+msgstr "Com o disco quase cheio, as atualizações do Windows podem falhar na instalação."
+
+msgid "Opening system programs uses a little more CPU."
+msgstr "Abrir programas do sistema usa um pouco mais de CPU."
+
+msgid "Backup and cleanup tools that rely on this date no longer see when a file was opened."
+msgstr "Programas de backup e limpeza que usam essa data deixam de saber quando um arquivo foi aberto."
+
+msgid "None"
+msgstr "Nenhum"
+
+msgid "Low"
+msgstr "Baixo"
+
+msgid "Medium"
+msgstr "Médio"
+
+msgid "High"
+msgstr "Alto"
+
+msgid "Gain"
+msgstr "Ganho"
+
+msgid "Cost"
+msgstr "Custo"
+
+msgid "Waiting for restart"
+msgstr "Aguardando reinício"
+
+msgid "Needs a restart"
+msgstr "Precisa reiniciar"
+
+msgid "Applies right away"
+msgstr "Vale na hora"
+
+msgid "Already set in Windows"
+msgstr "Já está assim no Windows"
+
+msgid "Couldn't read the current state"
+msgstr "Não deu para ler o estado atual"
+
+msgid "Frees about {}"
+msgstr "Libera cerca de {}"
+
+msgid "Applying..."
+msgstr "Aplicando..."
+
+msgid "Run"
+msgstr "Executar"
+
+msgid "Run again"
+msgstr "Executar de novo"
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "Undo all"
+msgstr "Desfazer tudo"
+
+msgid "Click again to restart"
+msgstr "Clique de novo para reiniciar"
+
+msgid "Restart now"
+msgstr "Reiniciar agora"
+
+msgid "Undo this change?"
+msgstr "Desfazer esta alteração?"
+
+msgid "Apply this change?"
+msgstr "Aplicar esta alteração?"
+
+msgid "Puts back how it was before Vantix changed it."
+msgstr "Volta tudo como estava antes de o Vantix mexer."
+
+msgid "Vantix creates a restore point first."
+msgstr "Antes, o Vantix cria um ponto de restauração."
+
+msgid "Nothing to back up for this one, it runs right away."
+msgstr "Isso não muda nenhuma configuração, então roda direto, sem ponto de restauração."
+
+msgid "System protection is off, so there won't be a restore point. Vantix still keeps its own record to undo this."
+msgstr "A Proteção do sistema está desligada, então não vai ter ponto de restauração. O Vantix ainda guarda o próprio registro para desfazer."
+
+msgid "Takes effect after a restart."
+msgstr "Passa a valer depois de reiniciar."
+
+msgid "This one takes several minutes. You can keep using the PC."
+msgstr "Isso leva alguns minutos. Pode continuar usando o PC."
+
+msgid "Windows settings that take up drive space. Each one shows what it gives and what it costs."
+msgstr "Configurações do Windows que ocupam espaço no disco. Cada uma mostra o que você ganha e o que perde."
+
+msgid "Tweaks"
+msgstr "Ajustes"
+
+msgid "{n} change takes effect after a restart"
+msgid_plural "{n} changes take effect after a restart"
+msgstr[0] "{n} alteração passa a valer depois de reiniciar"
+msgstr[1] "{n} alterações passam a valer depois de reiniciar"
+
+msgid "Undo every change?"
+msgstr "Desfazer todas as alterações?"

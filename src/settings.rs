@@ -91,6 +91,20 @@ impl HistoryEntry {
     }
 }
 
+/// One applied tweak, kept until it's undone. This is what "Undo" works from.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Change {
+    pub id: String,
+    pub time: DateTime<Local>,
+    /// What the tweak needs to put the old state back.
+    pub previous: Option<u32>,
+    /// Boot it was applied in, to tell when a change that needs a restart took effect.
+    pub boot: i64,
+    pub reboot: bool,
+    /// Free space measured on the Windows drive before and after.
+    pub freed: Option<u64>,
+}
+
 pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join("Vantix")
@@ -115,6 +129,14 @@ pub fn save_history(history: &mut Vec<HistoryEntry>) -> io::Result<()> {
         history.drain(..history.len() - HISTORY_LIMIT);
     }
     write_json(&data_dir().join("history.json"), history)
+}
+
+pub fn load_changes() -> Vec<Change> {
+    read_json(&data_dir().join("changes.json")).unwrap_or_default()
+}
+
+pub fn save_changes(changes: &[Change]) -> io::Result<()> {
+    write_json(&data_dir().join("changes.json"), changes)
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {

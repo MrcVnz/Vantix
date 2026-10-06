@@ -2,9 +2,11 @@ import { Theme, Icons, Icon, Card, Segmented, Toggle, Button } from "theme.slint
 import { Memory, MemoryPage, CleanState, HistoryRow } from "memory.slint";
 import { Protection, ProtectionPage, Job, JobState, JobSheet, RestorePoint } from "protection.slint";
 import { Storage, StoragePage, CleanupRow, RowState } from "storage.slint";
+import { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, RebootBanner } from "tweaks.slint";
+import { Terms, TermsSheet } from "terms.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
-export { TermsWindow } from "terms.slint";
+export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -292,30 +294,40 @@ export component AppWindow inherits Window {
             }
         }
 
-        // A plain Rectangle instead of a layout, so the active page's size hints
-        // don't propagate up and resize the window.
-        Rectangle {
+        VerticalLayout {
             horizontal-stretch: 1;
-            if root.page == 0: MemoryPage {
-                width: parent.width;
-                height: parent.height;
-            }
-            if root.page == 1: SettingsPage {
-                width: parent.width;
-                height: parent.height;
-            }
-            if root.page == 2: ProtectionPage {
-                width: parent.width;
-                height: parent.height;
-            }
-            if root.page == 3: StoragePage {
-                width: parent.width;
-                height: parent.height;
+            RebootBanner {}
+
+            // A plain Rectangle instead of a layout, so the active page's size hints
+            // don't propagate up and resize the window.
+            Rectangle {
+                vertical-stretch: 1;
+                if root.page == 0: MemoryPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+                if root.page == 1: SettingsPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+                if root.page == 2: ProtectionPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+                if root.page == 3: StoragePage {
+                    width: parent.width;
+                    height: parent.height;
+                }
             }
         }
     }
 
     JobSheet {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    TermsSheet {
         width: parent.width;
         height: parent.height;
     }

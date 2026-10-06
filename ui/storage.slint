@@ -1,5 +1,6 @@
-import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
+import { Theme, Icons, Icon, Card, Button, Chip, Segmented } from "theme.slint";
 import { ListView } from "std-widgets.slint";
+import { Tweaks, TweakList } from "tweaks.slint";
 
 export enum RowState { idle, scanning, ready, blocked, cleaning, done }
 
@@ -25,6 +26,8 @@ export global Storage {
     in property <[CleanupRow]> rows;
     in property <bool> busy;
     in property <string> selected-total;
+    /// Cleanup or tweaks, kept while the page itself comes and goes.
+    in-out property <int> tab;
 
     callback analyze();
     callback clean();
@@ -171,18 +174,32 @@ export component StoragePage inherits VerticalLayout {
     padding-top: 26px;
     spacing: Theme.gap;
 
-    VerticalLayout {
-        spacing: 2px;
-        Text {
-            text: @tr("Storage");
-            color: Theme.text;
-            font-family: Theme.display-font;
-            font-size: 28px;
-            font-weight: 700;
+    HorizontalLayout {
+        spacing: Theme.gap;
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: @tr("Storage");
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 28px;
+                font-weight: 700;
+            }
+            Text {
+                text: Storage.tab == 0
+                    ? @tr("Finds space taken by caches and leftovers. Nothing is deleted until you choose.")
+                    : @tr("Windows settings that take up drive space. Each one shows what it gives and what it costs.");
+                color: Theme.muted;
+            }
         }
-        Text {
-            text: @tr("Finds space taken by caches and leftovers. Nothing is deleted until you choose.");
-            color: Theme.muted;
+        VerticalLayout {
+            alignment: center;
+            Segmented {
+                width: 240px;
+                options: [@tr("Cleanup"), @tr("Tweaks")];
+                selected <=> Storage.tab;
+            }
         }
     }
 
@@ -243,7 +260,12 @@ export component StoragePage inherits VerticalLayout {
         }
     }
 
-    Card {
+    if Storage.tab == 1: TweakList {
+        vertical-stretch: 1;
+        rows: Tweaks.storage;
+    }
+
+    if Storage.tab == 0: Card {
         vertical-stretch: 1;
         pad: 14px;
 

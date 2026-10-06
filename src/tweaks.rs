@@ -1,0 +1,422 @@
+//! System tweaks: what each one changes, how to read its real state and how to undo it.
+//!
+//! The catalog order is the order of the texts in ui/tweaks.slint. Every call here
+//! blocks, some for minutes (CompactOS), so run them off the UI thread.
+
+use std::os::windows::process::CommandExt;
+use std::process::Command;
+
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::Globalization::{
+    GetLocaleInfoEx, LOCALE_IDEFAULTCODEPAGE, LOCALE_NAME_SYSTEM_DEFAULT, LOCALE_RETURN_NUMBER,
+    MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar,
+};
+use windows::Win32::Storage::FileSystem::WofIsExternalFile;
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDriveTypeW, GetLogicalDrives, OPEN_EXISTING,
+};
+use windows::Win32::System::IO::DeviceIoControl;
+use windows::Win32::System::Ioctl::{
+    DEVICE_SEEK_PENALTY_DESCRIPTOR, IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery,
+    STORAGE_PROPERTY_QUERY, StorageDeviceSeekPenaltyProperty,
+};
+use windows::Win32::System::SystemInformation::{GetSystemDirectoryW, GetTickCount64, GetWindowsDirectoryW};
+use windows::core::{BOOL, Error, HSTRING, Result};
+
+use crate::reg;
+
+/// From WinBase.h; the windows crate only has it behind an unrelated feature.
+const DRIVE_FIXED: u32 = 3;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Storage,
+}
+
+/// Matches the Gain/Cost order in the UI.
+#[derive(Clone, Copy)]
+pub enum Level {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+pub enum Kind {
+    /// An on/off change. `apply` returns whatever `revert` needs to put it back.
+    Toggle {
+        read: fn() -> Result<bool>,
+        apply: fn() -> Result<Option<u32>>,
+        revert: fn(Option<u32>) -> Result<()>,
+    },
+    /// A one-off job with nothing to undo.
+    Action { run: fn() -> Result<()> },
+}
+
+pub struct Tweak {
+    pub id: &'static str,
+    pub section: Section,
+    pub gain: Level,
+    pub cost: Level,
+    pub reboot: bool,
+    /// Hides the tweak on machines where it can't do anything.
+    pub shown: fn() -> bool,
+    /// Free space this would give back, when it can be known before applying.
+    pub estimate: fn() -> Option<u64>,
+    /// Takes minutes rather than seconds.
+    pub slow: bool,
+    pub kind: Kind,
+}
+
+pub const CATALOG: &[Tweak] = &[
+    Tweak {
+        id: "hibernation-off",
+        section: Section::Storage,
+        gain: Level::High,
+        cost: Level::Medium,
+        reboot: false,
+        shown: always,
+        estimate: hiberfil_size,
+        slow: false,
+        kind: Kind::Toggle { read: hibernation_off, apply: disable_hibernation, revert: enable_hibernation },
+    },
+    Tweak {
+        id: "reserved-storage-off",
+        section: Section::Storage,
+        gain: Level::Medium,
+        cost: Level::Medium,
+        reboot: false,
+        shown: has_reserved_storage,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle {
+            read: reserved_storage_off,
+            apply: disable_reserved_storage,
+            revert: enable_reserved_storage,
+        },
+    },
+    Tweak {
+        id: "compact-os",
+        section: Section::Storage,
+        gain: Level::Medium,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: true,
+        kind: Kind::Toggle { read: compact_os_on, apply: enable_compact_os, revert: disable_compact_os },
+    },
+    Tweak {
+        id: "last-access-off",
+        section: Section::Storage,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: true,
+        shown: always,
+        estimate: none,
+        slow: false,
+        kind: Kind::Toggle { read: last_access_off, apply: disable_last_access, revert: restore_last_access },
+    },
+    Tweak {
+        id: "retrim",
+        section: Section::Storage,
+        gain: Level::Low,
+        cost: Level::None,
+        reboot: false,
+        shown: || !ssd_volumes().is_empty(),
+        estimate: none,
+        slow: false,
+        kind: Kind::Action { run: retrim },
+    },
+];
+
+fn always() -> bool {
+    true
+}
+
+fn none() -> Option<u64> {
+    None
+}
+
+/// Boot time in Unix seconds. Two reads in the same boot can differ by a second.
+pub fn boot_time() -> i64 {
+    chrono::Local::now().timestamp() - unsafe { GetTickCount64() } as i64 / 1000
+}
+
+/// Whether a change made in the boot that started at `boot` still waits for a restart.
+pub fn same_boot(boot: i64) -> bool {
+    (boot_time() - boot).abs() < 60
+}
+
+pub fn restart() -> Result<()> {
+    run("shutdown.exe", &["/r", "/t", "0"]).map(drop)
+}
+
+/// Full path of a tool in System32. A bare name would also be looked up next to our own
+/// exe first, and we run elevated.
+pub fn system_tool(name: &str) -> std::path::PathBuf {
+    let mut buffer = [0u16; 260];
+    let len = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..len.min(buffer.len())])).join(name)
+}
+
+fn windows_dir() -> String {
+    let mut buffer = [0u16; 260];
+    let len = unsafe { GetWindowsDirectoryW(Some(&mut buffer)) } as usize;
+    String::from_utf16_lossy(&buffer[..len.min(buffer.len())])
+}
+
+/// Runs a console tool from System32 without flashing a console window. Fails on a
+/// non-zero exit, with whatever the tool printed as the reason.
+fn run(program: &str, args: &[&str]) -> Result<String> {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = Command::new(system_tool(program)).args(args).creation_flags(CREATE_NO_WINDOW).output()?;
+    let text = decode(&output.stdout);
+    if output.status.success() {
+        return Ok(text);
+    }
+    let stderr = decode(&output.stderr);
+    let reason = if stderr.trim().is_empty() { text.trim() } else { stderr.trim() };
+    let code = output.status.code().unwrap_or(-1);
+    let name = program.rsplit('\\').next().unwrap_or(program);
+    Err(Error::new(windows::Win32::Foundation::E_FAIL, format!("{name} ({code}): {reason}")))
+}
+
+/// Console tools write in the OEM code page and PowerShell is told to write UTF-8. OEM
+/// text with accents is practically never valid UTF-8, so that tells them apart.
+fn decode(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+    unsafe {
+        // Our manifest makes CP_OEMCP mean UTF-8 inside this process, so ask the system
+        // locale for the code page the tools actually use (850 on pt-BR Windows).
+        let mut number = [0u16; 2];
+        let code_page = match GetLocaleInfoEx(
+            LOCALE_NAME_SYSTEM_DEFAULT,
+            LOCALE_IDEFAULTCODEPAGE | LOCALE_RETURN_NUMBER,
+            Some(&mut number),
+        ) {
+            2 => u32::from(number[0]) | u32::from(number[1]) << 16,
+            _ => 437,
+        };
+        let len = MultiByteToWideChar(code_page, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, None);
+        let mut wide = vec![0u16; len.max(0) as usize];
+        let len = MultiByteToWideChar(code_page, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, Some(&mut wide));
+        String::from_utf16_lossy(&wide[..len.max(0) as usize])
+    }
+}
+
+/// For the cmdlets that have no console tool equivalent. Errors come back as just the
+/// message instead of PowerShell's multi-line error record.
+fn powershell(script: &str) -> Result<String> {
+    let script = format!(
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \
+         try {{ {script} }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}"
+    );
+    run(r"WindowsPowerShell\v1.0\powershell.exe", &["-NoProfile", "-NonInteractive", "-Command", &script])
+        .map(|out| out.trim().to_string())
+}
+
+fn system_drive() -> String {
+    std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into())
+}
+
+// Hibernation. The hiberfil.sys is sized from RAM, so on most PCs it's the biggest
+// single file Windows keeps. Fast Startup is built on it and goes away too.
+
+const POWER_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Power";
+
+fn hibernation_off() -> Result<bool> {
+    Ok(reg::get_dword(reg::HKEY_LOCAL_MACHINE, POWER_KEY, "HibernateEnabled")? == Some(0))
+}
+
+fn hiberfil_size() -> Option<u64> {
+    std::fs::metadata(format!("{}\\hiberfil.sys", system_drive()))
+        .ok()
+        .map(|m| m.len())
+        .filter(|&len| len > 0)
+}
+
+fn disable_hibernation() -> Result<Option<u32>> {
+    run("powercfg.exe", &["/hibernate", "off"]).map(|_| None)
+}
+
+fn enable_hibernation(_: Option<u32>) -> Result<()> {
+    run("powercfg.exe", &["/hibernate", "on"]).map(drop)
+}
+
+// Reserved storage: about 7 GB Windows keeps aside so updates still install on a full disk.
+
+fn has_reserved_storage() -> bool {
+    reg::get_dword(
+        reg::HKEY_LOCAL_MACHINE,
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager",
+        "ShippedWithReserves",
+    )
+    .is_ok_and(|value| value.is_some())
+}
+
+fn reserved_storage_off() -> Result<bool> {
+    match powershell("(Get-WindowsReservedStorageState -ErrorAction Stop).ReservedStorageState")?.as_str() {
+        "Enabled" => Ok(false),
+        "Disabled" => Ok(true),
+        other => {
+            Err(Error::new(windows::Win32::Foundation::E_UNEXPECTED, format!("reserved storage: {other}")))
+        }
+    }
+}
+
+fn disable_reserved_storage() -> Result<Option<u32>> {
+    powershell("Set-WindowsReservedStorageState -State Disabled -ErrorAction Stop").map(|_| None)
+}
+
+fn enable_reserved_storage(_: Option<u32>) -> Result<()> {
+    powershell("Set-WindowsReservedStorageState -State Enabled -ErrorAction Stop").map(drop)
+}
+
+// CompactOS: system binaries stored compressed through WOF. `compact /compactos:query`
+// only reports in the UI language, so the state is read from the files themselves.
+
+fn compact_os_on() -> Result<bool> {
+    let windows = windows_dir();
+    let probes = ["explorer.exe", r"System32\notepad.exe", r"System32\cmd.exe", r"System32\taskmgr.exe"];
+    let compressed = probes
+        .iter()
+        .filter(|probe| {
+            let mut external = BOOL(0);
+            let path = HSTRING::from(format!("{windows}\\{probe}"));
+            unsafe { WofIsExternalFile(&path, Some(&mut external), None, None, None) }.is_ok()
+                && external.as_bool()
+        })
+        .count();
+    Ok(compressed * 2 > probes.len())
+}
+
+// compact's exit code isn't a reliable success flag here, so the files have the last word.
+
+fn enable_compact_os() -> Result<Option<u32>> {
+    match run("compact.exe", &["/compactos:always"]) {
+        Err(e) if !compact_os_on().unwrap_or(false) => Err(e),
+        _ => Ok(None),
+    }
+}
+
+fn disable_compact_os(_: Option<u32>) -> Result<()> {
+    match run("compact.exe", &["/compactos:never"]) {
+        Err(e) if compact_os_on().unwrap_or(true) => Err(e),
+        _ => Ok(()),
+    }
+}
+
+// NTFS last access time. fsutil reports 0/1 as user managed and 2/3 as system managed;
+// the low bit set means updates are off.
+
+const FS_KEY: &str = r"SYSTEM\CurrentControlSet\Control\FileSystem";
+const LAST_ACCESS: &str = "NtfsDisableLastAccessUpdate";
+
+fn last_access_off() -> Result<bool> {
+    Ok(reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS)?.is_some_and(|value| value & 1 == 1))
+}
+
+fn disable_last_access() -> Result<Option<u32>> {
+    let previous = reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS)?;
+    run("fsutil.exe", &["behavior", "set", "disablelastaccess", "1"])?;
+    Ok(previous)
+}
+
+fn restore_last_access(previous: Option<u32>) -> Result<()> {
+    match previous {
+        Some(value) => reg::set_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS, value),
+        None => reg::delete_value(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS),
+    }
+}
+
+// Retrim. Windows does this weekly on its own; running it by hand only helps when that
+// schedule is off or after deleting a lot of data.
+
+fn retrim() -> Result<()> {
+    let volumes = ssd_volumes();
+    let mut args: Vec<&str> = volumes.iter().map(String::as_str).collect();
+    args.push("/L");
+    run("defrag.exe", &args).map(drop)
+}
+
+/// Fixed drives without a seek penalty, as `C:`.
+fn ssd_volumes() -> Vec<String> {
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u8)
+        .filter(|bit| mask & (1 << bit) != 0)
+        .map(|bit| format!("{}:", (b'A' + bit) as char))
+        .filter(|drive| unsafe { GetDriveTypeW(&HSTRING::from(format!("{drive}\\"))) } == DRIVE_FIXED)
+        .filter(|drive| seek_penalty(drive) == Some(false))
+        .collect()
+}
+
+fn seek_penalty(drive: &str) -> Option<bool> {
+    unsafe {
+        // No access rights needed for a property query, so this works on any volume.
+        let device = CreateFileW(
+            &HSTRING::from(format!(r"\\.\{drive}")),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            Default::default(),
+            None,
+        )
+        .ok()?;
+        let query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceSeekPenaltyProperty,
+            QueryType: PropertyStandardQuery,
+            ..Default::default()
+        };
+        let mut answer = DEVICE_SEEK_PENALTY_DESCRIPTOR::default();
+        let mut returned = 0;
+        let result = DeviceIoControl(
+            device,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some((&raw const query).cast()),
+            size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            Some((&raw mut answer).cast()),
+            size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() as u32,
+            Some(&mut returned),
+            None,
+        );
+        let _ = CloseHandle(device);
+        result.ok().map(|_| answer.IncursSeekPenalty)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Read-only: `cargo test tweaks_read -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn tweaks_read() {
+        for tweak in CATALOG {
+            let state = match &tweak.kind {
+                Kind::Toggle { read, .. } => format!("{:?}", read().map_err(|e| e.message())),
+                Kind::Action { .. } => "action".into(),
+            };
+            println!("{:<22} shown={} estimate={:?} {state}", tweak.id, (tweak.shown)(), (tweak.estimate)());
+        }
+        println!("ssd volumes: {:?}", ssd_volumes());
+    }
+
+    /// Changes a registry value and puts it back: `cargo test last_access_round_trip -- --ignored`
+    #[test]
+    #[ignore]
+    fn last_access_round_trip() {
+        let original = reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS).unwrap();
+        let was_off = last_access_off().unwrap();
+        let previous = disable_last_access().unwrap();
+        assert_eq!(previous, original);
+        assert!(last_access_off().unwrap());
+        restore_last_access(previous).unwrap();
+        assert_eq!(reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS).unwrap(), original);
+        assert_eq!(last_access_off().unwrap(), was_off);
+    }
+}

@@ -1,0 +1,297 @@
+import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
+import { ListView } from "std-widgets.slint";
+
+export enum TweakState {
+    loading,
+    off,
+    /// Applied by Vantix, so it can be undone from the journal.
+    on,
+    /// Already in place without Vantix; nothing to undo.
+    system,
+    unknown,
+    busy,
+    action,
+    /// An action that already ran in this session.
+    ran,
+}
+
+/// One tweak as shown on a section page. `index` points into the catalog and the texts below.
+export struct TweakRow {
+    index: int,
+    state: TweakState,
+    gain: int,
+    cost: int,
+    reboot: bool,
+    /// Applied and waiting for a restart to take effect.
+    pending: bool,
+    /// Space it would free, when that's known up front.
+    estimate: string,
+    /// Space it freed when applied, measured on the drive.
+    freed: string,
+}
+
+export struct ChangeRow {
+    index: int,
+    time: string,
+    freed: string,
+    pending: bool,
+}
+
+export global Tweaks {
+    in property <[TweakRow]> storage;
+    in property <[ChangeRow]> changes;
+    in property <int> pending-count;
+    in property <bool> busy;
+
+    callback activate(int);
+    callback undo(int);
+    callback undo-all();
+    callback restart();
+}
+
+/// Texts in catalog order, see src/tweaks.rs.
+export global TweakText {
+    out property <[string]> titles: [
+        @tr("Turn off hibernation"),
+        @tr("Turn off reserved storage"),
+        @tr("Compress Windows (CompactOS)"),
+        @tr("Stop recording last access time"),
+        @tr("Retrim SSDs"),
+    ];
+    out property <[string]> details: [
+        @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
+        @tr("Windows keeps about 7 GB aside for updates. This gives that space back."),
+        @tr("Stores the Windows files compressed and frees 2 to 4 GB. Takes 5 to 20 minutes."),
+        @tr("NTFS stops writing the last access date every time a file is read. Less writing to the drive."),
+        @tr("Tells your SSDs about all the free space at once. Windows already does this every week on its own."),
+    ];
+    out property <[string]> notes: [
+        @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
+        @tr("With the drive almost full, Windows updates may fail to install."),
+        @tr("Opening system programs uses a little more CPU."),
+        @tr("Backup and cleanup tools that rely on this date no longer see when a file was opened."),
+        "",
+    ];
+    out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
+}
+
+/// "Gain: High" or "Cost: Medium", colored by how much it matters.
+export component LevelTag inherits HorizontalLayout {
+    in property <bool> is-cost;
+    in property <int> level;
+    property <color> tint: root.is-cost
+        ? (root.level >= 3 ? Theme.bad : root.level == 2 ? Theme.warn : root.level == 1 ? Theme.muted : Theme.faint)
+        : (root.level >= 2 ? Theme.accent : root.level == 1 ? Theme.text : Theme.faint);
+
+    spacing: 6px;
+    alignment: start;
+    Text {
+        text: root.is-cost ? @tr("Cost") : @tr("Gain");
+        color: Theme.faint;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+    Text {
+        text: TweakText.levels[root.level];
+        color: root.tint;
+        font-size: 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+}
+
+export component RebootChip inherits Chip {
+    in property <bool> reboot;
+    in property <bool> pending;
+    text: root.pending ? @tr("Waiting for restart") : root.reboot ? @tr("Needs a restart") : @tr("Applies right away");
+    tint: root.pending ? Theme.info : root.reboot ? Theme.warn : Theme.muted;
+}
+
+component TweakCard inherits Rectangle {
+    in property <TweakRow> item;
+    property <bool> busy: root.item.state == TweakState.busy;
+
+    height: content.preferred-height;
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: root.item.state == TweakState.on ? Theme.accent.with-alpha(0.35) : Theme.border;
+
+    content := HorizontalLayout {
+        padding: 18px;
+        padding-left: 20px;
+        spacing: 18px;
+
+        VerticalLayout {
+            spacing: 6px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Text {
+                    text: TweakText.titles[root.item.index];
+                    color: Theme.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                if root.item.state == TweakState.on: VerticalLayout {
+                    alignment: center;
+                    Chip {
+                        text: @tr("Applied");
+                        tint: Theme.accent;
+                    }
+                }
+                if root.item.state == TweakState.system: VerticalLayout {
+                    alignment: center;
+                    Chip { text: @tr("Already set in Windows"); }
+                }
+                if root.item.state == TweakState.unknown: VerticalLayout {
+                    alignment: center;
+                    Chip {
+                        text: @tr("Couldn't read the current state");
+                        tint: Theme.warn;
+                    }
+                }
+                if root.item.state != TweakState.system && root.item.state != TweakState.unknown: VerticalLayout {
+                    alignment: center;
+                    RebootChip {
+                        reboot: root.item.reboot;
+                        pending: root.item.pending;
+                    }
+                }
+            }
+
+            Text {
+                text: TweakText.details[root.item.index];
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: 18px;
+                alignment: start;
+                LevelTag { level: root.item.gain; }
+                LevelTag {
+                    is-cost: true;
+                    level: root.item.cost;
+                }
+                if root.item.freed != "": Text {
+                    text: @tr("Freed {}", root.item.freed);
+                    color: Theme.accent;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                if root.item.freed == "" && root.item.estimate != "" && root.item.state == TweakState.off: Text {
+                    text: @tr("Frees about {}", root.item.estimate);
+                    color: Theme.accent;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+            }
+
+            if TweakText.notes[root.item.index] != "": Text {
+                text: TweakText.notes[root.item.index];
+                color: Theme.warn;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            width: 150px;
+
+            if root.item.state == TweakState.loading || root.busy: Text {
+                text: root.busy ? @tr("Applying...") : @tr("Loading...");
+                color: Theme.faint;
+                horizontal-alignment: right;
+            }
+            if root.item.state == TweakState.off || root.item.state == TweakState.action || root.item.state == TweakState.ran: HorizontalLayout {
+                alignment: end;
+                Button {
+                    text: root.item.state == TweakState.off ? @tr("Apply") : root.item.state == TweakState.ran ? @tr("Run again") : @tr("Run");
+                    primary: root.item.state != TweakState.ran;
+                    enabled: !Tweaks.busy;
+                    clicked => { Tweaks.activate(root.item.index); }
+                }
+            }
+            if root.item.state == TweakState.on: HorizontalLayout {
+                alignment: end;
+                Button {
+                    text: @tr("Undo");
+                    icon: Icons.history;
+                    enabled: !Tweaks.busy;
+                    clicked => { Tweaks.undo(root.item.index); }
+                }
+            }
+        }
+    }
+}
+
+export component TweakList inherits ListView {
+    in property <[TweakRow]> rows;
+    for row in root.rows: VerticalLayout {
+        padding-bottom: 12px;
+        padding-right: 12px;
+        TweakCard { item: row; }
+    }
+}
+
+/// Sits on top of every page while changes wait for a restart.
+export component RebootBanner inherits Rectangle {
+    property <bool> confirm;
+
+    height: Tweaks.pending-count > 0 ? 52px : 0;
+    visible: Tweaks.pending-count > 0;
+    background: Theme.info.with-alpha(0.10);
+
+    HorizontalLayout {
+        padding-left: 32px;
+        padding-right: 24px;
+        spacing: 12px;
+
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                data: Icons.power;
+                size: 16px;
+                tint: Theme.info;
+            }
+        }
+        Text {
+            text: @tr("{n} change takes effect after a restart" | "{n} changes take effect after a restart" % Tweaks.pending-count);
+            color: Theme.text;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: root.confirm ? @tr("Click again to restart") : @tr("Restart now");
+                tall: 34px;
+                clicked => {
+                    if root.confirm {
+                        Tweaks.restart();
+                    } else {
+                        root.confirm = true;
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.info.with-alpha(0.25);
+    }
+
+    Timer {
+        interval: 4s;
+        running: root.confirm;
+        triggered => { root.confirm = false; }
+    }
+}

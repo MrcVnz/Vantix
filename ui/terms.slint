@@ -1,107 +1,126 @@
 import { Theme, Icons, Icon, Button } from "theme.slint";
 import { CheckBox } from "std-widgets.slint";
 
+export global Terms {
+    /// From the moment the window opens until the terms are accepted. Blocks the app.
+    in property <bool> pending;
+    /// Raised shortly after the window opens, until the terms are accepted.
+    in property <bool> shown;
+    callback accepted();
+    callback declined();
+}
+
 component Paragraph inherits Text {
     color: Theme.muted;
     wrap: word-wrap;
     font-size: 13px;
 }
 
-/// Shown once before anything else runs. Declining quits without writing anything.
-export component TermsWindow inherits Window {
-    callback accepted();
-    callback declined();
+/// Covers the app until the terms are accepted. Declining quits without writing anything.
+export component TermsSheet inherits Rectangle {
     property <bool> understood;
 
-    title: "Vantix";
-    width: 620px;
-    height: 540px;
-    background: Theme.background;
-    default-font-family: "Segoe UI Variable Text";
-    default-font-size: 13px;
+    // Up while pending, even before the terms fade in, so nothing in the app can be
+    // used before they're accepted.
+    visible: Terms.pending;
+    background: Terms.shown ? #000000c0 : transparent;
+    animate background { duration: 220ms; easing: ease-out; }
 
-    VerticalLayout {
-        padding: 32px;
-        spacing: 20px;
+    TouchArea {}
 
-        HorizontalLayout {
-            spacing: 14px;
-            alignment: start;
+    Rectangle {
+        opacity: Terms.shown ? 1 : 0;
+        animate opacity { duration: 220ms; easing: ease-out; }
+        width: 620px;
+        height: content.preferred-height;
+        y: (parent.height - self.height) / 2 + (Terms.shown ? 0 : 16px);
+        animate y { duration: 260ms; easing: ease-out-quart; }
+        background: Theme.surface;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border-strong;
 
-            Rectangle {
-                width: 44px;
-                height: 44px;
-                border-radius: 12px;
-                background: Theme.warn.with-alpha(0.12);
-                Icon {
-                    data: Icons.alert;
-                    size: 22px;
-                    tint: Theme.warn;
-                }
-            }
+        content := VerticalLayout {
+            padding: 30px;
+            spacing: 20px;
 
-            VerticalLayout {
-                alignment: center;
-                spacing: 2px;
-                Text {
-                    text: @tr("Before you start");
-                    color: Theme.text;
-                    font-family: Theme.display-font;
-                    font-size: 22px;
-                    font-weight: 700;
-                }
-                Text {
-                    text: @tr("Please read this once. It takes a minute.");
-                    color: Theme.muted;
-                }
-            }
-        }
-
-        Rectangle {
-            vertical-stretch: 1;
-            background: Theme.surface;
-            border-radius: Theme.radius;
-            border-width: 1px;
-            border-color: Theme.border;
-
-            VerticalLayout {
-                padding: 22px;
+            HorizontalLayout {
                 spacing: 14px;
                 alignment: start;
 
-                Paragraph {
-                    text: @tr("Vantix changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability.");
+                Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 12px;
+                    background: Theme.warn.with-alpha(0.12);
+                    Icon {
+                        data: Icons.alert;
+                        size: 22px;
+                        tint: Theme.warn;
+                    }
                 }
-                Paragraph {
-                    text: @tr("Before applying a system change Vantix creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible.");
-                }
-                Paragraph {
-                    text: @tr("You use Vantix at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use.");
-                    color: Theme.text;
-                }
-                Paragraph {
-                    text: @tr("If you don't agree, choose Decline and Vantix will close without changing anything.");
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: @tr("Before you start");
+                        color: Theme.text;
+                        font-family: Theme.display-font;
+                        font-size: 22px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: @tr("Please read this once. It takes a minute.");
+                        color: Theme.muted;
+                    }
                 }
             }
-        }
 
-        CheckBox {
-            text: @tr("I have read and understand the risks");
-            checked <=> root.understood;
-        }
+            Rectangle {
+                background: Theme.background;
+                border-radius: Theme.radius-small;
+                border-width: 1px;
+                border-color: Theme.border;
 
-        HorizontalLayout {
-            alignment: end;
-            spacing: 10px;
-            Button {
-                text: @tr("Decline");
-                clicked => { root.declined(); }
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 14px;
+
+                    Paragraph {
+                        text: @tr("Vantix changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability.");
+                    }
+                    Paragraph {
+                        text: @tr("Before applying a system change Vantix creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible.");
+                    }
+                    Paragraph {
+                        text: @tr("You use Vantix at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use.");
+                        color: Theme.text;
+                    }
+                    Paragraph {
+                        text: @tr("If you don't agree, choose Decline and Vantix will close without changing anything.");
+                    }
+                }
             }
-            Button {
-                text: @tr("Accept");
-                primary: true;
-                enabled: root.understood;
-                clicked => { root.accepted(); }
+
+            CheckBox {
+                text: @tr("I have read and understand the risks");
+                checked <=> root.understood;
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 10px;
+                Button {
+                    text: @tr("Decline");
+                    clicked => { Terms.declined(); }
+                }
+                Button {
+                    text: @tr("Accept");
+                    primary: true;
+                    enabled: root.understood;
+                    clicked => { Terms.accepted(); }
+                }
             }
         }
     }

@@ -1,5 +1,6 @@
 import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
 import { LineEdit, ListView } from "std-widgets.slint";
+import { Tweaks, TweakText, LevelTag, RebootChip } from "tweaks.slint";
 
 export struct RestorePoint {
     sequence: int,
@@ -19,7 +20,7 @@ export global Protection {
     callback open-system-restore();
 }
 
-export enum JobState { idle, creating-point, applying, point-failed, done, failed }
+export enum JobState { idle, confirm, creating-point, applying, point-failed, done, failed }
 
 /// Drives the modal progress sheet shared by every action that changes the system.
 export global Job {
@@ -32,7 +33,23 @@ export global Job {
     in property <bool> has-change;
     in-out property <int> elapsed;
 
+    // The tweak waiting for confirmation, see TweakRow.
+    in property <int> tweak: -1;
+    in property <bool> undo;
+    in property <int> gain;
+    in property <int> cost;
+    in property <bool> reboot;
+    /// Takes minutes, so the progress text says so.
+    in property <bool> slow;
+    /// Whether a restore point will be made first.
+    in property <bool> with-point;
+    /// System Restore is off, so there won't be a point.
+    in property <bool> protection-off;
+    /// Free space a finished change gave back.
+    in property <string> freed;
+
     callback dismiss();
+    callback confirm();
     callback proceed-without-point();
 }
 
@@ -74,7 +91,8 @@ export component JobSheet inherits Rectangle {
                     border-radius: 12px;
                     background: (root.failed ? Theme.bad : Theme.accent).with-alpha(0.12);
                     Icon {
-                        data: root.failed ? Icons.alert : Job.state == JobState.done ? Icons.check : Icons.shield;
+                        data: root.failed ? Icons.alert : Job.state == JobState.done ? Icons.check
+                            : Job.state == JobState.confirm && Job.undo ? Icons.history : Icons.shield;
                         size: 20px;
                         tint: root.failed ? Theme.bad : Theme.accent;
                     }
@@ -84,7 +102,9 @@ export component JobSheet inherits Rectangle {
                     alignment: center;
                     spacing: 2px;
                     Text {
-                        text: Job.state == JobState.creating-point ? @tr("Creating a restore point")
+                        text: Job.state == JobState.confirm
+                                ? (Job.undo && Job.tweak < 0 ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?") : @tr("Apply this change?"))
+                            : Job.state == JobState.creating-point ? @tr("Creating a restore point")
                             : Job.state == JobState.applying ? @tr("Applying changes")
                             : Job.state == JobState.point-failed ? @tr("Couldn't create the restore point")
                             : Job.state == JobState.done ? @tr("Done")
@@ -98,6 +118,33 @@ export component JobSheet inherits Rectangle {
                         color: Theme.muted;
                         overflow: elide;
                     }
+                }
+            }
+
+            if Job.state == JobState.confirm: VerticalLayout {
+                spacing: 12px;
+                if !Job.undo: HorizontalLayout {
+                    spacing: 18px;
+                    alignment: start;
+                    LevelTag { level: Job.gain; }
+                    LevelTag {
+                        is-cost: true;
+                        level: Job.cost;
+                    }
+                    RebootChip { reboot: Job.reboot; }
+                }
+                if !Job.undo && Job.tweak >= 0 && TweakText.notes[Job.tweak] != "": Text {
+                    text: TweakText.notes[Job.tweak];
+                    color: Theme.warn;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: Job.undo ? @tr("Puts back how it was before Vantix changed it.")
+                        : Job.with-point ? @tr("Vantix creates a restore point first.")
+                        : Job.protection-off ? @tr("System protection is off, so there won't be a restore point. Vantix still keeps its own record to undo this.")
+                        : @tr("Nothing to back up for this one, it runs right away.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
                 }
             }
 
@@ -119,6 +166,7 @@ export component JobSheet inherits Rectangle {
                     Text {
                         text: Job.state == JobState.creating-point
                             ? @tr("This can take up to two minutes. Keep the PC on.")
+                            : Job.slow ? @tr("This one takes several minutes. You can keep using the PC.")
                             : @tr("Almost there.");
                         color: Theme.muted;
                         wrap: word-wrap;
@@ -131,7 +179,19 @@ export component JobSheet inherits Rectangle {
                 }
             }
 
-            if root.failed && Job.detail != "": Text {
+            if Job.state == JobState.done && Job.freed != "": Text {
+                text: @tr("Freed {}", Job.freed);
+                color: Theme.accent;
+                font-weight: 600;
+            }
+
+            if Job.state == JobState.done && Job.reboot: Text {
+                text: @tr("Takes effect after a restart.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+
+            if (root.failed || Job.state == JobState.done) && Job.detail != "": Text {
                 text: Job.detail;
                 color: Theme.muted;
                 wrap: word-wrap;
@@ -147,8 +207,13 @@ export component JobSheet inherits Rectangle {
                 alignment: end;
                 spacing: 10px;
                 Button {
-                    text: Job.state == JobState.point-failed && Job.has-change ? @tr("Cancel") : @tr("Close");
+                    text: Job.state == JobState.confirm || (Job.state == JobState.point-failed && Job.has-change) ? @tr("Cancel") : @tr("Close");
                     clicked => { Job.dismiss(); }
+                }
+                if Job.state == JobState.confirm: Button {
+                    text: Job.undo ? @tr("Undo") : @tr("Apply");
+                    primary: true;
+                    clicked => { Job.confirm(); }
                 }
                 if Job.state == JobState.point-failed && Job.has-change: Button {
                     text: @tr("Apply without a restore point");
@@ -310,11 +375,55 @@ export component ProtectionPage inherits VerticalLayout {
             icon: Icons.layers;
             width: 380px;
 
-            Text {
+            if Tweaks.changes.length == 0: Text {
                 text: @tr("Nothing changed yet. Every tweak you apply shows up here with an option to undo it.");
                 color: Theme.faint;
                 wrap: word-wrap;
                 vertical-stretch: 1;
+            }
+
+            if Tweaks.changes.length > 0: ListView {
+                vertical-stretch: 1;
+                for change in Tweaks.changes: HorizontalLayout {
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    padding-right: 12px;
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: TweakText.titles[change.index];
+                            color: Theme.text;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: change.pending ? change.time + " · " + @tr("Waiting for restart")
+                                : change.freed != "" ? change.time + " · " + @tr("Freed {}", change.freed)
+                                : change.time;
+                            color: change.pending ? Theme.info : Theme.faint;
+                            font-size: 12px;
+                            overflow: elide;
+                        }
+                    }
+                    Button {
+                        text: @tr("Undo");
+                        tall: 32px;
+                        enabled: !Tweaks.busy;
+                        clicked => { Tweaks.undo(change.index); }
+                    }
+                }
+            }
+
+            if Tweaks.changes.length > 1: HorizontalLayout {
+                alignment: end;
+                Button {
+                    text: @tr("Undo all");
+                    icon: Icons.history;
+                    enabled: !Tweaks.busy;
+                    clicked => { Tweaks.undo-all(); }
+                }
             }
         }
     }

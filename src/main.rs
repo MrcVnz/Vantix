@@ -6,6 +6,7 @@ mod reg;
 mod restore;
 mod settings;
 mod system;
+mod tweaks;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -18,7 +19,8 @@ use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, Timer, TimerM
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
 
 use memory::Level;
-use settings::{AutoMode, HistoryEntry, Language, Settings};
+use settings::{AutoMode, Change, HistoryEntry, Language, Settings};
+use tweaks::{CATALOG, Kind, Section};
 
 slint::include_modules!();
 
@@ -42,6 +44,36 @@ struct State {
     /// a cleanup can't get usage under the limit.
     limit_armed: bool,
     loads: VecDeque<u32>,
+    /// Shown until the terms are accepted; closing the window then quits.
+    terms_pending: bool,
+    changes: Vec<Change>,
+    tweaks: Vec<TweakInfo>,
+    /// Waiting for the confirmation sheet.
+    asked: Option<Ask>,
+    /// The tweak being applied right now.
+    working: Option<usize>,
+    /// Bumped whenever the journal changes, so a state read that started before can't
+    /// throw away a change it never saw.
+    journal_version: u32,
+}
+
+/// What a tweak looks like on this machine, read off the UI thread.
+#[derive(Clone, Copy, Default)]
+struct TweakInfo {
+    loaded: bool,
+    shown: bool,
+    /// `None` when the state couldn't be read.
+    on: Option<bool>,
+    estimate: Option<u64>,
+    /// Actions only: ran in this session.
+    ran: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Ask {
+    Apply(usize),
+    Undo(usize),
+    UndoAll,
 }
 
 /// Lives for the whole process. The window comes and goes; the scheduler keeps running.
@@ -69,53 +101,36 @@ fn main() -> Result<(), slint::PlatformError> {
             interval_start: Instant::now(),
             limit_armed: true,
             loads: VecDeque::with_capacity(SPARK_SAMPLES),
+            terms_pending: false,
+            changes: settings::load_changes(),
+            tweaks: vec![TweakInfo::default(); CATALOG.len()],
+            asked: None,
+            working: None,
+            journal_version: 0,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
         ticker: Timer::default(),
     });
-    // Nothing runs and nothing is written until the terms are accepted.
-    let _terms = if app.state.borrow().settings.terms_version < TERMS_VERSION {
-        Some(ask_terms(&app)?)
+    // Nothing runs and nothing is written until the terms are accepted: the window opens
+    // so people see what they're agreeing to, and the terms come up over it.
+    if app.state.borrow().settings.terms_version < TERMS_VERSION {
+        app.state.borrow_mut().terms_pending = true;
+        app.open_window()?;
+        app.with_ui(|ui| ui.global::<Terms>().set_pending(true));
+        let later = Rc::downgrade(&app);
+        Timer::single_shot(Duration::from_millis(1500), move || {
+            if let Some(app) = later.upgrade() {
+                app.with_ui(|ui| ui.global::<Terms>().set_shown(true));
+            }
+        });
     } else {
         let autostart = std::env::args().any(|arg| arg == system::AUTOSTART_ARG);
         let minimized = autostart && app.state.borrow().settings.start_minimized;
         app.start(!minimized)?;
-        None
-    };
+    }
 
     slint::run_event_loop_until_quit()
-}
-
-fn ask_terms(app: &Rc<App>) -> Result<TermsWindow, slint::PlatformError> {
-    let terms = TermsWindow::new()?;
-    apply_language(app.state.borrow().settings.language);
-    terms.on_accepted({
-        let (app, terms) = (Rc::downgrade(app), terms.as_weak());
-        move || {
-            let Some(app) = app.upgrade() else { return };
-            {
-                let settings = &mut app.state.borrow_mut().settings;
-                settings.terms_version = TERMS_VERSION;
-                settings.terms_accepted_at = Some(Local::now());
-                let _ = settings.save();
-            }
-            let _ = terms.unwrap().hide();
-            if app.start(true).is_err() {
-                let _ = slint::quit_event_loop();
-            }
-        }
-    });
-    terms.on_declined(|| {
-        let _ = slint::quit_event_loop();
-    });
-    terms.window().on_close_requested(|| {
-        let _ = slint::quit_event_loop();
-        CloseRequestResponse::HideWindow
-    });
-    terms.show()?;
-    style_when_ready(terms.as_weak(), 0);
-    Ok(terms)
 }
 
 fn bind_with<T>(app: &Rc<App>, f: impl Fn(&Rc<App>, T) + 'static) -> impl Fn(T) + 'static {
@@ -131,7 +146,11 @@ fn bind_close(app: &Rc<App>) -> impl Fn() -> CloseRequestResponse + 'static {
     let app: Weak<App> = Rc::downgrade(app);
     move || {
         if let Some(app) = app.upgrade() {
-            app.close_window();
+            if app.state.borrow().terms_pending {
+                let _ = slint::quit_event_loop();
+            } else {
+                app.close_window();
+            }
         }
         CloseRequestResponse::HideWindow
     }
@@ -305,9 +324,10 @@ impl App {
         protection.on_create(bind(self, |app| app.create_restore_point()));
         protection.on_enable(bind(self, |app| app.enable_protection()));
         protection.on_open_system_restore(|| {
-            let _ = std::process::Command::new("rstrui.exe").spawn();
+            let _ = std::process::Command::new(tweaks::system_tool("rstrui.exe")).spawn();
         });
         ui.global::<Job>().on_dismiss(bind(self, |app| {
+            app.state.borrow_mut().asked = None;
             app.with_ui(|ui| ui.global::<Job>().set_state(JobState::Idle));
         }));
 
@@ -324,6 +344,30 @@ impl App {
             }
         });
         self.show_storage(&ui, None);
+
+        let terms = ui.global::<Terms>();
+        terms.on_accepted(bind(self, |app| app.accept_terms()));
+        terms.on_declined(|| {
+            let _ = slint::quit_event_loop();
+        });
+
+        let tweaks = ui.global::<Tweaks>();
+        tweaks.on_activate(bind_with(self, |app, i: i32| app.ask(Ask::Apply(i as usize))));
+        tweaks.on_undo(bind_with(self, |app, i: i32| app.ask(Ask::Undo(i as usize))));
+        tweaks.on_undo_all(bind(self, |app| app.ask(Ask::UndoAll)));
+        tweaks.on_restart(|| {
+            if let Err(e) = tweaks::restart() {
+                system::log_error("restart", &e);
+            }
+        });
+        let job = ui.global::<Job>();
+        job.on_confirm(bind(self, |app| app.confirm(true)));
+        job.on_proceed_without_point(bind(self, |app| app.confirm(false)));
+        self.show_tweaks(&ui);
+        // Reading some states starts PowerShell, which waits for the terms like the rest.
+        if !self.state.borrow().terms_pending {
+            self.refresh_tweaks();
+        }
 
         ui.window().on_close_requested(bind_close(self));
 
@@ -670,9 +714,326 @@ impl App {
             job.set_subject(subject.into());
             job.set_has_change(has_change);
             job.set_detail("".into());
+            job.set_freed("".into());
+            job.set_tweak(-1);
+            job.set_undo(false);
+            job.set_reboot(false);
+            job.set_slow(false);
+            job.set_with_point(false);
+            job.set_protection_off(false);
             job.set_elapsed(0);
             job.set_state(state);
         });
+    }
+
+    fn accept_terms(self: &Rc<Self>) {
+        {
+            let mut state = self.state.borrow_mut();
+            state.terms_pending = false;
+            state.settings.terms_version = TERMS_VERSION;
+            state.settings.terms_accepted_at = Some(Local::now());
+            let _ = state.settings.save();
+        }
+        self.with_ui(|ui| {
+            let terms = ui.global::<Terms>();
+            terms.set_shown(false);
+            terms.set_pending(false);
+        });
+        if self.start(false).is_err() {
+            let _ = slint::quit_event_loop();
+        }
+        self.refresh_tweaks();
+    }
+
+    /// Reads every tweak's real state in parallel. A few of them start PowerShell, which
+    /// takes about a second.
+    fn refresh_tweaks(self: &Rc<Self>) {
+        let version = self.state.borrow().journal_version;
+        self.run_job(
+            || {
+                std::thread::scope(|scope| {
+                    let jobs: Vec<_> = CATALOG
+                        .iter()
+                        .map(|tweak| {
+                            scope.spawn(move || {
+                                let shown = (tweak.shown)();
+                                let on = match &tweak.kind {
+                                    Kind::Toggle { read, .. } if shown => {
+                                        read().inspect_err(|e| system::log_error(tweak.id, e)).ok()
+                                    }
+                                    _ => None,
+                                };
+                                (shown, on, (tweak.estimate)())
+                            })
+                        })
+                        .collect();
+                    jobs.into_iter().map(|job| job.join().ok()).collect::<Vec<_>>()
+                })
+            },
+            move |app, results| {
+                let Some(results) = results else { return };
+                {
+                    let mut state = app.state.borrow_mut();
+                    for (info, result) in state.tweaks.iter_mut().zip(results) {
+                        let (shown, on, estimate) = result.unwrap_or((false, None, None));
+                        *info = TweakInfo { loaded: true, shown, on, estimate, ran: info.ran };
+                    }
+                    // A change that Windows or the user undid elsewhere has nothing left to
+                    // undo. Only trusted when no change landed while these states were read.
+                    let current = state.journal_version == version && state.working.is_none();
+                    let stale: Vec<String> = state
+                        .changes
+                        .iter()
+                        .filter(|change| {
+                            CATALOG
+                                .iter()
+                                .position(|t| t.id == change.id)
+                                .is_none_or(|i| state.tweaks[i].on == Some(false))
+                        })
+                        .map(|change| change.id.clone())
+                        .collect();
+                    if current && !stale.is_empty() {
+                        state.changes.retain(|change| !stale.contains(&change.id));
+                        let _ = settings::save_changes(&state.changes);
+                    }
+                }
+                app.with_ui(|ui| app.show_tweaks(ui));
+            },
+        );
+    }
+
+    fn show_tweaks(&self, ui: &AppWindow) {
+        let state = self.state.borrow();
+        let change = |id: &str| state.changes.iter().find(|change| change.id == id);
+        let row = |i: usize| {
+            let (tweak, info) = (&CATALOG[i], state.tweaks[i]);
+            let applied = change(tweak.id);
+            let pending = applied.is_some_and(|c| c.reboot && tweaks::same_boot(c.boot));
+            let state = if state.working == Some(i) {
+                TweakState::Busy
+            } else if let Kind::Action { .. } = tweak.kind {
+                if info.ran { TweakState::Ran } else { TweakState::Action }
+            } else if !info.loaded {
+                TweakState::Loading
+            } else {
+                match info.on {
+                    Some(true) if applied.is_some() => TweakState::On,
+                    Some(true) => TweakState::System,
+                    Some(false) => TweakState::Off,
+                    None => TweakState::Unknown,
+                }
+            };
+            TweakRow {
+                index: i as i32,
+                state,
+                gain: tweak.gain as i32,
+                cost: tweak.cost as i32,
+                reboot: tweak.reboot,
+                pending,
+                estimate: info.estimate.map(format_bytes).unwrap_or_default().into(),
+                freed: applied.and_then(|c| c.freed).map(format_bytes).unwrap_or_default().into(),
+            }
+        };
+        let section = |section: Section| -> Vec<TweakRow> {
+            (0..CATALOG.len())
+                .filter(|&i| {
+                    CATALOG[i].section == section && (!state.tweaks[i].loaded || state.tweaks[i].shown)
+                })
+                .map(row)
+                .collect()
+        };
+
+        let changes: Vec<ChangeRow> = state
+            .changes
+            .iter()
+            .rev()
+            .filter_map(|change| {
+                let index = CATALOG.iter().position(|t| t.id == change.id)?;
+                Some(ChangeRow {
+                    index: index as i32,
+                    time: change.time.format("%d/%m/%Y %H:%M").to_string().into(),
+                    freed: change.freed.map(format_bytes).unwrap_or_default().into(),
+                    pending: change.reboot && tweaks::same_boot(change.boot),
+                })
+            })
+            .collect();
+
+        let tweaks = ui.global::<Tweaks>();
+        tweaks.set_storage(ModelRc::new(VecModel::from(section(Section::Storage))));
+        tweaks.set_pending_count(changes.iter().filter(|c| c.pending).count() as i32);
+        tweaks.set_changes(ModelRc::new(VecModel::from(changes)));
+        tweaks.set_busy(state.working.is_some());
+    }
+
+    fn tweak_title(&self, i: usize) -> String {
+        self.with_ui_value(|ui| {
+            ui.global::<TweakText>().get_titles().row_data(i).unwrap_or_default().to_string()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Puts up the confirmation sheet with what the change gives, costs and needs.
+    fn ask(self: &Rc<Self>, ask: Ask) {
+        let (index, undo) = match ask {
+            Ask::Apply(i) => (Some(i), false),
+            Ask::Undo(i) => (Some(i), true),
+            Ask::UndoAll => (None, true),
+        };
+        let subject = index.map(|i| self.tweak_title(i)).unwrap_or_default();
+        // Only changes that can be undone get a restore point; a retrim has nothing to save.
+        let toggle = index.is_some_and(|i| matches!(CATALOG[i].kind, Kind::Toggle { .. }));
+        let protection = !undo && toggle && restore::protection_enabled();
+        self.state.borrow_mut().asked = Some(ask);
+        self.show_job(JobState::Confirm, &subject, true);
+        self.with_ui(|ui| {
+            let job = ui.global::<Job>();
+            let tweak = index.map(|i| &CATALOG[i]);
+            job.set_tweak(index.map_or(-1, |i| i as i32));
+            job.set_undo(undo);
+            job.set_gain(tweak.map_or(0, |t| t.gain as i32));
+            job.set_cost(tweak.map_or(0, |t| t.cost as i32));
+            job.set_reboot(tweak.is_some_and(|t| t.reboot));
+            job.set_slow(tweak.is_some_and(|t| t.slow));
+            job.set_with_point(protection);
+            job.set_protection_off(!undo && toggle && !protection);
+        });
+    }
+
+    /// From the confirmation sheet, or with `use_point` false from the "apply without a
+    /// restore point" button after the point failed.
+    fn confirm(self: &Rc<Self>, use_point: bool) {
+        let Some(ask) = self.state.borrow().asked else { return };
+        let with_point =
+            use_point && self.with_ui_value(|ui| ui.global::<Job>().get_with_point()).unwrap_or(false);
+        let Ask::Apply(i) = ask else {
+            self.apply(ask);
+            return;
+        };
+        if !with_point {
+            self.apply(ask);
+            return;
+        }
+
+        let title = self.tweak_title(i);
+        self.show_job(JobState::CreatingPoint, &title, true);
+        self.run_job(
+            move || restore::create(&format!("Vantix: {title}")),
+            move |app, result| match result {
+                Some(Ok(_)) => app.apply(ask),
+                Some(Err(error)) => app.set_job(JobState::PointFailed, &error.message()),
+                None => app.set_job(JobState::PointFailed, ""),
+            },
+        );
+    }
+
+    fn apply(self: &Rc<Self>, ask: Ask) {
+        let work: Vec<(usize, bool, Option<u32>)> = {
+            let mut state = self.state.borrow_mut();
+            state.asked = None;
+            let previous =
+                |i: usize| state.changes.iter().find(|c| c.id == CATALOG[i].id).and_then(|c| c.previous);
+            let work = match ask {
+                Ask::Apply(i) => vec![(i, false, None)],
+                Ask::Undo(i) => vec![(i, true, previous(i))],
+                Ask::UndoAll => state
+                    .changes
+                    .iter()
+                    .rev()
+                    .filter_map(|c| CATALOG.iter().position(|t| t.id == c.id).map(|i| (i, true, c.previous)))
+                    .collect(),
+            };
+            state.working = work.first().map(|w| w.0);
+            work
+        };
+        let subject = match ask {
+            Ask::UndoAll => String::new(),
+            Ask::Apply(i) | Ask::Undo(i) => self.tweak_title(i),
+        };
+        self.show_job(JobState::Applying, &subject, true);
+        let slow = work.iter().any(|&(i, _, _)| CATALOG[i].slow);
+        self.with_ui(|ui| {
+            ui.global::<Job>().set_slow(slow);
+            self.show_tweaks(ui);
+        });
+
+        self.run_job(
+            move || {
+                let (free_before, _) = disk::system_drive_space();
+                let mut outcomes = Vec::new();
+                for &(i, undo, previous) in &work {
+                    let result = match (&CATALOG[i].kind, undo) {
+                        (Kind::Toggle { apply, .. }, false) => apply(),
+                        (Kind::Toggle { revert, .. }, true) => revert(previous).map(|_| None),
+                        (Kind::Action { run }, _) => run().map(|_| None),
+                    };
+                    let failed = result.is_err();
+                    outcomes.push((i, undo, result));
+                    if failed {
+                        break;
+                    }
+                }
+                let (free_after, _) = disk::system_drive_space();
+                (outcomes, free_after.saturating_sub(free_before))
+            },
+            |app, result| {
+                let Some((outcomes, gained)) = result else {
+                    app.state.borrow_mut().working = None;
+                    app.set_job(JobState::Failed, "");
+                    app.with_ui(|ui| app.show_tweaks(ui));
+                    app.refresh_tweaks();
+                    return;
+                };
+                // Under 1 MB is just the noise of other programs writing.
+                let gained = (gained >= 1 << 20).then_some(gained);
+                let mut error = None;
+                let mut reboot = false;
+                {
+                    let mut state = app.state.borrow_mut();
+                    state.working = None;
+                    state.journal_version += 1;
+                    for (i, undo, result) in outcomes {
+                        let tweak = &CATALOG[i];
+                        match result {
+                            Ok(previous) => {
+                                reboot |= tweak.reboot;
+                                state.changes.retain(|c| c.id != tweak.id);
+                                match tweak.kind {
+                                    Kind::Action { .. } => state.tweaks[i].ran = true,
+                                    Kind::Toggle { .. } if !undo => state.changes.push(Change {
+                                        id: tweak.id.into(),
+                                        time: Local::now(),
+                                        previous,
+                                        boot: tweaks::boot_time(),
+                                        reboot: tweak.reboot,
+                                        freed: gained,
+                                    }),
+                                    Kind::Toggle { .. } => {}
+                                }
+                            }
+                            Err(e) => {
+                                system::log_error(tweak.id, &e);
+                                error = Some(e.message());
+                            }
+                        }
+                    }
+                    let _ = settings::save_changes(&state.changes);
+                }
+                match error {
+                    Some(message) => app.set_job(JobState::Failed, &message),
+                    None => {
+                        app.with_ui(|ui| {
+                            let job = ui.global::<Job>();
+                            job.set_freed(gained.map(format_bytes).unwrap_or_default().into());
+                            job.set_reboot(reboot);
+                        });
+                        app.set_job(JobState::Done, "");
+                    }
+                }
+                app.with_ui(|ui| app.show_tweaks(ui));
+                app.refresh_tweaks();
+                app.refresh_protection();
+            },
+        );
     }
 
     fn set_job(&self, state: JobState, detail: &str) {
