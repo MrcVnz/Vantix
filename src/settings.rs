@@ -1,4 +1,4 @@
-//! User settings and cleanup history, stored as JSON under %APPDATA%\EasyTune.
+//! User settings and cleanup history, stored as JSON under %APPDATA%\Vantix.
 
 use std::fs;
 use std::io;
@@ -37,15 +37,17 @@ pub struct AutoClean {
     pub mode: AutoMode,
     pub minutes: u32,
     pub percent: u32,
+    /// What the tray toggle turns back on.
+    pub last_mode: AutoMode,
 }
 
 impl Default for AutoClean {
     fn default() -> Self {
-        Self { mode: AutoMode::Off, minutes: 30, percent: 80 }
+        Self { mode: AutoMode::Off, minutes: 30, percent: 80, last_mode: AutoMode::Limit }
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub terms_version: u32,
@@ -53,6 +55,25 @@ pub struct Settings {
     pub language: Language,
     pub clean_level: Level,
     pub auto_clean: AutoClean,
+    /// Only applies to starts from the logon task.
+    pub start_minimized: bool,
+    pub notifications: bool,
+    pub tray_hint_shown: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            terms_version: 0,
+            terms_accepted_at: None,
+            language: Language::System,
+            clean_level: Level::default(),
+            auto_clean: AutoClean::default(),
+            start_minimized: true,
+            notifications: true,
+            tray_hint_shown: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -72,7 +93,7 @@ impl HistoryEntry {
 
 pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    base.join("EasyTune")
+    base.join("Vantix")
 }
 
 impl Settings {

@@ -160,6 +160,13 @@ pub fn stats() -> Stats {
     stats
 }
 
+/// Gives our own pages back after the window is destroyed; they fault back in on demand.
+pub fn trim_self() {
+    unsafe {
+        let _ = EmptyWorkingSet(GetCurrentProcess());
+    }
+}
+
 fn page_size() -> u64 {
     let mut info = SYSTEM_INFO::default();
     unsafe { GetSystemInfo(&mut info) };

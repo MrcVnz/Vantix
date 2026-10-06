@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod memory;
+mod reg;
 mod settings;
 mod system;
 
@@ -40,6 +41,7 @@ struct State {
 struct App {
     state: RefCell<State>,
     window: RefCell<Option<AppWindow>>,
+    tray: RefCell<Option<Tray>>,
     ticker: Timer,
 }
 
@@ -58,13 +60,16 @@ fn main() -> Result<(), slint::PlatformError> {
             loads: VecDeque::with_capacity(SPARK_SAMPLES),
         }),
         window: RefCell::new(None),
+        tray: RefCell::new(None),
         ticker: Timer::default(),
     });
     // Nothing runs and nothing is written until the terms are accepted.
     let _terms = if app.state.borrow().settings.terms_version < TERMS_VERSION {
         Some(ask_terms(&app)?)
     } else {
-        app.start()?;
+        let autostart = std::env::args().any(|arg| arg == system::AUTOSTART_ARG);
+        let minimized = autostart && app.state.borrow().settings.start_minimized;
+        app.start(!minimized)?;
         None
     };
 
@@ -85,7 +90,7 @@ fn ask_terms(app: &Rc<App>) -> Result<TermsWindow, slint::PlatformError> {
                 let _ = settings.save();
             }
             let _ = terms.unwrap().hide();
-            if app.start().is_err() {
+            if app.start(true).is_err() {
                 let _ = slint::quit_event_loop();
             }
         }
@@ -102,6 +107,25 @@ fn ask_terms(app: &Rc<App>) -> Result<TermsWindow, slint::PlatformError> {
     Ok(terms)
 }
 
+fn bind_with<T>(app: &Rc<App>, f: impl Fn(&Rc<App>, T) + 'static) -> impl Fn(T) + 'static {
+    let app: Weak<App> = Rc::downgrade(app);
+    move |value| {
+        if let Some(app) = app.upgrade() {
+            f(&app, value)
+        }
+    }
+}
+
+fn bind_close(app: &Rc<App>) -> impl Fn() -> CloseRequestResponse + 'static {
+    let app: Weak<App> = Rc::downgrade(app);
+    move || {
+        if let Some(app) = app.upgrade() {
+            app.close_window();
+        }
+        CloseRequestResponse::HideWindow
+    }
+}
+
 /// Wraps a callback so it only holds a weak reference to the app.
 fn bind(app: &Rc<App>, f: impl Fn(&Rc<App>) + 'static) -> impl Fn() + 'static {
     let app: Weak<App> = Rc::downgrade(app);
@@ -113,14 +137,72 @@ fn bind(app: &Rc<App>, f: impl Fn(&Rc<App>) + 'static) -> impl Fn() + 'static {
 }
 
 impl App {
-    fn start(self: &Rc<Self>) -> Result<(), slint::PlatformError> {
+    fn start(self: &Rc<Self>, open_window: bool) -> Result<(), slint::PlatformError> {
+        let _ = system::register_notifications();
         self.ticker.start(TimerMode::Repeated, Duration::from_secs(1), bind(self, |app| app.tick()));
-        self.open_window()
+
+        let tray = Tray::new()?;
+        apply_language(self.state.borrow().settings.language);
+        tray.set_auto_on(self.state.borrow().settings.auto_clean.mode != AutoMode::Off);
+        tray.on_open(bind(self, |app| {
+            let _ = app.open_window();
+        }));
+        tray.on_clean(bind(self, |app| app.start_clean(false)));
+        tray.on_auto_toggled(bind_with(self, |app, on: bool| app.set_auto(on)));
+        tray.on_quit(|| {
+            let _ = slint::quit_event_loop();
+        });
+        *self.tray.borrow_mut() = Some(tray);
+
+        if open_window { self.open_window() } else { Ok(()) }
+    }
+
+    /// Tray shortcut: turns automatic cleanup off, or back on with the last mode used.
+    fn set_auto(&self, on: bool) {
+        let mut state = self.state.borrow_mut();
+        let auto = &mut state.settings.auto_clean;
+        if on {
+            auto.mode = if auto.last_mode == AutoMode::Off { AutoMode::Limit } else { auto.last_mode };
+        } else {
+            auto.mode = AutoMode::Off;
+        }
+        state.last_auto = Instant::now();
+        let _ = state.settings.save();
+        self.with_ui(|ui| show_settings(ui, &state.settings));
+    }
+
+    /// The window is destroyed, not hidden, so its renderer and fonts stop costing memory.
+    fn close_window(self: &Rc<Self>) {
+        let app = Rc::downgrade(self);
+        // Dropping the window from inside its own close handler isn't allowed, so it
+        // happens right after.
+        Timer::single_shot(Duration::ZERO, move || {
+            let Some(app) = app.upgrade() else { return };
+            app.window.borrow_mut().take();
+            memory::trim_self();
+
+            let mut state = app.state.borrow_mut();
+            if !state.settings.tray_hint_shown {
+                state.settings.tray_hint_shown = true;
+                let _ = state.settings.save();
+                app.with_tray(|tray| {
+                    let _ = system::notify(&tray.invoke_hint_title(), &tray.invoke_hint_body());
+                });
+            }
+        });
+    }
+
+    fn with_tray(&self, f: impl FnOnce(&Tray)) {
+        if let Some(tray) = &*self.tray.borrow() {
+            f(tray);
+        }
     }
 
     fn open_window(self: &Rc<Self>) -> Result<(), slint::PlatformError> {
         if let Some(ui) = &*self.window.borrow() {
-            return ui.show();
+            ui.show()?;
+            ui.window().set_minimized(false);
+            return Ok(());
         }
 
         let ui = AppWindow::new()?;
@@ -154,6 +236,11 @@ impl App {
                 };
                 auto.minutes = mem.get_auto_minutes() as u32;
                 auto.percent = mem.get_auto_percent() as u32;
+                if auto.mode != AutoMode::Off {
+                    auto.last_mode = auto.mode;
+                }
+                let on = auto.mode != AutoMode::Off;
+                app.with_tray(|tray| tray.set_auto_on(on));
                 // Restart the interval so applying doesn't trigger an immediate cleanup.
                 state.last_auto = Instant::now();
                 let _ = state.settings.save();
@@ -166,23 +253,34 @@ impl App {
             let _ = settings::save_history(&mut state.history);
             app.with_ui(|ui| show_history(ui, &state.history));
         }));
-        ui.global::<Preferences>().on_changed(bind(self, |app| {
+        let prefs = ui.global::<Preferences>();
+        prefs.on_changed(bind(self, |app| {
             app.with_ui(|ui| {
-                let language = match ui.global::<Preferences>().get_language() {
+                let prefs = ui.global::<Preferences>();
+                let language = match prefs.get_language() {
                     1 => Language::En,
                     2 => Language::PtBr,
                     _ => Language::System,
                 };
                 let settings = &mut app.state.borrow_mut().settings;
                 settings.language = language;
+                settings.start_minimized = prefs.get_start_minimized();
+                settings.notifications = prefs.get_notifications();
                 let _ = settings.save();
                 apply_language(language);
             })
         }));
-        ui.window().on_close_requested(|| {
+        prefs.on_autostart_toggled(bind_with(self, |app, on: bool| {
+            if system::set_autostart(on).is_err() {
+                app.with_ui(|ui| ui.global::<Preferences>().set_start_with_windows(!on));
+            }
+        }));
+        prefs.on_reset_all(|| {
+            system::unregister_all();
+            let _ = std::fs::remove_dir_all(settings::data_dir());
             let _ = slint::quit_event_loop();
-            CloseRequestResponse::HideWindow
         });
+        ui.window().on_close_requested(bind_close(self));
 
         ui.show()?;
         system::style_title_bar(ui.window());
@@ -197,7 +295,11 @@ impl App {
     }
 
     fn tick(self: &Rc<Self>) {
+        if system::show_requested() {
+            let _ = self.open_window();
+        }
         let stats = memory::stats();
+        self.with_tray(|tray| tray.set_load(stats.load as i32));
         let due = {
             let mut state = self.state.borrow_mut();
             if state.loads.len() == SPARK_SAMPLES {
@@ -254,9 +356,17 @@ impl App {
             });
             let _ = settings::save_history(&mut state.history);
 
+            let freed = format_bytes(report.freed().max(0) as u64);
+            if automatic && state.settings.notifications {
+                app.with_tray(|tray| {
+                    let body = tray.invoke_freed_body(freed.as_str().into());
+                    let _ = system::notify(&tray.invoke_freed_title(), &body);
+                });
+            }
+
             app.with_ui(|ui| {
                 let mem = ui.global::<Memory>();
-                mem.set_last_freed(format_bytes(report.freed().max(0) as u64).into());
+                mem.set_last_freed(freed.as_str().into());
                 mem.set_state(CleanState::Done);
                 show_stats(ui, &report.after);
                 show_history(ui, &state.history);
@@ -330,7 +440,11 @@ fn show_settings(ui: &AppWindow, settings: &Settings) {
     mem.set_applied_mode(settings.auto_clean.mode as i32);
     mem.set_applied_minutes(settings.auto_clean.minutes as i32);
     mem.set_applied_percent(settings.auto_clean.percent as i32);
-    ui.global::<Preferences>().set_language(settings.language as i32);
+    let prefs = ui.global::<Preferences>();
+    prefs.set_language(settings.language as i32);
+    prefs.set_start_with_windows(system::autostart_enabled());
+    prefs.set_start_minimized(settings.start_minimized);
+    prefs.set_notifications(settings.notifications);
 }
 
 fn show_history(ui: &AppWindow, history: &[HistoryEntry]) {

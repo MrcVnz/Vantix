@@ -221,3 +221,67 @@ export component Chip inherits Rectangle {
         }
     }
 }
+
+/// A labelled on/off switch row.
+export component Toggle inherits Rectangle {
+    in property <string> text;
+    in property <string> detail;
+    in property <bool> enabled: true;
+    in-out property <bool> checked;
+    callback toggled(bool);
+
+    min-height: 48px;
+
+    HorizontalLayout {
+        spacing: 16px;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.text;
+                color: root.enabled ? Theme.text : Theme.faint;
+                font-weight: 600;
+            }
+            if root.detail != "": Text {
+                text: root.detail;
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 42px;
+                height: 24px;
+                border-radius: 12px;
+                background: root.checked && root.enabled ? Theme.accent : Theme.raised;
+                border-width: 1px;
+                border-color: root.checked && root.enabled ? Theme.accent : Theme.border-strong;
+                animate background { duration: 150ms; }
+
+                Rectangle {
+                    x: root.checked ? parent.width - self.width - 4px : 4px;
+                    y: 4px;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    background: root.checked && root.enabled ? Theme.on-accent : Theme.muted;
+                    animate x { duration: 180ms; easing: ease-out-quart; }
+                }
+            }
+        }
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}

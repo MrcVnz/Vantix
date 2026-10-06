@@ -1023,22 +1023,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
-name = "easytune"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "embed-resource",
- "futures-channel",
- "raw-window-handle",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "windows",
- "windows-link",
-]
-
-[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4631,6 +4615,22 @@ dependencies = [
  "js-sys",
  "serde_core",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "vantix"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "embed-resource",
+ "futures-channel",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "windows",
+ "windows-link",
 ]
 
 [[package]]

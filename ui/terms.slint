@@ -13,8 +13,8 @@ export component TermsWindow inherits Window {
     callback declined();
     property <bool> understood;
 
-    title: "EasyTune";
-    icon: @image-url("../res/easytune.png");
+    title: "Vantix";
+    icon: @image-url("../res/vantix.png");
     width: 620px;
     height: 540px;
     background: Theme.background;
@@ -71,17 +71,17 @@ export component TermsWindow inherits Window {
                 alignment: start;
 
                 Paragraph {
-                    text: @tr("EasyTune changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability.");
+                    text: @tr("Vantix changes Windows settings, clears memory and caches and can modify system components. Results depend on your hardware and configuration, and some changes can reduce security, battery life or stability.");
                 }
                 Paragraph {
-                    text: @tr("Before applying a system change EasyTune creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible.");
+                    text: @tr("Before applying a system change Vantix creates a restore point and keeps a record to undo it, but no tool can guarantee that every change is reversible.");
                 }
                 Paragraph {
-                    text: @tr("You use EasyTune at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use.");
+                    text: @tr("You use Vantix at your own risk. The software is provided as is, without warranty of any kind. The author is not responsible for any damage, data loss, loss of performance or any other harm resulting from its use.");
                     color: Theme.text;
                 }
                 Paragraph {
-                    text: @tr("If you don't agree, choose Decline and EasyTune will close without changing anything.");
+                    text: @tr("If you don't agree, choose Decline and Vantix will close without changing anything.");
                 }
             }
         }

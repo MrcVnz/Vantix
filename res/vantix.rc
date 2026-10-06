@@ -1,7 +1,7 @@
 #include <winver.h>
 
-1 ICON "easytune.ico"
-1 24 "easytune.manifest"
+1 ICON "vantix.ico"
+1 24 "vantix.manifest"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION 0,1,0,0
@@ -14,11 +14,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "MrcVnz"
-            VALUE "FileDescription", "EasyTune"
+            VALUE "FileDescription", "Vantix"
             VALUE "FileVersion", "0.1.0"
-            VALUE "InternalName", "easytune"
-            VALUE "OriginalFilename", "EasyTune.exe"
-            VALUE "ProductName", "EasyTune"
+            VALUE "InternalName", "vantix"
+            VALUE "OriginalFilename", "vantix.exe"
+            VALUE "ProductName", "Vantix"
             VALUE "ProductVersion", "0.1.0"
         END
     END

@@ -7,7 +7,7 @@ fn main() {
         .with_default_translation_context(DefaultTranslationContext::None);
     slint_build::compile_with_config("ui/app.slint", config).unwrap();
 
-    embed_resource::compile("res/easytune.rc", embed_resource::NONE).manifest_required().unwrap();
+    embed_resource::compile("res/vantix.rc", embed_resource::NONE).manifest_required().unwrap();
     println!("cargo:rerun-if-changed=res");
     println!("cargo:rerun-if-changed=lang");
 }

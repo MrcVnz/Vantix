@@ -1,12 +1,19 @@
-import { Theme, Icons, Icon, Card, Segmented } from "theme.slint";
+import { Theme, Icons, Icon, Card, Segmented, Toggle, Button } from "theme.slint";
 import { Memory, MemoryPage, CleanState, HistoryRow } from "memory.slint";
 
 export { Memory, CleanState, HistoryRow }
 export { TermsWindow } from "terms.slint";
+export { Tray } from "tray.slint";
 
 export global Preferences {
     in-out property <int> language;
+    in-out property <bool> start-with-windows;
+    in-out property <bool> start-minimized;
+    in-out property <bool> notifications;
+    // Saves everything except autostart, which has its own call because it can fail.
     callback changed();
+    callback autostart-toggled(bool);
+    callback reset-all();
 }
 
 component NavItem inherits Rectangle {
@@ -55,6 +62,8 @@ component NavItem inherits Rectangle {
 }
 
 component SettingsPage inherits VerticalLayout {
+    property <bool> confirm-reset;
+
     padding: 32px;
     padding-top: 26px;
     spacing: Theme.gap;
@@ -75,24 +84,96 @@ component SettingsPage inherits VerticalLayout {
         }
     }
 
-    Card {
-        title: @tr("Language");
-        icon: Icons.globe;
-        width: 440px;
+    HorizontalLayout {
+        spacing: Theme.gap;
+        alignment: start;
 
-        Segmented {
-            options: [@tr("System"), "English", "Português"];
-            selected <=> Preferences.language;
-            changed => { Preferences.changed(); }
+        VerticalLayout {
+            spacing: Theme.gap;
+            width: 460px;
+
+            Card {
+                title: @tr("Language");
+                icon: Icons.globe;
+
+                Segmented {
+                    options: [@tr("System"), "English", "Português"];
+                    selected <=> Preferences.language;
+                    changed => { Preferences.changed(); }
+                }
+            }
+
+            Card {
+                title: @tr("Startup and tray");
+                icon: Icons.power;
+
+                Toggle {
+                    text: @tr("Start with Windows");
+                    detail: @tr("Runs at logon with admin rights, without a UAC prompt.");
+                    checked <=> Preferences.start-with-windows;
+                    toggled(on) => { Preferences.autostart-toggled(on); }
+                }
+                Toggle {
+                    text: @tr("Start minimized to the tray");
+                    detail: @tr("Only when started with Windows.");
+                    enabled: Preferences.start-with-windows;
+                    checked <=> Preferences.start-minimized;
+                    toggled => { Preferences.changed(); }
+                }
+                Toggle {
+                    text: @tr("Notifications");
+                    detail: @tr("Tells you what automatic cleanups freed.");
+                    checked <=> Preferences.notifications;
+                    toggled => { Preferences.changed(); }
+                }
+            }
         }
+
+        VerticalLayout {
+            width: 380px;
+            alignment: start;
+
+            Card {
+                title: @tr("Reset");
+                icon: Icons.trash;
+
+                Text {
+                    text: @tr("Removes the startup task, notification registration and all Vantix data, then closes the app.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: root.confirm-reset ? @tr("Click again to confirm") : @tr("Delete all Vantix data");
+                        icon: Icons.trash;
+                        clicked => {
+                            if root.confirm-reset {
+                                Preferences.reset-all();
+                            } else {
+                                root.confirm-reset = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The reset button asks for a second click, which expires after a few seconds.
+    Timer {
+        interval: 4s;
+        running: root.confirm-reset;
+        triggered => { root.confirm-reset = false; }
     }
 }
 
 export component AppWindow inherits Window {
     property <int> page;
 
-    title: "EasyTune";
-    icon: @image-url("../res/easytune.png");
+    title: "Vantix";
+    icon: @image-url("../res/vantix.png");
     // Fixed so the window never resizes when switching pages; the Memory page is the largest.
     preferred-width: 1180px;
     preferred-height: 800px;
@@ -132,7 +213,7 @@ export component AppWindow inherits Window {
                         border-width: 1px;
                         border-color: Theme.accent.with-alpha(0.25);
                         Image {
-                            source: @image-url("../res/easytune.png");
+                            source: @image-url("../res/vantix.png");
                             width: 24px;
                             height: 24px;
                         }
@@ -140,7 +221,7 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         alignment: center;
                         Text {
-                            text: "EasyTune";
+                            text: "Vantix";
                             color: Theme.text;
                             font-family: Theme.display-font;
                             font-size: 17px;

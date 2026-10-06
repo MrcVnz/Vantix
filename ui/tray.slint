@@ -1,0 +1,41 @@
+/// Lives for the whole session, also while the main window doesn't exist.
+export component Tray inherits SystemTrayIcon {
+    in property <int> load;
+    in-out property <bool> auto-on;
+    callback open();
+    callback clean();
+    callback auto-toggled(bool);
+    callback quit();
+
+    // Notification texts live here so they go through the same translation catalog as the UI.
+    public pure function freed-title() -> string { return @tr("Automatic cleanup"); }
+    public pure function freed-body(amount: string) -> string { return @tr("Freed {}", amount); }
+    public pure function hint-title() -> string { return @tr("Vantix is still running"); }
+    public pure function hint-body() -> string { return @tr("It keeps working from the tray. Use Quit in the tray menu to close it."); }
+
+    icon: @image-url("../res/vantix.png");
+    tooltip: "Vantix - " + @tr("RAM {}%", root.load);
+    clicked => { root.open(); }
+
+    Menu {
+        MenuItem {
+            title: @tr("Open Vantix");
+            activated => { root.open(); }
+        }
+        MenuItem {
+            title: @tr("Clean now");
+            activated => { root.clean(); }
+        }
+        MenuItem {
+            title: @tr("Automatic cleanup");
+            checkable: true;
+            checked <=> root.auto-on;
+            activated => { root.auto-toggled(root.auto-on); }
+        }
+        MenuSeparator {}
+        MenuItem {
+            title: @tr("Quit");
+            activated => { root.quit(); }
+        }
+    }
+}
