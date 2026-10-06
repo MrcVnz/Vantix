@@ -65,6 +65,9 @@ export global Job {
 export component JobSheet inherits Rectangle {
     property <bool> busy: Job.state == JobState.creating-point || Job.state == JobState.applying;
     property <bool> failed: Job.state == JobState.point-failed || Job.state == JobState.failed;
+    // The sheet's width minus its padding. Wrapped texts need it spelled out: without a
+    // fixed width their height is measured too short and the buttons end up outside.
+    property <length> text-width: 440px - 2 * 26px;
 
     visible: Job.state != JobState.idle;
     background: #000000b0;
@@ -137,6 +140,7 @@ export component JobSheet inherits Rectangle {
                     text: @tr("This was already set before Vantix. Turning it off puts the setting the other way, and you can undo it later from the card or from Protection.");
                     color: Theme.muted;
                     wrap: word-wrap;
+                    width: root.text-width;
                 }
                 if !Job.undo && !Job.reset: HorizontalLayout {
                     spacing: 18px;
@@ -152,6 +156,7 @@ export component JobSheet inherits Rectangle {
                     text: TweakText.notes[Job.tweak];
                     color: Theme.warn;
                     wrap: word-wrap;
+                    width: root.text-width;
                 }
                 Text {
                     text: Job.undo ? @tr("Puts back how it was before Vantix changed it.")
@@ -161,6 +166,7 @@ export component JobSheet inherits Rectangle {
                         : @tr("Nothing to back up for this one, it runs right away.");
                     color: Theme.muted;
                     wrap: word-wrap;
+                    width: root.text-width;
                 }
             }
 
@@ -205,18 +211,21 @@ export component JobSheet inherits Rectangle {
                 text: @tr("Takes effect after a restart.");
                 color: Theme.muted;
                 wrap: word-wrap;
+                width: root.text-width;
             }
 
             if (root.failed || Job.state == JobState.done) && Job.detail != "": Text {
                 text: Job.detail;
                 color: Theme.muted;
                 wrap: word-wrap;
+                width: root.text-width;
             }
 
             if Job.state == JobState.point-failed && Job.has-change: Text {
                 text: @tr("You can still apply the change without a restore point. Vantix keeps its own record to undo it.");
                 color: Theme.muted;
                 wrap: word-wrap;
+                width: root.text-width;
             }
 
             if !root.busy: HorizontalLayout {

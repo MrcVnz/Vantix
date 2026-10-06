@@ -60,6 +60,9 @@ struct State {
     /// Whether the baseline restore point still exists. Windows deletes old points when
     /// their reserved space fills up, and then the next change makes a new one.
     baseline_alive: bool,
+    /// When this session made the baseline. WMI takes a few seconds to list a new point,
+    /// so a listing right after can't be trusted to say it's gone.
+    baseline_made: Option<Instant>,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -124,6 +127,7 @@ fn main() -> Result<(), slint::PlatformError> {
             working: None,
             journal_version: 0,
             baseline_alive: false,
+            baseline_made: None,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -672,15 +676,11 @@ impl App {
                     app.with_ui(|ui| ui.global::<Protection>().set_loading(false));
                     return;
                 };
+                // Points Windows deleted on its own just don't show up; the list in settings
+                // isn't trimmed here, because a point made seconds ago isn't listed yet.
                 let rows: Vec<RestorePoint> = {
-                    let mut state = app.state.borrow_mut();
-                    let settings = &mut state.settings;
-                    // Forget points Windows already deleted on its own.
-                    let before = settings.own_points.len();
-                    settings.own_points.retain(|s| points.iter().any(|p| p.sequence == *s));
-                    if settings.own_points.len() != before {
-                        let _ = settings.save();
-                    }
+                    let state = app.state.borrow();
+                    let settings = &state.settings;
                     points
                         .iter()
                         .map(|point| RestorePoint {
@@ -696,7 +696,6 @@ impl App {
                         })
                         .collect()
                 };
-                app.state.borrow_mut().baseline_alive = rows.iter().any(|row| row.baseline);
                 app.with_ui(|ui| {
                     let protection = ui.global::<Protection>();
                     protection.set_loading(false);
@@ -858,7 +857,9 @@ impl App {
                 let Some((results, alive)) = results else { return };
                 {
                     let mut state = app.state.borrow_mut();
-                    state.baseline_alive = alive;
+                    let fresh =
+                        state.baseline_made.is_some_and(|made| made.elapsed() < Duration::from_secs(120));
+                    state.baseline_alive = alive || fresh;
                     for (info, result) in state.tweaks.iter_mut().zip(results) {
                         let (shown, on, estimate) = result.unwrap_or((false, None, None));
                         *info = TweakInfo { loaded: true, shown, on, estimate, ran: info.ran };
@@ -1022,6 +1023,7 @@ impl App {
                         state.settings.baseline_point = Some(sequence);
                         state.settings.own_points.push(sequence);
                         state.baseline_alive = true;
+                        state.baseline_made = Some(Instant::now());
                         let _ = state.settings.save();
                     }
                     app.apply(ask)
@@ -1120,6 +1122,10 @@ impl App {
                                     freed: gained,
                                     reset,
                                 };
+                                if let Kind::Toggle { .. } = tweak.kind {
+                                    let on = matches!(op, Op::Apply | Op::Reapply);
+                                    state.tweaks[i].on = Some(on);
+                                }
                                 match (&tweak.kind, op) {
                                     (Kind::Action { .. }, _) => state.tweaks[i].ran = true,
                                     (_, Op::Apply) => state.changes.push(journal(false)),
