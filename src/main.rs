@@ -1528,10 +1528,24 @@ fn repaint_after_restore(ui: &AppWindow) {
 fn style_when_ready<T: ComponentHandle + 'static>(component: slint::Weak<T>, attempt: u32) {
     Timer::single_shot(Duration::from_millis(if attempt == 0 { 0 } else { 50 }), move || {
         let Some(strong) = component.upgrade() else { return };
-        if !system::style_window(strong.window()) && attempt < 20 {
+        if system::style_window(strong.window()) {
+            limit_size(strong.window());
+        } else if attempt < 20 {
             style_when_ready(component, attempt + 1);
         }
     });
+}
+
+/// The same as min-width and min-height in ui/app.slint.
+const MIN_SIZE: (f64, f64) = (1100.0, 760.0);
+
+/// Slint 1.18 never hands the window's min-width and min-height to Windows, so the window
+/// could be dragged or restored smaller than the layout, which then got cut off.
+fn limit_size(window: &slint::Window) {
+    use slint::winit_030::WinitWindowAccessor;
+    use slint::winit_030::winit::dpi::LogicalSize;
+
+    window.with_winit_window(|winit| winit.set_min_inner_size(Some(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))));
 }
 
 /// Breaks the terms into justified lines, in whatever language the UI is in now.
