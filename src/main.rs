@@ -4,6 +4,7 @@ mod boost;
 mod disk;
 mod governor;
 mod memory;
+mod net;
 mod reg;
 mod restore;
 mod settings;
@@ -13,7 +14,7 @@ mod text;
 mod tweaks;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
@@ -71,6 +72,13 @@ struct State {
     active_plan: Option<String>,
     /// Startup switches still being written.
     startup_writes: u32,
+    bloat_running: bool,
+    /// Last results, kept so they're still there when the window opens again.
+    bloat: Option<Result<net::Bloat, net::BloatError>>,
+    dns_running: bool,
+    dns: Vec<net::Resolver>,
+    /// Traffic totals at the last tick, to turn them into rates.
+    traffic: Option<(Instant, HashMap<String, [u64; 2]>)>,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -140,6 +148,11 @@ fn main() -> Result<(), slint::PlatformError> {
             startup: Vec::new(),
             active_plan: None,
             startup_writes: 0,
+            bloat_running: false,
+            bloat: None,
+            dns_running: false,
+            dns: Vec::new(),
+            traffic: None,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -167,8 +180,11 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let result = slint::run_event_loop_until_quit();
-    // Puts back what ProBalance and the game mode changed before the process goes.
+    // Puts back what ProBalance and the game mode changed before the process goes, and
+    // ends the network trace, which would outlive the process.
     governor::stop();
+    net::traffic_stop();
+    net::unwatch();
     result
 }
 
@@ -211,6 +227,7 @@ impl App {
             system::log_error("notification registration", &e);
         }
         self.ticker.start(TimerMode::Repeated, Duration::from_secs(1), bind(self, |app| app.tick()));
+        net::end_leftover_trace();
         governor::start(live_config(&self.state.borrow().settings));
 
         let tray = Tray::new()?;
@@ -423,6 +440,20 @@ impl App {
             }
         });
 
+        let internet = ui.global::<Net>();
+        internet.on_add_host(bind(self, |app| app.add_host()));
+        internet.on_remove_host(bind_with(self, |app, i: i32| {
+            let mut state = app.state.borrow_mut();
+            if (i as usize) < state.settings.ping_hosts.len() {
+                state.settings.ping_hosts.remove(i as usize);
+                let _ = state.settings.save();
+            }
+        }));
+        internet.on_run_bloat(bind(self, |app| app.run_bloat()));
+        internet.on_run_dns(bind(self, |app| app.run_dns()));
+        self.show_bloat(&ui);
+        self.show_dns(&ui);
+
         let terms = ui.global::<Terms>();
         terms.on_accepted(bind(self, |app| app.accept_terms()));
         terms.on_declined(|| {
@@ -480,6 +511,7 @@ impl App {
             live.set_restrained(status.restrained as i32);
             live.set_efficient(status.efficient as i32);
         });
+        self.tick_internet();
         let due = {
             let mut state = self.state.borrow_mut();
             if state.loads.len() == SPARK_SAMPLES {
@@ -1093,6 +1125,7 @@ impl App {
         let tweaks = ui.global::<Tweaks>();
         tweaks.set_performance(ModelRc::new(VecModel::from(section(Section::Performance))));
         tweaks.set_games(ModelRc::new(VecModel::from(section(Section::Games))));
+        tweaks.set_internet(ModelRc::new(VecModel::from(section(Section::Internet))));
         tweaks.set_input(ModelRc::new(VecModel::from(section(Section::Input))));
         tweaks.set_storage(ModelRc::new(VecModel::from(section(Section::Storage))));
         tweaks.set_background(ModelRc::new(VecModel::from(section(Section::Background))));
@@ -1334,6 +1367,207 @@ impl App {
         );
     }
 
+    /// The live ping runs only while its tab is on screen and the traffic count only while
+    /// its own is, so neither costs anything the rest of the time.
+    fn tick_internet(&self) {
+        let tab = self.with_ui_value(|ui| (ui.get_page() == INTERNET_PAGE).then(|| ui.global::<Net>().get_tab()));
+        let tab = tab.flatten();
+        if tab == Some(0) {
+            net::watch(&self.state.borrow().settings.ping_hosts);
+        } else {
+            net::unwatch();
+        }
+        if tab != Some(3) {
+            net::traffic_stop();
+            self.state.borrow_mut().traffic = None;
+        }
+        let Some(tab) = tab else { return };
+        let connection = net::connection();
+        self.with_ui(|ui| {
+            let internet = ui.global::<Net>();
+            internet.set_adapter(connection.as_ref().map(|c| c.name.as_str()).unwrap_or_default().into());
+            internet.set_gateway(
+                connection.as_ref().and_then(|c| c.gateway).map(|g| g.to_string()).unwrap_or_default().into(),
+            );
+            match tab {
+                0 => show_pings(ui),
+                3 => self.show_usage(ui),
+                _ => {}
+            }
+            if self.state.borrow().bloat_running {
+                show_bloat_progress(ui);
+            }
+        });
+    }
+
+    fn add_host(&self) {
+        let Some(host) = self.with_ui_value(|ui| ui.global::<Net>().get_new_host().trim().to_string()) else {
+            return;
+        };
+        let mut state = self.state.borrow_mut();
+        let hosts = &mut state.settings.ping_hosts;
+        if host.is_empty() || host.len() > 253 || host.contains(char::is_whitespace) || hosts.len() >= MAX_HOSTS {
+            return;
+        }
+        if !hosts.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+            hosts.push(host);
+            let _ = state.settings.save();
+        }
+        self.with_ui(|ui| ui.global::<Net>().set_new_host("".into()));
+    }
+
+    fn show_usage(&self, ui: &AppWindow) {
+        let internet = ui.global::<Net>();
+        if net::traffic_start().is_err() {
+            internet.set_usage_failed(true);
+            return;
+        }
+        internet.set_usage_failed(false);
+        let totals = net::traffic();
+        let now = Instant::now();
+        let previous = self.state.borrow_mut().traffic.replace((now, totals.clone()));
+        let mut rows: Vec<(String, [u64; 2], [f64; 2])> = totals
+            .into_iter()
+            .map(|(name, total)| {
+                let rate = previous.as_ref().map_or([0.0; 2], |(at, last)| {
+                    let seconds = now.duration_since(*at).as_secs_f64().max(0.2);
+                    let before = last.get(&name).copied().unwrap_or_default();
+                    [0, 1].map(|i| total[i].saturating_sub(before[i]) as f64 / seconds)
+                });
+                (name, total, rate)
+            })
+            .filter(|(_, total, _)| total[0] + total[1] > 0)
+            .collect();
+        rows.sort_by(|a, b| {
+            (b.2[0] + b.2[1]).total_cmp(&(a.2[0] + a.2[1])).then((b.1[0] + b.1[1]).cmp(&(a.1[0] + a.1[1])))
+        });
+        // As many as fit without scrolling: the list is rebuilt every second, which would
+        // throw a scrolled list back to the top.
+        rows.truncate(12);
+        let busiest = rows.iter().map(|r| r.2[0] + r.2[1]).fold(0.0, f64::max).max(1.0);
+        let rows: Vec<UsageRow> = rows
+            .into_iter()
+            .map(|(name, total, rate)| UsageRow {
+                name: name.trim_end_matches(".exe").into(),
+                down: format_rate(rate[0]).into(),
+                up: format_rate(rate[1]).into(),
+                total_down: format_traffic(total[0]).into(),
+                total_up: format_traffic(total[1]).into(),
+                share: ((rate[0] + rate[1]) / busiest) as f32,
+            })
+            .collect();
+        internet.set_usage(ModelRc::new(VecModel::from(rows)));
+    }
+
+    fn run_bloat(self: &Rc<Self>) {
+        if std::mem::replace(&mut self.state.borrow_mut().bloat_running, true) {
+            return;
+        }
+        self.with_ui(|ui| self.show_bloat(ui));
+        self.run_job(net::bufferbloat, |app, result| {
+            {
+                let mut state = app.state.borrow_mut();
+                state.bloat_running = false;
+                state.bloat = Some(result.unwrap_or(Err(net::BloatError::NoServer)));
+            }
+            app.with_ui(|ui| app.show_bloat(ui));
+        });
+    }
+
+    fn show_bloat(&self, ui: &AppWindow) {
+        let state = self.state.borrow();
+        let internet = ui.global::<Net>();
+        let code = match &state.bloat {
+            _ if state.bloat_running => 1,
+            None => 0,
+            Some(Ok(_)) => 2,
+            Some(Err(net::BloatError::NoPing)) => 3,
+            Some(Err(net::BloatError::NoServer)) => 4,
+        };
+        if state.bloat_running {
+            internet.set_bloat_progress(0.0);
+            internet.set_bloat_ping("".into());
+            internet.set_bloat_speed("".into());
+        }
+        internet.set_bloat_state(code);
+        if let Some(Ok(bloat)) = &state.bloat {
+            let added = |latency: f64| format!("+{}", format_ms((latency - bloat.idle).max(0.0)));
+            internet.set_bloat(BloatResult {
+                grade: bloat.grade().to_string().into(),
+                idle: format_ms(bloat.idle).into(),
+                down_speed: format_mbps(bloat.download.mbps).into(),
+                down_ping: format_ms(bloat.download.latency).into(),
+                down_added: added(bloat.download.latency).into(),
+                down_lost: bloat.download.lost as i32,
+                up_speed: format_mbps(bloat.upload.mbps).into(),
+                up_ping: format_ms(bloat.upload.latency).into(),
+                up_added: added(bloat.upload.latency).into(),
+                up_lost: bloat.upload.lost as i32,
+                data: format_bytes(bloat.data).into(),
+            });
+        }
+    }
+
+    fn run_dns(self: &Rc<Self>) {
+        if std::mem::replace(&mut self.state.borrow_mut().dns_running, true) {
+            return;
+        }
+        self.with_ui(|ui| ui.global::<Net>().set_dns_running(true));
+        self.run_job(net::dns_benchmark, |app, result| {
+            {
+                let mut state = app.state.borrow_mut();
+                state.dns_running = false;
+                state.dns = result.unwrap_or_default();
+            }
+            app.with_ui(|ui| app.show_dns(ui));
+        });
+    }
+
+    fn show_dns(&self, ui: &AppWindow) {
+        let state = self.state.borrow();
+        let internet = ui.global::<Net>();
+        let resolvers = &state.dns;
+        // Sorted best first, so the first of each kind is the one to compare.
+        let best = resolvers.first().filter(|r| r.reliable());
+        let current = resolvers.iter().find(|r| r.current);
+        let name = |r: &net::Resolver| if r.name.is_empty() { r.address.to_string() } else { r.name.clone() };
+        let verdict = match (best, current) {
+            (Some(best), Some(current)) if !current.reliable() => {
+                internet.set_dns_missed(current.failed as i32);
+                internet.set_dns_best(name(best).into());
+                3
+            }
+            (Some(best), Some(current)) => {
+                let gain = current.score().unwrap_or(0.0) - best.score().unwrap_or(0.0);
+                // A few ms either way is noise between runs, not a reason to switch.
+                if gain < 3.0 {
+                    1
+                } else {
+                    internet.set_dns_best(name(best).into());
+                    internet.set_dns_gain(format_ms(gain).into());
+                    2
+                }
+            }
+            _ => 0,
+        };
+        let rows: Vec<DnsRow> = resolvers
+            .iter()
+            .map(|r| DnsRow {
+                name: r.name.as_str().into(),
+                address: r.address.to_string().into(),
+                cached: r.cached.map(format_ms).unwrap_or_else(|| "-".into()).into(),
+                uncached: r.uncached.map(format_ms).unwrap_or_else(|| "-".into()).into(),
+                failed: r.failed as i32,
+                sent: r.sent as i32,
+                current: r.current,
+                best: best.is_some_and(|b| b.address == r.address),
+            })
+            .collect();
+        internet.set_dns_verdict(verdict);
+        internet.set_dns(ModelRc::new(VecModel::from(rows)));
+        internet.set_dns_running(state.dns_running);
+    }
+
     fn set_job(&self, state: JobState, detail: &str) {
         self.with_ui(|ui| {
             let job = ui.global::<Job>();
@@ -1341,6 +1575,127 @@ impl App {
             job.set_state(state);
         });
     }
+}
+
+const INTERNET_PAGE: i32 = 8;
+/// Ping targets the user can add, on top of the router and Cloudflare.
+const MAX_HOSTS: usize = 5;
+
+fn show_pings(ui: &AppWindow) {
+    let readings = net::readings();
+    let rows: Vec<PingRow> = readings
+        .iter()
+        .map(|reading| {
+            let series = &reading.series;
+            let (line, lost) = ping_paths(series);
+            let ms = |value: Option<f64>| value.map(format_ms).unwrap_or_default();
+            PingRow {
+                label: reading.label.as_str().into(),
+                address: match reading.address {
+                    net::Lookup::Found(address) => address.to_string().into(),
+                    _ => "".into(),
+                },
+                now: match series.last() {
+                    Some(Some(time)) => format_ms(time).into(),
+                    Some(None) => "-".into(),
+                    None => "".into(),
+                },
+                average: ms(series.average()).into(),
+                jitter: ms(series.jitter()).into(),
+                loss: series.loss().map(|loss| format!("{:.0}%", loss * 100.0)).unwrap_or_default().into(),
+                line: line.into(),
+                lost: lost.into(),
+                state: match reading.address {
+                    net::Lookup::Found(_) => 0,
+                    net::Lookup::Pending => 1,
+                    net::Lookup::Failed => 2,
+                },
+                host: match reading.target {
+                    net::Target::Host(i) => i as i32,
+                    _ => -1,
+                },
+            }
+        })
+        .collect();
+    let internet = ui.global::<Net>();
+    internet.set_verdict(ping_verdict(&readings));
+    internet.set_pings(ModelRc::new(VecModel::from(rows)));
+}
+
+/// Round trips as a line on a 59 x 40 box, scaled to the slowest one, and a red mark per
+/// lost ping. A lost ping breaks the line.
+fn ping_paths(series: &net::Series) -> (String, String) {
+    let scale = series.max().unwrap_or(1.0).max(5.0) * 1.15;
+    let offset = net::SERIES_LEN - series.0.len();
+    let (mut line, mut lost, mut pen_up) = (String::new(), String::new(), true);
+    for (i, sample) in series.0.iter().enumerate() {
+        let x = offset + i;
+        match sample {
+            Some(time) => {
+                let y = 38 - (time / scale * 36.0).round() as i32;
+                let _ = write!(line, "{}{x} {y} ", if pen_up { 'M' } else { 'L' });
+                pen_up = false;
+            }
+            None => {
+                let _ = write!(lost, "M{x} 4 L{x} 36 ");
+                pen_up = true;
+            }
+        }
+    }
+    (line, lost)
+}
+
+/// Compares the router with Cloudflare to tell where trouble starts. Needs 20 seconds of
+/// pings; before that one lost ping would read as 10% loss. A target that never answered
+/// most likely blocks pings, which says nothing about the connection, so it's left out.
+fn ping_verdict(readings: &[net::Reading]) -> i32 {
+    let find = |target| {
+        readings
+            .iter()
+            .find(|r| r.target == target)
+            .map(|r| &r.series)
+            .filter(|s| s.0.len() >= 20 && s.average().is_some())
+    };
+    let Some(internet) = find(net::Target::Cloudflare) else { return 0 };
+    let shaky = |series: &net::Series, jitter: f64| {
+        series.loss().unwrap_or(0.0) >= 0.02 || series.jitter().unwrap_or(0.0) > jitter
+    };
+    match find(net::Target::Gateway) {
+        Some(home) if shaky(home, 5.0) => 2,
+        _ if shaky(internet, 10.0) => 3,
+        _ => 1,
+    }
+}
+
+fn show_bloat_progress(ui: &AppWindow) {
+    let progress = net::bloat_progress();
+    let (done, phase) = match progress.phase {
+        net::Phase::Idle => (0.0, 0),
+        net::Phase::Download => (5.0, 1),
+        net::Phase::Upload => (13.0, 2),
+    };
+    let internet = ui.global::<Net>();
+    internet.set_bloat_phase(phase);
+    internet.set_bloat_progress(((done + progress.elapsed.as_secs_f64()) / 21.0).min(1.0) as f32);
+    internet.set_bloat_ping(progress.ping.map(format_ms).unwrap_or_default().into());
+    internet.set_bloat_speed(if progress.mbps > 0.0 { format_mbps(progress.mbps).into() } else { "".into() });
+}
+
+fn format_ms(ms: f64) -> String {
+    if ms < 10.0 { format!("{ms:.1} ms") } else { format!("{ms:.0} ms") }
+}
+
+fn format_mbps(mbps: f64) -> String {
+    if mbps < 10.0 { format!("{mbps:.1} Mbps") } else { format!("{mbps:.0} Mbps") }
+}
+
+fn format_rate(bytes_per_second: f64) -> String {
+    if bytes_per_second < 1.0 { String::new() } else { format!("{}/s", format_traffic(bytes_per_second as u64)) }
+}
+
+/// Like format_bytes, but down to KB: most programs move little.
+fn format_traffic(bytes: u64) -> String {
+    if bytes < 1024 * 1024 { format!("{} KB", bytes.div_ceil(1024)) } else { format_bytes(bytes) }
 }
 
 fn auto_clean_due(state: &State, load: u32) -> bool {

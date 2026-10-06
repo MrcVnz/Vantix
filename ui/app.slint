@@ -6,10 +6,11 @@ import { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, RebootBanner, Secti
 import { Terms, TermsSheet, TermsLine, TermsParagraph } from "terms.slint";
 import { Startup, StartupRow, BackgroundPage } from "startup.slint";
 import { Live, ProBalanceCard, GameModeCard } from "live.slint";
+import { Net, InternetPage, PingRow, BloatResult, DnsRow, UsageRow } from "internet.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -180,7 +181,8 @@ component SettingsPage inherits VerticalLayout {
 }
 
 export component AppWindow inherits Window {
-    property <int> page;
+    /// Read by main.rs to run the live ping and traffic count only while they're on screen.
+    out property <int> page;
     /// Flipped after a restore from minimized. The background differs by one step of
     /// blue between the two values, which no one can see but makes the whole window dirty.
     in-out property <bool> repaint;
@@ -273,6 +275,12 @@ export component AppWindow inherits Window {
                     icon: Icons.gamepad;
                     active: root.page == 5;
                     clicked => { root.page = 5; }
+                }
+                NavItem {
+                    text: @tr("Internet");
+                    icon: Icons.wifi;
+                    active: root.page == 8;
+                    clicked => { root.page = 8; }
                 }
                 NavItem {
                     text: @tr("Input");
@@ -384,6 +392,10 @@ export component AppWindow inherits Window {
                     rows: Tweaks.input;
                 }
                 if root.page == 7: BackgroundPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+                if root.page == 8: InternetPage {
                     width: parent.width;
                     height: parent.height;
                 }

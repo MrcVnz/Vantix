@@ -581,7 +581,7 @@ impl Governor {
             self.end_eco();
         }
 
-        if config.standby && self.ticks % 5 == 0 {
+        if config.standby && self.ticks.is_multiple_of(5) {
             let stats = memory::stats();
             if stats.free < STANDBY_FLOOR && stats.standby >= STANDBY_FLOOR {
                 memory::purge_standby();
@@ -785,7 +785,7 @@ fn preferred_cores() -> Option<Cores> {
         return None;
     }
     let ids: Vec<u32> = sets.iter().filter(|s| biggest.1 & (1usize << s.0) != 0).map(|s| s.1).collect();
-    (!ids.is_empty()).then(|| Cores { kind: CoreKind::VCache, preferred: ids.len(), ids, total })
+    (!ids.is_empty()).then_some(Cores { kind: CoreKind::VCache, preferred: ids.len(), ids, total })
 }
 
 fn cpu_sets() -> Vec<(u8, u32, u8)> {

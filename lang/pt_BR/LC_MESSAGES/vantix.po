@@ -909,3 +909,216 @@ msgid "Holding back {n} program right now."
 msgid_plural "Holding back {n} programs right now."
 msgstr[0] "Segurando {n} programa agora."
 msgstr[1] "Segurando {n} programas agora."
+
+msgid "Internet"
+msgstr "Internet"
+
+msgid "Clear the DNS cache"
+msgstr "Limpar o cache de DNS"
+
+msgid "Renew the IP address"
+msgstr "Renovar o endereço IP"
+
+msgid "Reset the network stack"
+msgstr "Redefinir a pilha de rede"
+
+msgid "Windows forgets every name it looked up. Fixes a site that moved to a new address and still won't load on this PC."
+msgstr "O Windows esquece todos os nomes que já consultou. Resolve um site que mudou de endereço e continua sem abrir neste PC."
+
+msgid "Asks the router for the address lease again. Fixes a connection that shows no internet after the router restarted."
+msgstr "Pede de novo ao roteador a concessão do endereço. Resolve uma conexão que mostra sem internet depois que o roteador reiniciou."
+
+msgid "Puts Winsock and TCP/IP back to how Windows installs them. For a connection that nothing else fixes."
+msgstr "Volta o Winsock e o TCP/IP ao jeito que o Windows instala. Para uma conexão que nada mais resolve."
+
+msgid "The connection can drop for a few seconds."
+msgstr "A conexão pode cair por alguns segundos."
+
+msgid "IP addresses and DNS servers set by hand are cleared, and VPN or firewall software may need to be reinstalled."
+msgstr "IPs e servidores DNS definidos à mão são apagados, e programas de VPN ou firewall podem precisar ser reinstalados."
+
+msgid "Router"
+msgstr "Roteador"
+
+msgid "Looking up..."
+msgstr "Procurando..."
+
+msgid "No gateway found"
+msgstr "Nenhum gateway encontrado"
+
+msgid "Host not found"
+msgstr "Host não encontrado"
+
+msgid "Stable: no loss and little jitter, both to the router and past it."
+msgstr "Estável: sem perda e com pouco jitter, tanto até o roteador quanto depois dele."
+
+msgid "The trouble is inside your home: even the router answers late or not at all. On Wi-Fi, get closer to the router, move to 5 GHz or use a cable."
+msgstr "O problema está dentro de casa: até o roteador responde atrasado ou não responde. No Wi-Fi, chegue mais perto do roteador, use 5 GHz ou passe para o cabo."
+
+msgid "The router answers fine, so the loss or jitter comes from past it: your provider or the route to the server."
+msgstr "O roteador responde bem, então a perda ou o jitter vem de depois dele: do seu provedor ou da rota até o servidor."
+
+msgid "Pings each target once a second while this tab is open."
+msgstr "Faz ping em cada alvo uma vez por segundo enquanto esta aba está aberta."
+
+msgid "Target"
+msgstr "Alvo"
+
+msgid "Last minute"
+msgstr "Último minuto"
+
+msgid "Now"
+msgstr "Agora"
+
+msgid "Average"
+msgstr "Média"
+
+msgid "Jitter"
+msgstr "Jitter"
+
+msgid "Loss"
+msgstr "Perda"
+
+msgid "Add a game server or site, by name or IP"
+msgstr "Adicione um servidor de jogo ou site, por nome ou IP"
+
+msgid "Add"
+msgstr "Adicionar"
+
+msgid "Ping under load"
+msgstr "Ping sob carga"
+
+msgid "Measures the ping to Cloudflare at rest, then while the line downloads and uploads at full speed. A router that queues too much turns every download in the house into lag in games and calls. That's bufferbloat."
+msgstr "Mede o ping até a Cloudflare com a linha parada e depois enquanto ela baixa e envia na velocidade máxima. Um roteador que enfileira demais transforma qualquer download da casa em lag nos jogos e nas chamadas. Isso é bufferbloat."
+
+msgid "Takes about 20 seconds and uses as much data as your line moves in 16 seconds at full speed, over 1 GB on fiber. Avoid it on mobile data. Pause downloads and streams first, or they count as bloat."
+msgstr "Leva uns 20 segundos e gasta o que a sua linha transfere em 16 segundos na velocidade máxima, mais de 1 GB na fibra. Evite em dados móveis. Pause downloads e streams antes, senão eles contam como bloat."
+
+msgid "Testing..."
+msgstr "Testando..."
+
+msgid "Start test"
+msgstr "Iniciar teste"
+
+msgid "Test again"
+msgstr "Testar de novo"
+
+msgid "Ping at rest"
+msgstr "Ping em repouso"
+
+msgid "Downloading"
+msgstr "Baixando"
+
+msgid "Uploading"
+msgstr "Enviando"
+
+msgid "ping {}"
+msgstr "ping {}"
+
+msgid "1.1.1.1 doesn't answer pings from this network, so there's nothing to compare."
+msgstr "O 1.1.1.1 não responde a ping nesta rede, então não há com o que comparar."
+
+msgid "Couldn't reach the test server, speed.cloudflare.com."
+msgstr "Não foi possível chegar ao servidor de teste, speed.cloudflare.com."
+
+msgid "No bufferbloat to speak of. Downloads in the house barely touch the ping."
+msgstr "Praticamente sem bufferbloat. Os downloads da casa quase não mexem no ping."
+
+msgid "A little bufferbloat. Fine for most games and calls."
+msgstr "Um pouco de bufferbloat. Tudo bem para a maioria dos jogos e chamadas."
+
+msgid "The ping jumps while the line is busy. Turn on SQM, Smart Queue or QoS in the router with limits a little under the speeds below, or limit the apps that download in the background."
+msgstr "O ping dispara quando a linha está ocupada. Ligue SQM, Smart Queue ou QoS no roteador com limites um pouco abaixo das velocidades abaixo, ou limite os apps que baixam em segundo plano."
+
+msgid "At rest"
+msgstr "Em repouso"
+
+msgid "ping"
+msgstr "ping"
+
+msgid "Download"
+msgstr "Download"
+
+msgid "ping {} ({}), {} lost"
+msgstr "ping {} ({}), {} perdidos"
+
+msgid "ping {} ({})"
+msgstr "ping {} ({})"
+
+msgid "Upload"
+msgstr "Upload"
+
+msgid "Data used"
+msgstr "Dados usados"
+
+msgid "The DNS you use now is as fast as the best one here."
+msgstr "O DNS que você usa agora é tão rápido quanto o melhor daqui."
+
+msgid "{} answers {} faster than the DNS you use now."
+msgstr "O {} responde {} mais rápido que o DNS que você usa agora."
+
+msgid "The DNS you use now missed {} queries. {} answered every one."
+msgstr "O DNS que você usa agora deixou {} consultas sem resposta. O {} respondeu todas."
+
+msgid "Times how fast each DNS server answers, with real queries sent straight to it."
+msgstr "Mede a rapidez de cada servidor DNS com consultas reais enviadas direto para ele."
+
+msgid "DNS only decides how fast a site or server starts loading. It doesn't change the ping inside a game."
+msgstr "O DNS só decide a rapidez com que um site ou servidor começa a carregar. Ele não muda o ping dentro do jogo."
+
+msgid "Run benchmark"
+msgstr "Testar"
+
+msgid "Server"
+msgstr "Servidor"
+
+msgid "Cached names"
+msgstr "Nomes em cache"
+
+msgid "New names"
+msgstr "Nomes novos"
+
+msgid "Missed"
+msgstr "Sem resposta"
+
+msgid "Fastest"
+msgstr "Mais rápido"
+
+msgid "Windows didn't allow the network trace, so traffic can't be counted."
+msgstr "O Windows não permitiu o rastreamento da rede, então o tráfego não pode ser contado."
+
+msgid "TCP and UDP traffic of every program since this tab opened, games and voice chat included."
+msgstr "Tráfego TCP e UDP de cada programa desde que esta aba abriu, jogos e chat de voz incluídos."
+
+msgid "Program"
+msgstr "Programa"
+
+msgid "Total down / up"
+msgstr "Total baixado / enviado"
+
+msgid "Waiting for traffic..."
+msgstr "Esperando tráfego..."
+
+msgid "No internet connection found."
+msgstr "Nenhuma conexão com a internet encontrada."
+
+msgid "Connected through {}."
+msgstr "Conectado por {}."
+
+msgid "Connected through {}, router at {}."
+msgstr "Conectado por {}, roteador em {}."
+
+msgid "Ping"
+msgstr "Ping"
+
+msgid "Bufferbloat"
+msgstr "Bufferbloat"
+
+msgid "DNS"
+msgstr "DNS"
+
+msgid "Network use"
+msgstr "Uso da rede"
+
+msgid "Repair"
+msgstr "Reparar"

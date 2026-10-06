@@ -23,7 +23,7 @@ use windows::Win32::System::Ioctl::{
 use windows::Win32::System::SystemInformation::{GetSystemDirectoryW, GetTickCount64, GetWindowsDirectoryW};
 use windows::core::{BOOL, Error, HSTRING, Result};
 
-use crate::{boost, reg};
+use crate::{boost, net, reg};
 
 /// From WinBase.h; the windows crate only has it behind an unrelated feature.
 const DRIVE_FIXED: u32 = 3;
@@ -32,6 +32,7 @@ const DRIVE_FIXED: u32 = 3;
 pub enum Section {
     Performance,
     Games,
+    Internet,
     Input,
     Storage,
     Background,
@@ -515,6 +516,42 @@ pub const CATALOG: &[Tweak] = &[
             revert: boost::restore_telemetry,
             reset: boost::reset_telemetry,
         },
+    },
+    Tweak {
+        id: "flush-dns",
+        section: Section::Internet,
+        gain: Level::Low,
+        cost: Level::None,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Action { run: net::flush_dns },
+    },
+    Tweak {
+        id: "renew-ip",
+        section: Section::Internet,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: net::uses_dhcp,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Action { run: net::renew_ip },
+    },
+    Tweak {
+        id: "reset-network",
+        section: Section::Internet,
+        gain: Level::Medium,
+        cost: Level::Medium,
+        reboot: true,
+        shown: always,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Action { run: net::reset_stack },
     },
 ];
 

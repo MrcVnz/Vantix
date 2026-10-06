@@ -44,6 +44,7 @@ export struct ChangeRow {
 export global Tweaks {
     in property <[TweakRow]> performance;
     in property <[TweakRow]> games;
+    in property <[TweakRow]> internet;
     in property <[TweakRow]> input;
     in property <[TweakRow]> storage;
     in property <[TweakRow]> background;
@@ -87,6 +88,9 @@ export global TweakText {
         @tr("Keys without delay (gaming Filter Keys)"),
         @tr("Stop Store apps in the background"),
         @tr("Telemetry to the minimum"),
+        @tr("Clear the DNS cache"),
+        @tr("Renew the IP address"),
+        @tr("Reset the network stack"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -115,6 +119,9 @@ export global TweakText {
         @tr("Turns on Filter Keys with no wait and no bounce time, so Filter Keys never delays or ignores a key, and makes a held key repeat after 150 ms, every 10 ms. That's past what the regular keyboard settings allow."),
         @tr("Microsoft Store apps no longer keep running after you close them."),
         @tr("Sets diagnostic data to the lowest level your Windows edition allows and turns off the service that sends it."),
+        @tr("Windows forgets every name it looked up. Fixes a site that moved to a new address and still won't load on this PC."),
+        @tr("Asks the router for the address lease again. Fixes a connection that shows no internet after the router restarted."),
+        @tr("Puts Winsock and TCP/IP back to how Windows installs them. For a connection that nothing else fixes."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -143,6 +150,9 @@ export global TweakText {
         @tr("Holding a key while typing repeats it very fast."),
         @tr("Those apps stop sending notifications and syncing until you open them."),
         @tr("Windows Insider and some feedback features stop working."),
+        "",
+        @tr("The connection can drop for a few seconds."),
+        @tr("IP addresses and DNS servers set by hand are cleared, and VPN or firewall software may need to be reinstalled."),
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }

@@ -96,6 +96,8 @@ pub struct Settings {
     pub own_points: Vec<u32>,
     pub probalance: bool,
     pub game_mode: GameMode,
+    /// Extra targets for the live ping, as typed: names or IPv4 addresses.
+    pub ping_hosts: Vec<String>,
 }
 
 impl Default for Settings {
@@ -113,6 +115,7 @@ impl Default for Settings {
             own_points: Vec::new(),
             probalance: false,
             game_mode: GameMode::default(),
+            ping_hosts: Vec::new(),
         }
     }
 }

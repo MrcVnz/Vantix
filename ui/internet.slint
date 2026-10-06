@@ -1,0 +1,619 @@
+import { Theme, Icons, Icon, Card, Button, Chip, Segmented } from "theme.slint";
+import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
+import { Tweaks, TweakList } from "tweaks.slint";
+
+/// One ping target. Times come formatted, empty while there's no answer yet.
+export struct PingRow {
+    label: string,
+    address: string,
+    now: string,
+    average: string,
+    jitter: string,
+    loss: string,
+    /// SVG paths on a 59 x 40 box: the round trips, and a mark for each lost ping.
+    line: string,
+    lost: string,
+    /// 0 pinging, 1 looking up the address, 2 no address.
+    state: int,
+    /// Index among the hosts the user added, -1 for the built-in targets.
+    host: int,
+}
+
+export struct BloatResult {
+    grade: string,
+    idle: string,
+    down-speed: string,
+    down-ping: string,
+    down-added: string,
+    down-lost: int,
+    up-speed: string,
+    up-ping: string,
+    up-added: string,
+    up-lost: int,
+    data: string,
+}
+
+export struct DnsRow {
+    name: string,
+    address: string,
+    cached: string,
+    uncached: string,
+    failed: int,
+    sent: int,
+    current: bool,
+    best: bool,
+}
+
+export struct UsageRow {
+    name: string,
+    down: string,
+    up: string,
+    total-down: string,
+    total-up: string,
+    /// Of the busiest program's rate, for the bar.
+    share: float,
+}
+
+export global Net {
+    /// Kept while the page comes and goes. Ping runs only on tab 0, the traffic count on 3.
+    in-out property <int> tab;
+    /// Adapter and router of the connection in use, empty when there is none.
+    in property <string> adapter;
+    in property <string> gateway;
+
+    in property <[PingRow]> pings;
+    /// 0 too early to tell, 1 stable, 2 trouble inside the home network, 3 past the router.
+    in property <int> verdict;
+    in-out property <string> new-host;
+    callback add-host();
+    callback remove-host(int);
+
+    /// 0 not run, 1 running, 2 done, 3 1.1.1.1 doesn't answer pings, 4 test server unreachable.
+    in property <int> bloat-state;
+    /// 0 idle, 1 download, 2 upload.
+    in property <int> bloat-phase;
+    in property <float> bloat-progress;
+    in property <string> bloat-ping;
+    in property <string> bloat-speed;
+    in property <BloatResult> bloat;
+    callback run-bloat();
+
+    in property <bool> dns-running;
+    in property <[DnsRow]> dns;
+    /// 0 not run, 1 the current DNS is the fastest, 2 another one is faster, 3 the current
+    /// one missed queries.
+    in property <int> dns-verdict;
+    in property <string> dns-best;
+    in property <string> dns-gain;
+    in property <int> dns-missed;
+    callback run-dns();
+
+    in property <[UsageRow]> usage;
+    in property <bool> usage-failed;
+}
+
+component Heading inherits Text {
+    color: Theme.faint;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+component Value inherits Text {
+    color: Theme.text;
+    font-weight: 600;
+    horizontal-alignment: right;
+    vertical-alignment: center;
+}
+
+/// Round trips over the last minute, on a 59 x 40 box. Path coordinates are integers,
+/// see main.rs.
+component Spark inherits Rectangle {
+    in property <string> line;
+    in property <string> lost;
+
+    height: 40px;
+    border-radius: 6px;
+    background: Theme.background;
+
+    if root.lost != "": Path {
+        width: 100%;
+        height: 100%;
+        commands: root.lost;
+        viewbox-width: 59;
+        viewbox-height: 40;
+        fit: fill;
+        stroke: Theme.bad.with-alpha(0.7);
+        stroke-width: 1.5px;
+        fill: transparent;
+    }
+    if root.line != "": Path {
+        width: 100%;
+        height: 100%;
+        commands: root.line;
+        viewbox-width: 59;
+        viewbox-height: 40;
+        fit: fill;
+        stroke: Theme.accent;
+        stroke-width: 1.5px;
+        stroke-line-join: round;
+        fill: transparent;
+    }
+}
+
+component PingItem inherits HorizontalLayout {
+    in property <PingRow> item;
+
+    spacing: 16px;
+    padding-left: 6px;
+    padding-right: 14px;
+    height: 58px;
+
+    VerticalLayout {
+        width: 170px;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.item.label != "" ? root.item.label : @tr("Router");
+            color: Theme.text;
+            font-weight: 600;
+            overflow: elide;
+        }
+        Text {
+            text: root.item.state == 1 ? @tr("Looking up...")
+                : root.item.state == 2 ? (root.item.host < 0 ? @tr("No gateway found") : @tr("Host not found"))
+                : root.item.address;
+            color: root.item.state == 2 ? Theme.warn : Theme.muted;
+            font-size: 12px;
+            overflow: elide;
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        Spark {
+            line: root.item.line;
+            lost: root.item.lost;
+        }
+    }
+    Value { width: 64px; text: root.item.now; }
+    Value { width: 64px; text: root.item.average; }
+    Value { width: 64px; text: root.item.jitter; }
+    Value {
+        width: 52px;
+        text: root.item.loss;
+        color: root.item.loss != "" && root.item.loss != "0%" ? Theme.bad : Theme.text;
+    }
+    Rectangle {
+        width: 28px;
+        if root.item.host >= 0: Rectangle {
+            width: 28px;
+            height: 28px;
+            border-radius: 14px;
+            background: remove.has-hover ? Theme.hover : transparent;
+            Icon {
+                data: Icons.x;
+                size: 14px;
+                tint: Theme.muted;
+            }
+            remove := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { Net.remove-host(root.item.host); }
+            }
+        }
+    }
+}
+
+component PingTab inherits Card {
+    pad: 14px;
+
+    Text {
+        x: 6px;
+        text: Net.verdict == 1 ? @tr("Stable: no loss and little jitter, both to the router and past it.")
+            : Net.verdict == 2 ? @tr("The trouble is inside your home: even the router answers late or not at all. On Wi-Fi, get closer to the router, move to 5 GHz or use a cable.")
+            : Net.verdict == 3 ? @tr("The router answers fine, so the loss or jitter comes from past it: your provider or the route to the server.")
+            : @tr("Pings each target once a second while this tab is open.");
+        color: Net.verdict == 1 ? Theme.accent : Net.verdict >= 2 ? Theme.warn : Theme.muted;
+        font-weight: Net.verdict == 0 ? 400 : 600;
+        wrap: word-wrap;
+    }
+
+    HorizontalLayout {
+        spacing: 16px;
+        padding-left: 6px;
+        padding-right: 14px;
+        Heading { width: 170px; text: @tr("Target"); }
+        Heading { horizontal-stretch: 1; text: @tr("Last minute"); }
+        Heading { width: 64px; text: @tr("Now"); horizontal-alignment: right; }
+        Heading { width: 64px; text: @tr("Average"); horizontal-alignment: right; }
+        Heading { width: 64px; text: @tr("Jitter"); horizontal-alignment: right; }
+        Heading { width: 52px; text: @tr("Loss"); horizontal-alignment: right; }
+        Rectangle { width: 28px; }
+    }
+
+    ListView {
+        vertical-stretch: 1;
+        for row in Net.pings: PingItem { item: row; }
+    }
+
+    HorizontalLayout {
+        spacing: 10px;
+        padding-left: 6px;
+        padding-right: 6px;
+        LineEdit {
+            placeholder-text: @tr("Add a game server or site, by name or IP");
+            text <=> Net.new-host;
+            horizontal-stretch: 1;
+            accepted => { Net.add-host(); }
+        }
+        Button {
+            text: @tr("Add");
+            icon: Icons.plus;
+            enabled: Net.new-host != "" && Net.pings.length < 7;
+            clicked => { Net.add-host(); }
+        }
+    }
+}
+
+component Figure inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> detail;
+    in property <color> detail-color: Theme.muted;
+
+    spacing: 2px;
+    Heading { text: root.label; }
+    Text {
+        text: root.value;
+        color: Theme.text;
+        font-size: 20px;
+        font-weight: 700;
+    }
+    Text {
+        text: root.detail;
+        color: root.detail-color;
+        font-size: 12px;
+    }
+}
+
+component BloatTab inherits ScrollView {
+    property <color> grade-color: Net.bloat.grade == "A" ? Theme.accent
+        : Net.bloat.grade == "B" ? Theme.info
+        : Net.bloat.grade == "C" ? Theme.warn : Theme.bad;
+
+    VerticalLayout {
+        width: root.visible-width;
+        alignment: start;
+        spacing: Theme.gap;
+
+        Card {
+            title: @tr("Ping under load");
+            icon: Icons.activity;
+
+            Text {
+                text: @tr("Measures the ping to Cloudflare at rest, then while the line downloads and uploads at full speed. A router that queues too much turns every download in the house into lag in games and calls. That's bufferbloat.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+            Text {
+                text: @tr("Takes about 20 seconds and uses as much data as your line moves in 16 seconds at full speed, over 1 GB on fiber. Avoid it on mobile data. Pause downloads and streams first, or they count as bloat.");
+                color: Theme.warn;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 14px;
+                Button {
+                    text: Net.bloat-state == 1 ? @tr("Testing...") : Net.bloat-state == 0 ? @tr("Start test") : @tr("Test again");
+                    icon: Icons.zap;
+                    primary: Net.bloat-state != 1;
+                    enabled: Net.bloat-state != 1;
+                    clicked => { Net.run-bloat(); }
+                }
+                if Net.bloat-state == 1: Text {
+                    text: (Net.bloat-phase == 0 ? @tr("Ping at rest") : Net.bloat-phase == 1 ? @tr("Downloading") : @tr("Uploading"))
+                        + (Net.bloat-ping != "" ? "  ·  " + @tr("ping {}", Net.bloat-ping) : "")
+                        + (Net.bloat-speed != "" ? "  ·  " + Net.bloat-speed : "");
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                if Net.bloat-state == 3 || Net.bloat-state == 4: Text {
+                    text: Net.bloat-state == 3 ? @tr("1.1.1.1 doesn't answer pings from this network, so there's nothing to compare.")
+                        : @tr("Couldn't reach the test server, speed.cloudflare.com.");
+                    color: Theme.bad;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+            if Net.bloat-state == 1: Rectangle {
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.background;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * Net.bloat-progress;
+                    border-radius: 3px;
+                    background: Theme.accent;
+                    animate width { duration: 900ms; }
+                }
+            }
+        }
+
+        if Net.bloat-state == 2: Card {
+            HorizontalLayout {
+                spacing: 24px;
+
+                Rectangle {
+                    width: 92px;
+                    height: 92px;
+                    border-radius: Theme.radius;
+                    background: root.grade-color.with-alpha(0.12);
+                    border-width: 1px;
+                    border-color: root.grade-color.with-alpha(0.4);
+                    Text {
+                        text: Net.bloat.grade;
+                        color: root.grade-color;
+                        font-family: Theme.display-font;
+                        font-size: 52px;
+                        font-weight: 700;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 14px;
+                    horizontal-stretch: 1;
+                    alignment: center;
+
+                    Text {
+                        text: Net.bloat.grade == "A" ? @tr("No bufferbloat to speak of. Downloads in the house barely touch the ping.")
+                            : Net.bloat.grade == "B" ? @tr("A little bufferbloat. Fine for most games and calls.")
+                            : @tr("The ping jumps while the line is busy. Turn on SQM, Smart Queue or QoS in the router with limits a little under the speeds below, or limit the apps that download in the background.");
+                        color: Theme.text;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 32px;
+                        alignment: start;
+                        Figure {
+                            label: @tr("At rest");
+                            value: Net.bloat.idle;
+                            detail: @tr("ping");
+                        }
+                        Figure {
+                            label: @tr("Download");
+                            value: Net.bloat.down-speed;
+                            detail: Net.bloat.down-lost > 0
+                                ? @tr("ping {} ({}), {} lost", Net.bloat.down-ping, Net.bloat.down-added, Net.bloat.down-lost)
+                                : @tr("ping {} ({})", Net.bloat.down-ping, Net.bloat.down-added);
+                        }
+                        Figure {
+                            label: @tr("Upload");
+                            value: Net.bloat.up-speed;
+                            detail: Net.bloat.up-lost > 0
+                                ? @tr("ping {} ({}), {} lost", Net.bloat.up-ping, Net.bloat.up-added, Net.bloat.up-lost)
+                                : @tr("ping {} ({})", Net.bloat.up-ping, Net.bloat.up-added);
+                        }
+                        Figure {
+                            label: @tr("Data used");
+                            value: Net.bloat.data;
+                            detail: "";
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component DnsTab inherits Card {
+    pad: 14px;
+
+    HorizontalLayout {
+        spacing: 14px;
+        padding-left: 6px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: Net.dns-verdict == 1 ? @tr("The DNS you use now is as fast as the best one here.")
+                    : Net.dns-verdict == 2 ? @tr("{} answers {} faster than the DNS you use now.", Net.dns-best, Net.dns-gain)
+                    : Net.dns-verdict == 3 ? @tr("The DNS you use now missed {} queries. {} answered every one.", Net.dns-missed, Net.dns-best)
+                    : @tr("Times how fast each DNS server answers, with real queries sent straight to it.");
+                color: Net.dns-verdict == 1 ? Theme.accent : Net.dns-verdict >= 2 ? Theme.warn : Theme.text;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+            Text {
+                text: @tr("DNS only decides how fast a site or server starts loading. It doesn't change the ping inside a game.");
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: Net.dns-running ? @tr("Testing...") : @tr("Run benchmark");
+                icon: Icons.search;
+                primary: !Net.dns-running;
+                enabled: !Net.dns-running;
+                clicked => { Net.run-dns(); }
+            }
+        }
+    }
+
+    if Net.dns.length > 0: HorizontalLayout {
+        spacing: 16px;
+        padding-left: 6px;
+        padding-right: 14px;
+        Heading { horizontal-stretch: 1; text: @tr("Server"); }
+        Heading { width: 110px; text: @tr("Cached names"); horizontal-alignment: right; }
+        Heading { width: 110px; text: @tr("New names"); horizontal-alignment: right; }
+        Heading { width: 90px; text: @tr("Missed"); horizontal-alignment: right; }
+    }
+
+    if Net.dns.length > 0: ListView {
+        vertical-stretch: 1;
+        for row in Net.dns: HorizontalLayout {
+            spacing: 16px;
+            padding-left: 6px;
+            padding-right: 14px;
+            height: 50px;
+
+            HorizontalLayout {
+                horizontal-stretch: 1;
+                spacing: 8px;
+                alignment: start;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: row.name != "" ? row.name : row.address;
+                        color: Theme.text;
+                        font-weight: 600;
+                    }
+                    if row.name != "": Text {
+                        text: row.address;
+                        color: Theme.muted;
+                        font-size: 12px;
+                    }
+                }
+                if row.current: VerticalLayout {
+                    alignment: center;
+                    Chip { text: @tr("In use"); tint: Theme.info; }
+                }
+                if row.best: VerticalLayout {
+                    alignment: center;
+                    Chip { text: @tr("Fastest"); tint: Theme.accent; }
+                }
+            }
+            Value { width: 110px; text: row.cached; }
+            Value { width: 110px; text: row.uncached; }
+            Value {
+                width: 90px;
+                text: row.failed + " / " + row.sent;
+                color: row.failed > 1 ? Theme.bad : row.failed == 1 ? Theme.warn : Theme.muted;
+            }
+        }
+    }
+
+    if Net.dns.length == 0: Rectangle { vertical-stretch: 1; }
+}
+
+component UsageTab inherits Card {
+    pad: 14px;
+
+    Text {
+        x: 6px;
+        text: Net.usage-failed ? @tr("Windows didn't allow the network trace, so traffic can't be counted.")
+            : @tr("TCP and UDP traffic of every program since this tab opened, games and voice chat included.");
+        color: Net.usage-failed ? Theme.bad : Theme.muted;
+        wrap: word-wrap;
+    }
+
+    HorizontalLayout {
+        spacing: 16px;
+        padding-left: 6px;
+        padding-right: 14px;
+        Heading { horizontal-stretch: 1; text: @tr("Program"); }
+        Heading { width: 96px; text: @tr("Download"); horizontal-alignment: right; }
+        Heading { width: 96px; text: @tr("Upload"); horizontal-alignment: right; }
+        Heading { width: 150px; text: @tr("Total down / up"); horizontal-alignment: right; }
+    }
+
+    if Net.usage.length == 0 && !Net.usage-failed: Text {
+        x: 6px;
+        text: @tr("Waiting for traffic...");
+        color: Theme.faint;
+        vertical-stretch: 1;
+    }
+
+    if Net.usage.length > 0: ListView {
+        vertical-stretch: 1;
+        for row in Net.usage: HorizontalLayout {
+            spacing: 16px;
+            padding-left: 6px;
+            padding-right: 14px;
+            height: 44px;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 6px;
+                Text {
+                    text: row.name;
+                    color: Theme.text;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Rectangle {
+                    height: 3px;
+                    border-radius: 2px;
+                    background: Theme.background;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * row.share;
+                        border-radius: 2px;
+                        background: Theme.accent.with-alpha(0.7);
+                    }
+                }
+            }
+            Value { width: 96px; text: row.down; }
+            Value { width: 96px; text: row.up; }
+            Value {
+                width: 150px;
+                text: row.total-down + " / " + row.total-up;
+                color: Theme.muted;
+                font-weight: 400;
+            }
+        }
+    }
+}
+
+export component InternetPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: @tr("Internet");
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 28px;
+                font-weight: 700;
+            }
+            Text {
+                text: Net.adapter == "" ? @tr("No internet connection found.")
+                    : Net.gateway == "" ? @tr("Connected through {}.", Net.adapter)
+                    : @tr("Connected through {}, router at {}.", Net.adapter, Net.gateway);
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Segmented {
+                width: 480px;
+                options: [@tr("Ping"), @tr("Bufferbloat"), @tr("DNS"), @tr("Network use"), @tr("Repair")];
+                selected <=> Net.tab;
+            }
+        }
+    }
+
+    if Net.tab == 0: PingTab { vertical-stretch: 1; }
+    if Net.tab == 1: BloatTab { vertical-stretch: 1; }
+    if Net.tab == 2: DnsTab { vertical-stretch: 1; }
+    if Net.tab == 3: UsageTab { vertical-stretch: 1; }
+    if Net.tab == 4: TweakList {
+        vertical-stretch: 1;
+        rows: Tweaks.internet;
+    }
+}
