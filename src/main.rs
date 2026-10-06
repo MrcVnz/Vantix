@@ -2,6 +2,7 @@
 
 mod boost;
 mod disk;
+mod governor;
 mod memory;
 mod reg;
 mod restore;
@@ -165,7 +166,10 @@ fn main() -> Result<(), slint::PlatformError> {
         app.start(!minimized)?;
     }
 
-    slint::run_event_loop_until_quit()
+    let result = slint::run_event_loop_until_quit();
+    // Puts back what ProBalance and the game mode changed before the process goes.
+    governor::stop();
+    result
 }
 
 fn bind_with<T>(app: &Rc<App>, f: impl Fn(&Rc<App>, T) + 'static) -> impl Fn(T) + 'static {
@@ -207,6 +211,7 @@ impl App {
             system::log_error("notification registration", &e);
         }
         self.ticker.start(TimerMode::Repeated, Duration::from_secs(1), bind(self, |app| app.tick()));
+        governor::start(live_config(&self.state.borrow().settings));
 
         let tray = Tray::new()?;
         apply_language(self.state.borrow().settings.language);
@@ -381,6 +386,32 @@ impl App {
         });
         self.show_storage(&ui, None);
 
+        let live = ui.global::<Live>();
+        show_live(&ui, &self.state.borrow().settings);
+        live.on_changed(bind(self, |app| {
+            app.with_ui(|ui| {
+                let live = ui.global::<Live>();
+                let mut state = app.state.borrow_mut();
+                let settings = &mut state.settings;
+                let had_gpu = settings.game_mode.gpu;
+                settings.probalance = live.get_probalance();
+                let game = &mut settings.game_mode;
+                game.enabled = live.get_game_mode();
+                game.priority = live.get_priority();
+                game.cores = live.get_cores();
+                game.eco = live.get_eco();
+                game.services = live.get_services();
+                game.standby = live.get_standby();
+                game.wifi = live.get_wifi();
+                game.gpu = live.get_gpu();
+                if had_gpu && !game.gpu {
+                    governor::forget_gpu_choices();
+                }
+                let _ = settings.save();
+                governor::configure(live_config(settings));
+            })
+        }));
+
         let startup = ui.global::<Startup>();
         startup.on_refresh(bind(self, |app| app.refresh_startup()));
         startup.on_toggled({
@@ -442,6 +473,13 @@ impl App {
         }
         let stats = memory::stats();
         self.with_tray(|tray| tray.set_load(stats.load as i32));
+        let status = governor::status();
+        self.with_ui(|ui| {
+            let live = ui.global::<Live>();
+            live.set_game(status.game.unwrap_or_default().into());
+            live.set_restrained(status.restrained as i32);
+            live.set_efficient(status.efficient as i32);
+        });
         let due = {
             let mut state = self.state.borrow_mut();
             if state.loads.len() == SPARK_SAMPLES {
@@ -841,6 +879,8 @@ impl App {
         if self.start(false).is_err() {
             let _ = slint::quit_event_loop();
         }
+        // The window opened before the governor knew the hardware.
+        self.with_ui(|ui| show_live(ui, &self.state.borrow().settings));
         self.refresh_tweaks();
     }
 
@@ -1410,6 +1450,37 @@ fn level_from_index(index: i32) -> Level {
         2 => Level::Deep,
         _ => Level::Standard,
     }
+}
+
+fn live_config(settings: &Settings) -> governor::Config {
+    governor::Config { probalance: settings.probalance, game: settings.game_mode }
+}
+
+fn show_live(ui: &AppWindow, settings: &Settings) {
+    let live = ui.global::<Live>();
+    let game = settings.game_mode;
+    live.set_probalance(settings.probalance);
+    live.set_game_mode(game.enabled);
+    live.set_priority(game.priority);
+    live.set_cores(game.cores);
+    live.set_eco(game.eco);
+    live.set_services(game.services);
+    live.set_standby(game.standby);
+    live.set_wifi(game.wifi);
+    live.set_gpu(game.gpu);
+    let capabilities = governor::capabilities();
+    let (kind, preferred, total) = capabilities.cores.map_or((0, 0, 0), |cores| {
+        let kind = match cores.kind {
+            governor::CoreKind::PerformanceCores => 1,
+            governor::CoreKind::VCache => 2,
+        };
+        (kind, cores.preferred as i32, cores.total as i32)
+    });
+    live.set_cores_kind(kind);
+    live.set_cores_preferred(preferred);
+    live.set_cores_total(total);
+    live.set_has_wifi(capabilities.wifi);
+    live.set_has_hybrid_gpu(capabilities.hybrid_gpu);
 }
 
 fn startup_row(entry: &startup::Entry) -> StartupRow {

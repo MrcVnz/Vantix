@@ -296,6 +296,23 @@ pub const CATALOG: &[Tweak] = &[
         },
     },
     Tweak {
+        id: "msi-mode",
+        section: Section::Performance,
+        gain: Level::Low,
+        cost: Level::Medium,
+        reboot: true,
+        shown: boost::shows_msi,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Toggle {
+            read: boost::msi_on,
+            apply: boost::enable_msi,
+            revert: boost::restore_msi,
+            reset: boost::reset_msi,
+        },
+    },
+    Tweak {
         id: "windowed-flip",
         section: Section::Games,
         gain: Level::Medium,

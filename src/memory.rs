@@ -160,6 +160,12 @@ pub fn stats() -> Stats {
     stats
 }
 
+/// Empties the standby list, the cache of recently used files. Games stutter when Windows
+/// has to repurpose it page by page while free memory is short.
+pub fn purge_standby() -> bool {
+    memory_list_command(PURGE_STANDBY_LIST)
+}
+
 /// Gives our own pages back after the window is destroyed; they fault back in on demand.
 pub fn trim_self() {
     unsafe {

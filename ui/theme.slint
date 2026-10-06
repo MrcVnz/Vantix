@@ -242,9 +242,10 @@ export component Toggle inherits Rectangle {
     in-out property <bool> checked;
     callback toggled(bool);
 
-    min-height: 48px;
+    // Grows with a detail that wraps, so the next row never lands on top of it.
+    height: max(48px, row.preferred-height);
 
-    HorizontalLayout {
+    row := HorizontalLayout {
         spacing: 16px;
 
         VerticalLayout {

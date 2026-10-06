@@ -19,7 +19,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETFILTERKEYS, SPI_GETMOUSE, SPI_GETSTICKYKEYS, SPI_GETTOGGLEKEYS, SPI_SETFILTERKEYS, SPI_SETMOUSE,
     SPI_SETSTICKYKEYS, SPI_SETTOGGLEKEYS, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SystemParametersInfoW,
 };
-use windows::core::{GUID, Result};
+use windows::Win32::Devices::DeviceAndDriverInstallation::{
+    CM_GETIDLIST_FILTER_CLASS, CM_GETIDLIST_FILTER_PRESENT, CM_Get_Device_ID_List_SizeW, CM_Get_Device_ID_ListW,
+    CR_SUCCESS,
+};
+use windows::core::{GUID, HSTRING, Result};
 
 use crate::reg::{self, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 use crate::tweaks::{powershell, run};
@@ -322,6 +326,103 @@ pub fn enable_memory_compression(_: Option<&str>) -> Result<()> {
 
 pub fn reset_memory_compression() -> Result<()> {
     enable_memory_compression(None)
+}
+
+// MSI mode for the graphics card and network adapters: the device signals the CPU with a
+// message instead of a shared interrupt line. Only devices whose driver lists the setting
+// are touched, since its key is how a driver says the device can do it.
+
+const DISPLAY_CLASS: &str = "{4d36e968-e325-11ce-bfc1-08002be10318}";
+const NET_CLASS: &str = "{4d36e972-e325-11ce-bfc1-08002be10318}";
+
+fn msi_key(device: &str) -> String {
+    format!(
+        r"SYSTEM\CurrentControlSet\Enum\{device}\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties"
+    )
+}
+
+/// Instance ids of the PCI devices of a class that are plugged in now.
+fn pci_devices(class: &str) -> Vec<String> {
+    let filter = HSTRING::from(class);
+    let flags = CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT;
+    let mut len = 0;
+    unsafe {
+        if CM_Get_Device_ID_List_SizeW(&mut len, &filter, flags) != CR_SUCCESS {
+            return Vec::new();
+        }
+        let mut buffer = vec![0u16; len as usize];
+        if CM_Get_Device_ID_ListW(&filter, &mut buffer, flags) != CR_SUCCESS {
+            return Vec::new();
+        }
+        buffer
+            .split(|&c| c == 0)
+            .map(String::from_utf16_lossy)
+            .filter(|id| id.starts_with(r"PCI\"))
+            .collect()
+    }
+}
+
+pub fn graphics_cards() -> usize {
+    pci_devices(DISPLAY_CLASS).len()
+}
+
+/// The graphics and network devices whose driver lists the MSI setting.
+fn msi_devices() -> Vec<String> {
+    [DISPLAY_CLASS, NET_CLASS]
+        .into_iter()
+        .flat_map(pci_devices)
+        .filter(|id| reg::key_exists(HKEY_LOCAL_MACHINE, &msi_key(id)))
+        .collect()
+}
+
+/// Shown while some device can still be switched, or to undo what Vantix did. Turning
+/// MSI off on devices that already use it would only make them slower, so that isn't
+/// offered, and a PC without such devices has nothing to show.
+pub fn shows_msi() -> bool {
+    crate::settings::load_changes().iter().any(|c| c.id == "msi-mode")
+        || !msi_devices().is_empty() && !msi_on().unwrap_or(true)
+}
+
+pub fn msi_on() -> Result<bool> {
+    let devices = msi_devices();
+    for device in &devices {
+        if reg::get_dword(HKEY_LOCAL_MACHINE, &msi_key(device), "MSISupported")? != Some(1) {
+            return Ok(false);
+        }
+    }
+    Ok(!devices.is_empty())
+}
+
+/// Saved as "device=value" pairs joined with "|"; instance ids never contain either.
+pub fn enable_msi() -> Saved {
+    let mut previous = Vec::new();
+    for device in msi_devices() {
+        let key = msi_key(&device);
+        let value = reg::get_dword(HKEY_LOCAL_MACHINE, &key, "MSISupported")?;
+        if value != Some(1) {
+            reg::set_dword(HKEY_LOCAL_MACHINE, &key, "MSISupported", 1)?;
+            previous.push(format!("{device}={}", saved(value)));
+        }
+    }
+    Ok(Some(previous.join("|")))
+}
+
+pub fn restore_msi(previous: Option<&str>) -> Result<()> {
+    for pair in previous.unwrap_or_default().split('|').filter(|pair| !pair.is_empty()) {
+        if let Some((device, value)) = pair.rsplit_once('=') {
+            restore_dword(HKEY_LOCAL_MACHINE, &msi_key(device), "MSISupported", Some(value))?;
+        }
+    }
+    Ok(())
+}
+
+/// Line-based interrupts again. The card hides when MSI was already on without Vantix,
+/// so this only runs if the journal entry was lost.
+pub fn reset_msi() -> Result<()> {
+    for device in msi_devices() {
+        reg::set_dword(HKEY_LOCAL_MACHINE, &msi_key(&device), "MSISupported", 0)?;
+    }
+    Ok(())
 }
 
 // DirectX global settings: one string like "SwapEffectUpgradeEnable=1;VRROptimizeEnable=1;"

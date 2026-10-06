@@ -47,6 +47,35 @@ impl Default for AutoClean {
     }
 }
 
+/// The real-time game mode and what it does while a game runs.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GameMode {
+    pub enabled: bool,
+    pub priority: bool,
+    pub cores: bool,
+    pub eco: bool,
+    pub services: bool,
+    pub standby: bool,
+    pub wifi: bool,
+    pub gpu: bool,
+}
+
+impl Default for GameMode {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            priority: true,
+            cores: true,
+            eco: true,
+            services: true,
+            standby: true,
+            wifi: true,
+            gpu: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -65,6 +94,8 @@ pub struct Settings {
     /// Every restore point Vantix made, the baseline and the manual ones. Only these can
     /// be deleted from the app.
     pub own_points: Vec<u32>,
+    pub probalance: bool,
+    pub game_mode: GameMode,
 }
 
 impl Default for Settings {
@@ -80,6 +111,8 @@ impl Default for Settings {
             tray_hint_shown: false,
             baseline_point: None,
             own_points: Vec::new(),
+            probalance: false,
+            game_mode: GameMode::default(),
         }
     }
 }

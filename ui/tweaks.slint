@@ -1,5 +1,5 @@
 import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
-import { ListView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 
 export enum TweakState {
     loading,
@@ -74,6 +74,7 @@ export global TweakText {
         @tr("Turn off USB selective suspend"),
         @tr("Turn off Memory integrity"),
         @tr("Turn off memory compression"),
+        @tr("MSI mode for the graphics card and network adapter"),
         @tr("Optimizations for windowed games"),
         @tr("Variable refresh rate in windowed games"),
         @tr("Turn off Game Bar background recording"),
@@ -101,6 +102,7 @@ export global TweakText {
         @tr("Windows stops putting idle USB devices to sleep, which can cause mouse, headset or controller dropouts."),
         @tr("Memory integrity (HVCI) checks every driver inside a virtualized layer, which costs 5 to 10% in many games."),
         @tr("With 16 GB or more, Windows spends CPU time compressing memory it rarely needs to save."),
+        @tr("The devices signal the CPU with a message instead of sharing an interrupt line with others, which cuts the delay before their work is handled. Only devices whose driver supports it are changed."),
         @tr("DirectX 10 and 11 games in windowed and borderless modes use the flip model: lower latency, plus VRR and Auto HDR. Takes effect when the game restarts."),
         @tr("Lets G-Sync and FreeSync work in games that don't support VRR in a window on their own. Takes effect when the game restarts."),
         @tr("Stops Xbox Game Bar from recording the last minutes of gameplay all the time."),
@@ -128,6 +130,7 @@ export global TweakText {
         @tr("USB devices draw power even when unused."),
         @tr("Removes a kernel protection against malicious drivers. Some anti-cheats require it to stay on."),
         @tr("Uses more RAM before Windows starts using the page file."),
+        @tr("If a device acts up after the restart, undo this here."),
         "",
         "",
         @tr("Win+Alt+G, which saves what just happened, stops working."),
@@ -312,12 +315,20 @@ component TweakCard inherits Rectangle {
     }
 }
 
-export component TweakList inherits ListView {
+/// Children go above the tweaks and scroll with them. A ScrollView rather than a ListView,
+/// which only takes a single `for`; the lists are short enough not to need recycling.
+export component TweakList inherits ScrollView {
     in property <[TweakRow]> rows;
-    for row in root.rows: VerticalLayout {
-        padding-bottom: 12px;
-        padding-right: 12px;
-        TweakCard { item: row; }
+
+    VerticalLayout {
+        width: root.visible-width;
+        alignment: start;
+        @children
+        for row in root.rows: VerticalLayout {
+            padding-bottom: 12px;
+            padding-right: 12px;
+            TweakCard { item: row; }
+        }
     }
 }
 
@@ -405,6 +416,7 @@ export component SectionPage inherits VerticalLayout {
 
     TweakList {
         vertical-stretch: 1;
+        @children
         rows: root.rows;
     }
 }

@@ -1,0 +1,160 @@
+import { Theme, Toggle, Chip } from "theme.slint";
+
+/// ProBalance and the real-time game mode: what runs while Vantix is open.
+export global Live {
+    in-out property <bool> probalance;
+    in-out property <bool> game-mode;
+    in-out property <bool> priority;
+    in-out property <bool> cores;
+    in-out property <bool> eco;
+    in-out property <bool> services;
+    in-out property <bool> standby;
+    in-out property <bool> wifi;
+    in-out property <bool> gpu;
+
+    /// 0 when every core is alike, 1 for Intel P-cores, 2 for the Ryzen V-Cache CCD.
+    in property <int> cores-kind;
+    in property <int> cores-preferred;
+    in property <int> cores-total;
+    in property <bool> has-wifi;
+    in property <bool> has-hybrid-gpu;
+
+    /// Exe of the game being boosted, empty while there's none.
+    in property <string> game;
+    in property <int> restrained;
+    in property <int> efficient;
+
+    callback changed();
+}
+
+component LiveCard inherits Rectangle {
+    in property <bool> on;
+
+    height: content.preferred-height;
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent.with-alpha(0.35) : Theme.border;
+
+    content := VerticalLayout {
+        padding: 18px;
+        padding-left: 20px;
+        spacing: 10px;
+        @children
+    }
+}
+
+component Status inherits Text {
+    color: Theme.accent;
+    font-size: 12px;
+    font-weight: 600;
+    wrap: word-wrap;
+}
+
+component Option inherits Toggle {
+    toggled => { Live.changed(); }
+}
+
+export component ProBalanceCard inherits LiveCard {
+    on: Live.probalance;
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Text {
+            text: @tr("ProBalance");
+            color: Theme.text;
+            font-size: 14px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Chip { text: @tr("Works while Vantix is open"); }
+        }
+    }
+    Toggle {
+        text: @tr("Hold back programs that hog the CPU");
+        detail: @tr("When the CPU is nearly full, a background program taking a big share of it drops to a lower priority until it calms down, so what you're using stays responsive. Nothing is closed and the program in front is never touched.");
+        checked <=> Live.probalance;
+        toggled => { Live.changed(); }
+    }
+    if Live.probalance: Status {
+        text: Live.restrained == 0 ? @tr("Watching. Nothing needs holding back right now.")
+            : @tr("Holding back {n} program right now." | "Holding back {n} programs right now." % Live.restrained);
+    }
+}
+
+export component GameModeCard inherits LiveCard {
+    on: Live.game-mode;
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Text {
+            text: @tr("Real-time game mode");
+            color: Theme.text;
+            font-size: 14px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Chip { text: @tr("Works while Vantix is open"); }
+        }
+    }
+    Toggle {
+        text: @tr("Boost the game in fullscreen");
+        detail: @tr("Vantix spots a game when it fills the screen for a few seconds, and puts everything back when the game closes.");
+        checked <=> Live.game-mode;
+        toggled => { Live.changed(); }
+    }
+    if Live.game-mode: Status {
+        text: Live.game == "" ? @tr("Waiting for a game in fullscreen.")
+            : Live.efficient > 0 ? @tr("Boosting {}. Background programs in efficiency mode: {}.", Live.game, Live.efficient)
+            : @tr("Boosting {}.", Live.game);
+    }
+
+    if Live.game-mode: VerticalLayout {
+        padding-left: 16px;
+        spacing: 8px;
+
+        Option {
+            text: @tr("CPU and GPU priority for the game");
+            detail: @tr("The game gets high CPU priority and the graphics card schedules its work first.");
+            checked <=> Live.priority;
+        }
+        if Live.cores-kind != 0: Option {
+            text: Live.cores-kind == 1 ? @tr("Keep the game on the P-cores") : @tr("Keep the game on the V-Cache cores");
+            detail: Live.cores-kind == 1
+                ? @tr("The game runs on the {} fast cores of {} and leaves the efficiency cores to the rest.", Live.cores-preferred, Live.cores-total)
+                : @tr("The game runs on the {} cores of {} that sit next to the extra 3D cache, which most games prefer.", Live.cores-preferred, Live.cores-total);
+            checked <=> Live.cores;
+        }
+        Option {
+            text: @tr("Background programs in efficiency mode");
+            detail: @tr("Launchers, browsers and updaters left in the background run on Windows' efficiency mode (EcoQoS). Controller and peripheral software, voice chat, recording, overlays and anti-cheats are left alone, and whatever you bring to the front runs at full speed.");
+            checked <=> Live.eco;
+        }
+        Option {
+            text: @tr("Pause search indexing and update sharing");
+            detail: @tr("Windows Search and Delivery Optimization stop while the game runs and start again after.");
+            checked <=> Live.services;
+        }
+        Option {
+            text: @tr("Clear the standby cache when free memory runs out");
+            detail: @tr("Like ISLC: when less than 1 GB is free and the file cache holds more, it's emptied at once instead of page by page during the game.");
+            checked <=> Live.standby;
+        }
+        if Live.has-wifi: Option {
+            text: @tr("Stop Wi-Fi background scans");
+            detail: @tr("Windows looks for networks about every minute even while connected, which shows up as a ping spike. The connection stays as it is.");
+            checked <=> Live.wifi;
+        }
+        if Live.has-hybrid-gpu: Option {
+            text: @tr("Dedicated graphics card for detected games");
+            detail: @tr("Each game found is set to the dedicated GPU in Windows graphics settings, from its next start. A choice you already made there stays. Turning this off removes the ones Vantix set.");
+            checked <=> Live.gpu;
+        }
+    }
+}

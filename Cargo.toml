@@ -19,10 +19,14 @@ windows-link = "0.2"
 version = "0.62"
 features = [
     "Data_Xml_Dom",
+    "Wdk_Graphics_Direct3D",
     "UI_Notifications",
     "Wdk_System_SystemInformation",
+    "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Globalization",
     "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_NetworkManagement_WiFi",
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
@@ -33,6 +37,7 @@ features = [
     "Win32_System_Memory",
     "Win32_System_ProcessStatus",
     "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
     "Win32_System_Restore",
     "Win32_System_Rpc",
     "Win32_System_Services",

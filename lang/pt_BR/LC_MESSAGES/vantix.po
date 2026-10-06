@@ -814,3 +814,98 @@ msgstr "Este usuário"
 
 msgid "{} in use now"
 msgstr "{} em uso agora"
+
+msgid "ProBalance"
+msgstr "ProBalance"
+
+msgid "Works while Vantix is open"
+msgstr "Funciona com o Vantix aberto"
+
+msgid "Hold back programs that hog the CPU"
+msgstr "Segurar programas que monopolizam a CPU"
+
+msgid "When the CPU is nearly full, a background program taking a big share of it drops to a lower priority until it calms down, so what you're using stays responsive. Nothing is closed and the program in front is never touched."
+msgstr "Quando a CPU está quase cheia, um programa em segundo plano que ocupa uma fatia grande dela cai para uma prioridade menor até se acalmar, e o que você está usando continua respondendo. Nada é fechado e o programa em primeiro plano nunca é mexido."
+
+msgid "Watching. Nothing needs holding back right now."
+msgstr "Observando. Nada precisa ser segurado agora."
+
+msgid "Real-time game mode"
+msgstr "Modo jogo em tempo real"
+
+msgid "Boost the game in fullscreen"
+msgstr "Turbinar o jogo em tela cheia"
+
+msgid "Vantix spots a game when it fills the screen for a few seconds, and puts everything back when the game closes."
+msgstr "O Vantix reconhece um jogo quando ele ocupa a tela inteira por alguns segundos, e volta tudo ao normal quando o jogo fecha."
+
+msgid "Waiting for a game in fullscreen."
+msgstr "Esperando um jogo em tela cheia."
+
+msgid "Boosting {}. Background programs in efficiency mode: {}."
+msgstr "Turbinando {}. Programas em segundo plano no modo de eficiência: {}."
+
+msgid "Boosting {}."
+msgstr "Turbinando {}."
+
+msgid "CPU and GPU priority for the game"
+msgstr "Prioridade de CPU e GPU para o jogo"
+
+msgid "The game gets high CPU priority and the graphics card schedules its work first."
+msgstr "O jogo ganha prioridade alta na CPU e a placa de vídeo atende o trabalho dele primeiro."
+
+msgid "Keep the game on the P-cores"
+msgstr "Manter o jogo nos P-cores"
+
+msgid "Keep the game on the V-Cache cores"
+msgstr "Manter o jogo nos núcleos com V-Cache"
+
+msgid "The game runs on the {} fast cores of {} and leaves the efficiency cores to the rest."
+msgstr "O jogo roda nos {} núcleos rápidos de {} e deixa os núcleos de eficiência para o resto."
+
+msgid "The game runs on the {} cores of {} that sit next to the extra 3D cache, which most games prefer."
+msgstr "O jogo roda nos {} núcleos de {} que ficam junto do cache 3D extra, que a maioria dos jogos prefere."
+
+msgid "Background programs in efficiency mode"
+msgstr "Programas em segundo plano no modo de eficiência"
+
+msgid "Launchers, browsers and updaters left in the background run on Windows' efficiency mode (EcoQoS). Controller and peripheral software, voice chat, recording, overlays and anti-cheats are left alone, and whatever you bring to the front runs at full speed."
+msgstr "Launchers, navegadores e atualizadores deixados em segundo plano rodam no modo de eficiência do Windows (EcoQoS). Software de controle e periféricos, chat de voz, gravação, overlays e anti-cheats ficam de fora, e o que você trouxer para a frente roda em velocidade total."
+
+msgid "Pause search indexing and update sharing"
+msgstr "Pausar a indexação da pesquisa e o compartilhamento de atualizações"
+
+msgid "Windows Search and Delivery Optimization stop while the game runs and start again after."
+msgstr "O Windows Search e a Otimização de Entrega param enquanto o jogo roda e voltam depois."
+
+msgid "Clear the standby cache when free memory runs out"
+msgstr "Limpar o cache em espera quando a memória livre acabar"
+
+msgid "Like ISLC: when less than 1 GB is free and the file cache holds more, it's emptied at once instead of page by page during the game."
+msgstr "Como o ISLC: quando sobra menos de 1 GB livre e o cache de arquivos guarda mais que isso, ele é esvaziado de uma vez, em vez de página por página durante o jogo."
+
+msgid "Stop Wi-Fi background scans"
+msgstr "Parar a busca de redes Wi-Fi em segundo plano"
+
+msgid "Windows looks for networks about every minute even while connected, which shows up as a ping spike. The connection stays as it is."
+msgstr "O Windows procura redes mais ou menos a cada minuto mesmo conectado, e isso aparece como pico de ping. A conexão continua como está."
+
+msgid "Dedicated graphics card for detected games"
+msgstr "Placa de vídeo dedicada para os jogos reconhecidos"
+
+msgid "Each game found is set to the dedicated GPU in Windows graphics settings, from its next start. A choice you already made there stays. Turning this off removes the ones Vantix set."
+msgstr "Cada jogo encontrado é configurado para a GPU dedicada nas configurações de gráficos do Windows, a partir da próxima vez que abrir. Uma escolha que você já fez lá continua. Desligar isto remove as que o Vantix configurou."
+
+msgid "MSI mode for the graphics card and network adapter"
+msgstr "Modo MSI para a placa de vídeo e a placa de rede"
+
+msgid "The devices signal the CPU with a message instead of sharing an interrupt line with others, which cuts the delay before their work is handled. Only devices whose driver supports it are changed."
+msgstr "Os dispositivos avisam a CPU com uma mensagem em vez de dividir uma linha de interrupção com outros, o que corta a espera até o trabalho deles ser atendido. Só muda dispositivos cujo driver aceita."
+
+msgid "If a device acts up after the restart, undo this here."
+msgstr "Se algum dispositivo der problema depois de reiniciar, desfaça aqui."
+
+msgid "Holding back {n} program right now."
+msgid_plural "Holding back {n} programs right now."
+msgstr[0] "Segurando {n} programa agora."
+msgstr[1] "Segurando {n} programas agora."

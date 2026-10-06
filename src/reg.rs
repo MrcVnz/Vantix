@@ -175,6 +175,17 @@ fn get_string_raw(key: HKEY, name: &str) -> Result<Option<String>> {
     Ok(Some(text.trim_end_matches(char::from(0)).to_string()))
 }
 
+pub fn key_exists(root: HKEY, path: &str) -> bool {
+    let mut key = HKEY::default();
+    let status = unsafe { RegOpenKeyExW(root, &HSTRING::from(path), None, KEY_READ, &mut key) };
+    if status.is_ok() {
+        unsafe {
+            let _ = RegCloseKey(key);
+        }
+    }
+    status.is_ok()
+}
+
 /// Missing values are not an error.
 pub fn delete_value(root: HKEY, path: &str, name: &str) -> Result<()> {
     let status = unsafe { RegDeleteKeyValueW(root, &HSTRING::from(path), &HSTRING::from(name)) };
