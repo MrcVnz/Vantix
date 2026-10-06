@@ -6,6 +6,10 @@ export struct RestorePoint {
     sequence: int,
     description: string,
     created: string,
+    /// Made by Vantix, so the app may delete it.
+    own: bool,
+    /// The one made before Vantix's first change.
+    baseline: bool,
 }
 
 export global Protection {
@@ -18,6 +22,7 @@ export global Protection {
     callback create();
     callback enable();
     callback open-system-restore();
+    callback remove(int);
 }
 
 export enum JobState { idle, confirm, creating-point, applying, point-failed, done, failed }
@@ -228,6 +233,75 @@ export component JobSheet inherits Rectangle {
     }
 }
 
+component PointRow inherits HorizontalLayout {
+    in property <RestorePoint> point;
+    property <bool> confirm;
+
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-right: 14px;
+    spacing: 12px;
+    min-height: 44px;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        horizontal-stretch: 1;
+        Text {
+            text: root.point.description;
+            color: Theme.text;
+            overflow: elide;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Text {
+                text: root.point.created;
+                color: Theme.faint;
+                font-size: 12px;
+            }
+            if root.point.baseline: Text {
+                text: "· " + @tr("Before the first change");
+                color: Theme.accent;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+    }
+    Text {
+        text: "#" + root.point.sequence;
+        color: Theme.faint;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+    // Same width on every row and in every language, so nothing shifts on the second click.
+    VerticalLayout {
+        alignment: center;
+        width: 132px;
+        if root.point.own: Button {
+            text: root.confirm ? @tr("Confirm") : @tr("Delete");
+            icon: Icons.trash;
+            tall: 32px;
+            danger: root.confirm;
+            enabled: !Protection.loading;
+            clicked => {
+                if root.confirm {
+                    root.confirm = false;
+                    Protection.remove(root.point.sequence);
+                } else {
+                    root.confirm = true;
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 4s;
+        running: root.confirm;
+        triggered => { root.confirm = false; }
+    }
+}
+
 export component ProtectionPage inherits VerticalLayout {
     init => { Protection.refresh(); }
 
@@ -344,32 +418,7 @@ export component ProtectionPage inherits VerticalLayout {
 
             if Protection.points.length > 0: ListView {
                 vertical-stretch: 1;
-                for point in Protection.points: HorizontalLayout {
-                    padding-top: 8px;
-                    padding-bottom: 8px;
-                    padding-right: 14px;
-                    spacing: 12px;
-                    Text {
-                        text: point.created;
-                        color: Theme.faint;
-                        font-size: 12.5px;
-                        width: 120px;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: point.description;
-                        color: Theme.text;
-                        overflow: elide;
-                        horizontal-stretch: 1;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: "#" + point.sequence;
-                        color: Theme.faint;
-                        font-size: 12px;
-                        vertical-alignment: center;
-                    }
-                }
+                for point in Protection.points: PointRow { point: point; }
             }
         }
 

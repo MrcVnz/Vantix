@@ -114,6 +114,8 @@ export component Button inherits Rectangle {
     in property <string> icon;
     in property <bool> enabled: true;
     in property <bool> primary;
+    /// Red, for the second click of something that can't be undone.
+    in property <bool> danger;
     in property <length> tall: 40px;
     callback clicked;
 
@@ -121,10 +123,11 @@ export component Button inherits Rectangle {
     horizontal-stretch: 0;
     border-radius: self.tall / 2;
     background: !self.enabled ? Theme.raised
+        : self.danger ? Theme.bad.with-alpha(touch.has-hover ? 0.22 : 0.15)
         : self.primary ? (touch.pressed ? Theme.accent.darker(0.15) : touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent)
         : touch.pressed ? Theme.border-strong : touch.has-hover ? Theme.hover : Theme.raised;
     border-width: self.primary && self.enabled ? 0 : 1px;
-    border-color: Theme.border;
+    border-color: self.danger && self.enabled ? Theme.bad.with-alpha(0.5) : Theme.border;
     animate background { duration: 140ms; easing: ease-out; }
 
     HorizontalLayout {
@@ -139,12 +142,12 @@ export component Button inherits Rectangle {
                 data: root.icon;
                 size: 16px;
                 thickness: 2px;
-                tint: !root.enabled ? Theme.faint : root.primary ? Theme.on-accent : Theme.text;
+                tint: !root.enabled ? Theme.faint : root.danger ? Theme.bad : root.primary ? Theme.on-accent : Theme.text;
             }
         }
         Text {
             text: root.text;
-            color: !root.enabled ? Theme.faint : root.primary ? Theme.on-accent : Theme.text;
+            color: !root.enabled ? Theme.faint : root.danger ? Theme.bad : root.primary ? Theme.on-accent : Theme.text;
             font-weight: 600;
             vertical-alignment: center;
         }

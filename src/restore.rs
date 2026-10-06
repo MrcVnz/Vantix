@@ -10,8 +10,8 @@ use windows::Win32::System::Com::{
     EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
 };
 use windows::Win32::System::Restore::{
-    BEGIN_SYSTEM_CHANGE, END_SYSTEM_CHANGE, MODIFY_SETTINGS, RESTOREPOINTINFOW, SRSetRestorePointW,
-    STATEMGRSTATUS,
+    BEGIN_SYSTEM_CHANGE, END_SYSTEM_CHANGE, MODIFY_SETTINGS, RESTOREPOINTINFOW, SRRemoveRestorePoint,
+    SRSetRestorePointW, STATEMGRSTATUS,
 };
 use windows::Win32::System::Rpc::{RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE};
 use windows::Win32::System::Variant::{VARIANT, VT_BSTR, VT_I4, VariantClear};
@@ -120,6 +120,13 @@ pub fn create(description: &str) -> Result<u32> {
     result
 }
 
+pub fn remove(sequence: u32) -> Result<()> {
+    match unsafe { SRRemoveRestorePoint(sequence) } {
+        0 => Ok(()),
+        code => Err(WIN32_ERROR(code).into()),
+    }
+}
+
 fn set_point(description: &str) -> Result<u32> {
     // The description is capped at 255 characters plus the terminator. The struct is
     // packed, so the text is built separately and copied in whole.
@@ -225,7 +232,7 @@ mod tests {
         assert_eq!(time.with_timezone(&Utc).format("%Y-%m-%d %H:%M:%S").to_string(), "2026-10-05 02:22:41");
     }
 
-    /// Creates a real restore point: `cargo test restore_create -- --ignored --nocapture`
+    /// Creates a real restore point and deletes it: `cargo test restore_create -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn restore_create() {
@@ -240,6 +247,10 @@ mod tests {
         });
         assert!(listed);
         assert_eq!(reg::get_dword(reg::HKEY_LOCAL_MACHINE, SR_KEY, FREQUENCY).unwrap(), before);
+
+        // And it cleans up after itself.
+        remove(sequence).unwrap();
+        assert!(!list().unwrap().iter().any(|p| p.sequence == sequence));
     }
 
     /// Read-only: `cargo test restore_list -- --ignored --nocapture`

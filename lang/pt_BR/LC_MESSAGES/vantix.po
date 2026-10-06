@@ -571,3 +571,12 @@ msgstr "Memória sem nada dentro. O Windows prefere usá-la como cache, então �
 
 msgid "Everything programs have reserved, counting RAM and the page file, against the most Windows can hand out: RAM plus the page file."
 msgstr "Tudo o que os programas já reservaram, somando RAM e arquivo de paginação, contra o máximo que o Windows consegue entregar: RAM mais o arquivo de paginação."
+
+msgid "Before the first change"
+msgstr "Antes da 1ª alteração"
+
+msgid "Delete"
+msgstr "Excluir"
+
+msgid "Confirm"
+msgstr "Confirmar"

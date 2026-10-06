@@ -331,6 +331,7 @@ impl App {
         protection.on_refresh(bind(self, |app| app.refresh_protection()));
         protection.on_create(bind(self, |app| app.create_restore_point()));
         protection.on_enable(bind(self, |app| app.enable_protection()));
+        protection.on_remove(bind_with(self, |app, sequence: i32| app.remove_restore_point(sequence as u32)));
         protection.on_open_system_restore(|| {
             let _ = std::process::Command::new(tweaks::system_tool("rstrui.exe")).spawn();
         });
@@ -652,14 +653,22 @@ impl App {
     fn refresh_protection(self: &Rc<Self>) {
         self.with_ui(|ui| ui.global::<Protection>().set_loading(true));
         self.run_job(
-            || (restore::protection_enabled(), restore::list().unwrap_or_default()),
+            || (restore::protection_enabled(), restore::list()),
             |app, result| {
-                app.with_ui(|ui| {
-                    let protection = ui.global::<Protection>();
-                    protection.set_loading(false);
-                    let Some((enabled, points)) = result else { return };
-                    protection.set_enabled(enabled);
-                    let rows: Vec<RestorePoint> = points
+                let Some((enabled, Ok(points))) = result else {
+                    app.with_ui(|ui| ui.global::<Protection>().set_loading(false));
+                    return;
+                };
+                let rows: Vec<RestorePoint> = {
+                    let mut state = app.state.borrow_mut();
+                    let settings = &mut state.settings;
+                    // Forget points Windows already deleted on its own.
+                    let before = settings.own_points.len();
+                    settings.own_points.retain(|s| points.iter().any(|p| p.sequence == *s));
+                    if settings.own_points.len() != before {
+                        let _ = settings.save();
+                    }
+                    points
                         .iter()
                         .map(|point| RestorePoint {
                             sequence: point.sequence as i32,
@@ -669,10 +678,49 @@ impl App {
                                 .map(|time| time.format("%d/%m/%Y %H:%M").to_string())
                                 .unwrap_or_default()
                                 .into(),
+                            own: settings.own_points.contains(&point.sequence),
+                            baseline: settings.baseline_point == Some(point.sequence),
                         })
-                        .collect();
+                        .collect()
+                };
+                app.state.borrow_mut().baseline_alive = rows.iter().any(|row| row.baseline);
+                app.with_ui(|ui| {
+                    let protection = ui.global::<Protection>();
+                    protection.set_loading(false);
+                    protection.set_enabled(enabled);
                     protection.set_points(ModelRc::new(VecModel::from(rows)));
                 })
+            },
+        );
+    }
+
+    /// Only for points Vantix made itself; the UI offers nothing else.
+    fn remove_restore_point(self: &Rc<Self>, sequence: u32) {
+        if !self.state.borrow().settings.own_points.contains(&sequence) {
+            return;
+        }
+        self.with_ui(|ui| ui.global::<Protection>().set_loading(true));
+        self.run_job(
+            move || restore::remove(sequence),
+            move |app, result| {
+                match result {
+                    Some(Ok(())) => {
+                        let mut state = app.state.borrow_mut();
+                        state.settings.own_points.retain(|s| *s != sequence);
+                        if state.settings.baseline_point == Some(sequence) {
+                            state.settings.baseline_point = None;
+                            state.baseline_alive = false;
+                        }
+                        let _ = state.settings.save();
+                    }
+                    Some(Err(error)) => {
+                        system::log_error("remove restore point", &error);
+                        app.show_job(JobState::Failed, &format!("#{sequence}"), false);
+                        app.set_job(JobState::Failed, &error.message());
+                    }
+                    None => {}
+                }
+                app.refresh_protection();
             },
         );
     }
@@ -688,7 +736,12 @@ impl App {
             move || restore::create(&name),
             |app, result| {
                 match result {
-                    Some(Ok(_)) => {
+                    Some(Ok(sequence)) => {
+                        {
+                            let mut state = app.state.borrow_mut();
+                            state.settings.own_points.push(sequence);
+                            let _ = state.settings.save();
+                        }
                         app.with_ui(|ui| ui.global::<Protection>().set_new_name("".into()));
                         app.set_job(JobState::Done, "");
                     }
@@ -944,6 +997,7 @@ impl App {
                     {
                         let mut state = app.state.borrow_mut();
                         state.settings.baseline_point = Some(sequence);
+                        state.settings.own_points.push(sequence);
                         state.baseline_alive = true;
                         let _ = state.settings.save();
                     }
