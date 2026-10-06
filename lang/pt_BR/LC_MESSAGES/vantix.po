@@ -293,3 +293,117 @@ msgstr "Fechar"
 
 msgid "Apply without a restore point"
 msgstr "Aplicar sem ponto de restauração"
+
+msgid "Storage"
+msgstr "Armazenamento"
+
+msgid "Finds space taken by caches and leftovers. Nothing is deleted until you choose."
+msgstr "Encontra espaço ocupado por caches e restos. Nada é apagado até você escolher."
+
+msgid "Windows drive ({})"
+msgstr "Disco do Windows ({})"
+
+msgid "{} free of {}"
+msgstr "{} livres de {}"
+
+msgid "+{} free"
+msgstr "+{} livres"
+
+msgid "Analyze to see what can be freed."
+msgstr "Analise para ver o que pode ser liberado."
+
+msgid "Selected: {}"
+msgstr "Selecionado: {}"
+
+msgid "Analyze"
+msgstr "Analisar"
+
+msgid "Clean selected"
+msgstr "Limpar selecionados"
+
+msgid "Analyzing..."
+msgstr "Analisando..."
+
+msgid "Close {} first"
+msgstr "Feche o {} antes"
+
+msgid "{} files"
+msgstr "{} arquivos"
+
+msgid "{} in use, kept"
+msgstr "{} em uso, mantidos"
+
+msgid "Temporary files"
+msgstr "Arquivos temporários"
+
+msgid "Windows temporary files"
+msgstr "Temporários do Windows"
+
+msgid "Windows Update downloads"
+msgstr "Downloads do Windows Update"
+
+msgid "Delivery Optimization cache"
+msgstr "Cache da Otimização de Entrega"
+
+msgid "Crash dumps"
+msgstr "Despejos de falhas"
+
+msgid "Error reports"
+msgstr "Relatórios de erro"
+
+msgid "Shader cache"
+msgstr "Cache de shaders"
+
+msgid "Thumbnails"
+msgstr "Miniaturas"
+
+msgid "Browser cache"
+msgstr "Cache dos navegadores"
+
+msgid "Recycle Bin"
+msgstr "Lixeira"
+
+msgid "Left behind by apps and installers, older than a day."
+msgstr "Deixados por apps e instaladores, com mais de um dia."
+
+msgid "System temp folder, older than a day."
+msgstr "Pasta temporária do sistema, com mais de um dia."
+
+msgid "Updates already installed. The service pauses while cleaning."
+msgstr "Atualizações já instaladas. O serviço pausa durante a limpeza."
+
+msgid "Update pieces shared with other PCs."
+msgstr "Partes de atualizações compartilhadas com outros PCs."
+
+msgid "Diagnostic files written when something crashed."
+msgstr "Arquivos de diagnóstico gravados quando algo travou."
+
+msgid "Windows Error Reporting queue and archive."
+msgstr "Fila e arquivo do Relatório de Erros do Windows."
+
+msgid "DirectX, NVIDIA, AMD and Intel shader caches."
+msgstr "Caches de shaders do DirectX, NVIDIA, AMD e Intel."
+
+msgid "Explorer thumbnail database."
+msgstr "Banco de miniaturas do Explorador."
+
+msgid "Chrome, Edge, Brave and Firefox cache only."
+msgstr "Só o cache do Chrome, Edge, Brave e Firefox."
+
+msgid "Everything currently in the Recycle Bin."
+msgstr "Tudo o que está na Lixeira agora."
+
+msgid "Games rebuild shaders on the next launch and may stutter for a bit."
+msgstr "Os jogos recompilam os shaders na próxima abertura e podem engasgar um pouco."
+
+msgid "Explorer rebuilds thumbnails when you open folders."
+msgstr "O Explorador recria as miniaturas ao abrir pastas."
+
+msgid "Pages load slower until the cache refills. Logins and history stay."
+msgstr "As páginas carregam mais devagar até o cache encher. Logins e histórico ficam."
+
+msgid "Deleted files can no longer be restored."
+msgstr "Os arquivos apagados não poderão mais ser recuperados."
+
+msgid "Nothing to clean"
+msgstr "Nada para limpar"

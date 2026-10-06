@@ -44,6 +44,8 @@ export global Icons {
     out property <string> shield: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1zM9 12l2 2 4-4";
     out property <string> external: "M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6";
     out property <string> plus: "M5 12h14M12 5v14";
+    out property <string> drive: "M22 12H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11zM6 16h.01M10 16h.01";
+    out property <string> search: "M21 21l-4.34-4.34M19 11a8 8 0 1 1-16 0a8 8 0 1 1 16 0";
     out property <string> globe: "M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20";
 }
 
@@ -116,6 +118,7 @@ export component Button inherits Rectangle {
     callback clicked;
 
     height: self.tall;
+    horizontal-stretch: 0;
     border-radius: self.tall / 2;
     background: !self.enabled ? Theme.raised
         : self.primary ? (touch.pressed ? Theme.accent.darker(0.15) : touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent)

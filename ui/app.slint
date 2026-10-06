@@ -1,8 +1,9 @@
 import { Theme, Icons, Icon, Card, Segmented, Toggle, Button } from "theme.slint";
 import { Memory, MemoryPage, CleanState, HistoryRow } from "memory.slint";
 import { Protection, ProtectionPage, Job, JobState, JobSheet, RestorePoint } from "protection.slint";
+import { Storage, StoragePage, CleanupRow, RowState } from "storage.slint";
 
-export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint }
+export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { TermsWindow } from "terms.slint";
 export { Tray } from "tray.slint";
 
@@ -249,6 +250,12 @@ export component AppWindow inherits Window {
                     active: root.page == 0;
                     clicked => { root.page = 0; }
                 }
+                NavItem {
+                    text: @tr("Storage");
+                    icon: Icons.drive;
+                    active: root.page == 3;
+                    clicked => { root.page = 3; }
+                }
 
                 Rectangle { vertical-stretch: 1; }
 
@@ -298,6 +305,10 @@ export component AppWindow inherits Window {
                 height: parent.height;
             }
             if root.page == 2: ProtectionPage {
+                width: parent.width;
+                height: parent.height;
+            }
+            if root.page == 3: StoragePage {
                 width: parent.width;
                 height: parent.height;
             }

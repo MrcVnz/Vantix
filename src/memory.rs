@@ -253,7 +253,7 @@ fn trim_each_process() {
     });
 }
 
-fn for_each_process(mut f: impl FnMut(&PROCESSENTRY32W)) {
+pub fn for_each_process(mut f: impl FnMut(&PROCESSENTRY32W)) {
     unsafe {
         let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
             return;
@@ -268,7 +268,7 @@ fn for_each_process(mut f: impl FnMut(&PROCESSENTRY32W)) {
     }
 }
 
-fn exe_name(entry: &PROCESSENTRY32W) -> String {
+pub fn exe_name(entry: &PROCESSENTRY32W) -> String {
     let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
     String::from_utf16_lossy(&entry.szExeFile[..len])
 }

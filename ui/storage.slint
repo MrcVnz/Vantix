@@ -1,0 +1,289 @@
+import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
+import { ListView } from "std-widgets.slint";
+
+export enum RowState { idle, scanning, ready, blocked, cleaning, done }
+
+/// One cleanup category; the order matches disk::Category::ALL.
+export struct CleanupRow {
+    state: RowState,
+    selected: bool,
+    size: string,
+    files: int,
+    /// Process that has to be closed first, for `blocked`.
+    blocker: string,
+    freed: string,
+    skipped: int,
+}
+
+export global Storage {
+    in property <string> drive;
+    in property <string> free;
+    in property <string> total;
+    in property <float> used;
+    /// Free space gained by the last cleanup, measured on the drive itself.
+    in property <string> gained;
+    in property <[CleanupRow]> rows;
+    in property <bool> busy;
+    in property <string> selected-total;
+
+    callback analyze();
+    callback clean();
+    callback toggled(int, bool);
+}
+
+component Check inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    background: self.checked && self.enabled ? Theme.accent : transparent;
+    border-width: self.checked && self.enabled ? 0 : 1.5px;
+    border-color: Theme.border-strong;
+    animate background { duration: 120ms; }
+
+    if root.checked && root.enabled: Icon {
+        data: Icons.check;
+        size: 13px;
+        thickness: 2.6px;
+        tint: Theme.on-accent;
+    }
+}
+
+component CleanupItem inherits Rectangle {
+    in property <CleanupRow> item;
+    in property <string> title;
+    in property <string> detail;
+    /// Side effect worth knowing before ticking the box; empty when there is none.
+    in property <string> cost;
+    callback toggled(bool);
+
+    property <bool> enabled: root.item.state != RowState.blocked && root.item.state != RowState.cleaning;
+
+    height: root.cost == "" ? 58px : 74px;
+    border-radius: Theme.radius-small;
+    background: area.has-hover && root.enabled ? Theme.raised : transparent;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 14px;
+        spacing: 14px;
+
+        VerticalLayout {
+            alignment: center;
+            Check {
+                checked: root.item.selected;
+                enabled: root.enabled;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: root.enabled ? Theme.text : Theme.muted;
+                font-weight: 600;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.muted;
+                font-size: 12px;
+                overflow: elide;
+            }
+            if root.cost != "": Text {
+                text: root.cost;
+                color: Theme.warn;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            width: 170px;
+            Text {
+                horizontal-alignment: right;
+                font-weight: 600;
+                color: root.item.state == RowState.done ? Theme.accent
+                    : root.item.state == RowState.blocked ? Theme.warn
+                    : root.item.state == RowState.ready && root.item.files == 0 ? Theme.faint
+                    : Theme.text;
+                text: root.item.state == RowState.scanning ? @tr("Analyzing...")
+                    : root.item.state == RowState.cleaning ? @tr("Cleaning...")
+                    : root.item.state == RowState.blocked ? @tr("Close {} first", root.item.blocker)
+                    : root.item.state == RowState.done ? @tr("Freed {}", root.item.freed)
+                    : root.item.state == RowState.ready && root.item.files == 0 ? @tr("Nothing to clean")
+                    : root.item.state == RowState.ready ? root.item.size
+                    : "";
+            }
+            if root.item.state == RowState.ready && root.item.files > 0: Text {
+                horizontal-alignment: right;
+                text: @tr("{} files", root.item.files);
+                color: Theme.faint;
+                font-size: 12px;
+            }
+            if root.item.state == RowState.done && root.item.skipped > 0: Text {
+                horizontal-alignment: right;
+                text: @tr("{} in use, kept", root.item.skipped);
+                color: Theme.faint;
+                font-size: 12px;
+            }
+        }
+    }
+
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(!root.item.selected); }
+    }
+}
+
+export component StoragePage inherits VerticalLayout {
+    property <[string]> titles: [
+        @tr("Temporary files"), @tr("Windows temporary files"), @tr("Windows Update downloads"),
+        @tr("Delivery Optimization cache"), @tr("Crash dumps"), @tr("Error reports"),
+        @tr("Shader cache"), @tr("Thumbnails"), @tr("Browser cache"), @tr("Recycle Bin"),
+    ];
+    property <[string]> details: [
+        @tr("Left behind by apps and installers, older than a day."),
+        @tr("System temp folder, older than a day."),
+        @tr("Updates already installed. The service pauses while cleaning."),
+        @tr("Update pieces shared with other PCs."),
+        @tr("Diagnostic files written when something crashed."),
+        @tr("Windows Error Reporting queue and archive."),
+        @tr("DirectX, NVIDIA, AMD and Intel shader caches."),
+        @tr("Explorer thumbnail database."),
+        @tr("Chrome, Edge, Brave and Firefox cache only."),
+        @tr("Everything currently in the Recycle Bin."),
+    ];
+    property <[string]> costs: [
+        "", "", "", "", "", "",
+        @tr("Games rebuild shaders on the next launch and may stutter for a bit."),
+        @tr("Explorer rebuilds thumbnails when you open folders."),
+        @tr("Pages load slower until the cache refills. Logins and history stay."),
+        @tr("Deleted files can no longer be restored."),
+    ];
+
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Storage");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("Finds space taken by caches and leftovers. Nothing is deleted until you choose.");
+            color: Theme.muted;
+        }
+    }
+
+    Card {
+        vertical-stretch: 0;
+
+        HorizontalLayout {
+            spacing: 18px;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 10px;
+                    background: Theme.raised;
+                    Icon {
+                        data: Icons.drive;
+                        size: 20px;
+                        tint: Theme.muted;
+                    }
+                }
+            }
+            VerticalLayout {
+                spacing: 8px;
+                horizontal-stretch: 1;
+                HorizontalLayout {
+                    Text {
+                        text: @tr("Windows drive ({})", Storage.drive);
+                        color: Theme.text;
+                        font-weight: 600;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: @tr("{} free of {}", Storage.free, Storage.total);
+                        color: Theme.muted;
+                    }
+                }
+                Rectangle {
+                    height: 8px;
+                    border-radius: 4px;
+                    background: Theme.raised;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * clamp(Storage.used, 0, 1);
+                        border-radius: 4px;
+                        background: Storage.used > 0.9 ? Theme.bad : Storage.used > 0.75 ? Theme.warn : Theme.accent;
+                        animate width { duration: 500ms; easing: ease-out-quart; }
+                    }
+                }
+            }
+            if Storage.gained != "": VerticalLayout {
+                alignment: center;
+                Chip {
+                    text: @tr("+{} free", Storage.gained);
+                    tint: Theme.accent;
+                }
+            }
+        }
+    }
+
+    Card {
+        vertical-stretch: 1;
+        pad: 14px;
+
+        HorizontalLayout {
+            padding-left: 6px;
+            spacing: 10px;
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Text {
+                    text: Storage.selected-total == "" ? @tr("Analyze to see what can be freed.")
+                        : @tr("Selected: {}", Storage.selected-total);
+                    color: Theme.text;
+                    font-weight: 600;
+                }
+            }
+            Button {
+                text: @tr("Analyze");
+                icon: Icons.search;
+                enabled: !Storage.busy;
+                clicked => { Storage.analyze(); }
+            }
+            Button {
+                text: @tr("Clean selected");
+                icon: Icons.trash;
+                primary: true;
+                enabled: !Storage.busy && Storage.selected-total != "";
+                clicked => { Storage.clean(); }
+            }
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for row[i] in Storage.rows: CleanupItem {
+                item: row;
+                title: root.titles[i];
+                detail: root.details[i];
+                cost: root.costs[i];
+                toggled(on) => { Storage.toggled(i, on); }
+            }
+        }
+    }
+}

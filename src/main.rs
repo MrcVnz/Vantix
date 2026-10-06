@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod disk;
 mod memory;
 mod reg;
 mod restore;
@@ -13,7 +14,7 @@ use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use chrono::Local;
-use slint::{CloseRequestResponse, ComponentHandle, ModelRc, Timer, TimerMode, VecModel};
+use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
 
 use memory::Level;
@@ -32,6 +33,9 @@ const SPARK_SAMPLES: usize = 60;
 
 struct State {
     settings: Settings,
+    /// Last scan result per cleanup category, `None` until analyzed or when blocked.
+    scanned: [Option<u64>; disk::Category::ALL.len()],
+    selected: [bool; disk::Category::ALL.len()],
     history: Vec<HistoryEntry>,
     cleaning: bool,
     last_auto: Instant,
@@ -55,6 +59,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let app = Rc::new(App {
         state: RefCell::new(State {
             settings: Settings::load(),
+            scanned: [None; disk::Category::ALL.len()],
+            selected: disk::Category::ALL.map(disk::Category::selected_by_default),
             history: settings::load_history(),
             cleaning: false,
             last_auto: Instant::now(),
@@ -292,6 +298,20 @@ impl App {
             app.with_ui(|ui| ui.global::<Job>().set_state(JobState::Idle));
         }));
 
+        let storage = ui.global::<Storage>();
+        storage.on_analyze(bind(self, |app| app.analyze_storage()));
+        storage.on_clean(bind(self, |app| app.clean_storage()));
+        storage.on_toggled({
+            let app = Rc::downgrade(self);
+            move |index, on| {
+                if let Some(app) = app.upgrade() {
+                    app.state.borrow_mut().selected[index as usize] = on;
+                    app.with_ui(|ui| app.show_storage(ui, None));
+                }
+            }
+        });
+        self.show_storage(&ui, None);
+
         ui.window().on_close_requested(bind_close(self));
 
         ui.show()?;
@@ -404,6 +424,157 @@ impl App {
             }
         })
         .unwrap();
+    }
+
+    /// Measures every category in parallel; each one is a handful of folders.
+    fn analyze_storage(self: &Rc<Self>) {
+        self.with_ui(|ui| {
+            let rows = ui.global::<Storage>().get_rows();
+            for i in 0..rows.row_count() {
+                let mut row = rows.row_data(i).unwrap();
+                row.state = RowState::Scanning;
+                rows.set_row_data(i, row);
+            }
+            ui.global::<Storage>().set_busy(true);
+        });
+        self.run_job(
+            || {
+                std::thread::scope(|scope| {
+                    let jobs: Vec<_> =
+                        disk::Category::ALL.iter().map(|&c| scope.spawn(move || disk::scan(c))).collect();
+                    jobs.into_iter().map(|job| job.join().ok()).collect::<Vec<_>>()
+                })
+            },
+            |app, outcomes| {
+                let outcomes = outcomes.unwrap_or_default();
+                {
+                    let mut state = app.state.borrow_mut();
+                    for (i, outcome) in outcomes.iter().enumerate() {
+                        state.scanned[i] = match outcome {
+                            Some(disk::Outcome::Done(tally)) => Some(tally.bytes),
+                            _ => None,
+                        };
+                    }
+                }
+                app.with_ui(|ui| {
+                    ui.global::<Storage>().set_busy(false);
+                    app.show_storage(ui, Some(&outcomes));
+                });
+            },
+        );
+    }
+
+    fn clean_storage(self: &Rc<Self>) {
+        let chosen: Vec<disk::Category> = {
+            let state = self.state.borrow();
+            disk::Category::ALL
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| state.selected[*i] && state.scanned[*i].is_some())
+                .map(|(_, &c)| c)
+                .collect()
+        };
+        self.with_ui(|ui| {
+            let storage = ui.global::<Storage>();
+            storage.set_busy(true);
+            let rows = storage.get_rows();
+            for (i, category) in disk::Category::ALL.iter().enumerate() {
+                if chosen.contains(category) {
+                    let mut row = rows.row_data(i).unwrap();
+                    row.state = RowState::Cleaning;
+                    rows.set_row_data(i, row);
+                }
+            }
+        });
+
+        self.run_job(
+            move || {
+                let (free_before, _) = disk::system_drive_space();
+                let outcomes: Vec<_> = chosen.iter().map(|&c| (c, disk::clean(c))).collect();
+                let (free_after, _) = disk::system_drive_space();
+                (outcomes, free_after.saturating_sub(free_before))
+            },
+            |app, result| {
+                app.with_ui(|ui| {
+                    let storage = ui.global::<Storage>();
+                    storage.set_busy(false);
+                    let Some((outcomes, gained)) = result else { return };
+                    let rows = storage.get_rows();
+                    for (category, outcome) in outcomes {
+                        let i = disk::Category::ALL.iter().position(|&c| c == category).unwrap();
+                        let mut row = rows.row_data(i).unwrap();
+                        match outcome {
+                            disk::Outcome::Done(tally) => {
+                                row.state = RowState::Done;
+                                row.freed = format_bytes(tally.bytes).into();
+                                row.skipped = tally.skipped as i32;
+                            }
+                            disk::Outcome::Blocked(process) => {
+                                row.state = RowState::Blocked;
+                                row.blocker = process.trim_end_matches(".exe").into();
+                            }
+                        }
+                        rows.set_row_data(i, row);
+                        app.state.borrow_mut().scanned[i] = None;
+                    }
+                    storage.set_gained(if gained > 0 { format_bytes(gained).into() } else { "".into() });
+                    storage.set_selected_total("".into());
+                    app.show_drive(ui);
+                });
+            },
+        );
+    }
+
+    /// Rebuilds the rows from the last scan; with `outcomes`, from a fresh one.
+    fn show_storage(&self, ui: &AppWindow, outcomes: Option<&[Option<disk::Outcome>]>) {
+        let storage = ui.global::<Storage>();
+        let state = self.state.borrow();
+        let current = storage.get_rows();
+        let rows: Vec<CleanupRow> = disk::Category::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let mut row = current.row_data(i).unwrap_or_default();
+                row.selected = state.selected[i];
+                if let Some(outcome) = outcomes.and_then(|o| o.get(i)) {
+                    match outcome {
+                        Some(disk::Outcome::Done(tally)) => {
+                            row.state = RowState::Ready;
+                            row.size = format_bytes(tally.bytes).into();
+                            row.files = tally.files as i32;
+                        }
+                        Some(disk::Outcome::Blocked(process)) => {
+                            row.state = RowState::Blocked;
+                            row.blocker = process.trim_end_matches(".exe").into();
+                        }
+                        None => row.state = RowState::Idle,
+                    }
+                }
+                row
+            })
+            .collect();
+        storage.set_rows(ModelRc::new(VecModel::from(rows)));
+
+        let selected: u64 = state
+            .scanned
+            .iter()
+            .zip(state.selected)
+            .filter(|(_, on)| *on)
+            .filter_map(|(bytes, _)| *bytes)
+            .sum();
+        let any_scanned = state.scanned.iter().any(Option::is_some);
+        storage.set_selected_total(if any_scanned { format_bytes(selected).into() } else { "".into() });
+        drop(state);
+        self.show_drive(ui);
+    }
+
+    fn show_drive(&self, ui: &AppWindow) {
+        let storage = ui.global::<Storage>();
+        let (free, total) = disk::system_drive_space();
+        storage.set_drive(std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()).into());
+        storage.set_free(format_bytes(free).into());
+        storage.set_total(format_bytes(total).into());
+        storage.set_used(if total == 0 { 0.0 } else { 1.0 - free as f32 / total as f32 });
     }
 
     fn refresh_protection(self: &Rc<Self>) {
