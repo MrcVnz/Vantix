@@ -1,0 +1,321 @@
+import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
+import { LineEdit, ListView } from "std-widgets.slint";
+
+export struct RestorePoint {
+    sequence: int,
+    description: string,
+    created: string,
+}
+
+export global Protection {
+    in property <bool> enabled;
+    in property <bool> loading;
+    in property <[RestorePoint]> points;
+    in-out property <string> new-name;
+
+    callback refresh();
+    callback create();
+    callback enable();
+    callback open-system-restore();
+}
+
+export enum JobState { idle, creating-point, applying, point-failed, done, failed }
+
+/// Drives the modal progress sheet shared by every action that changes the system.
+export global Job {
+    in property <JobState> state;
+    /// What is being created or applied, shown under the title.
+    in property <string> subject;
+    /// Error text from Windows on failures.
+    in property <string> detail;
+    /// Whether something waits to be applied after the restore point.
+    in property <bool> has-change;
+    in-out property <int> elapsed;
+
+    callback dismiss();
+    callback proceed-without-point();
+}
+
+export component JobSheet inherits Rectangle {
+    property <bool> busy: Job.state == JobState.creating-point || Job.state == JobState.applying;
+    property <bool> failed: Job.state == JobState.point-failed || Job.state == JobState.failed;
+
+    visible: Job.state != JobState.idle;
+    background: #000000b0;
+
+    // Swallows clicks so nothing underneath reacts while the sheet is up.
+    TouchArea {}
+
+    Timer {
+        interval: 1s;
+        running: root.busy;
+        triggered => { Job.elapsed += 1; }
+    }
+
+    Rectangle {
+        width: 440px;
+        height: content.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+
+        content := VerticalLayout {
+            padding: 26px;
+            spacing: 14px;
+
+            HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+
+                Rectangle {
+                    width: 42px;
+                    height: 42px;
+                    border-radius: 12px;
+                    background: (root.failed ? Theme.bad : Theme.accent).with-alpha(0.12);
+                    Icon {
+                        data: root.failed ? Icons.alert : Job.state == JobState.done ? Icons.check : Icons.shield;
+                        size: 20px;
+                        tint: root.failed ? Theme.bad : Theme.accent;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: Job.state == JobState.creating-point ? @tr("Creating a restore point")
+                            : Job.state == JobState.applying ? @tr("Applying changes")
+                            : Job.state == JobState.point-failed ? @tr("Couldn't create the restore point")
+                            : Job.state == JobState.done ? @tr("Done")
+                            : @tr("Something went wrong");
+                        color: Theme.text;
+                        font-size: 16px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: Job.subject;
+                        color: Theme.muted;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            if root.busy: VerticalLayout {
+                spacing: 10px;
+                Rectangle {
+                    height: 4px;
+                    border-radius: 2px;
+                    background: Theme.raised;
+                    clip: true;
+                    Rectangle {
+                        width: parent.width * 0.35;
+                        x: (1 - cos(animation-tick() / 4ms * 1deg)) / 2 * (parent.width - self.width);
+                        border-radius: 2px;
+                        background: Theme.accent;
+                    }
+                }
+                HorizontalLayout {
+                    Text {
+                        text: Job.state == JobState.creating-point
+                            ? @tr("This can take up to two minutes. Keep the PC on.")
+                            : @tr("Almost there.");
+                        color: Theme.muted;
+                        wrap: word-wrap;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: Job.elapsed + " s";
+                        color: Theme.faint;
+                    }
+                }
+            }
+
+            if root.failed && Job.detail != "": Text {
+                text: Job.detail;
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+
+            if Job.state == JobState.point-failed && Job.has-change: Text {
+                text: @tr("You can still apply the change without a restore point. Vantix keeps its own record to undo it.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+
+            if !root.busy: HorizontalLayout {
+                alignment: end;
+                spacing: 10px;
+                Button {
+                    text: Job.state == JobState.point-failed && Job.has-change ? @tr("Cancel") : @tr("Close");
+                    clicked => { Job.dismiss(); }
+                }
+                if Job.state == JobState.point-failed && Job.has-change: Button {
+                    text: @tr("Apply without a restore point");
+                    primary: true;
+                    clicked => { Job.proceed-without-point(); }
+                }
+            }
+        }
+    }
+}
+
+export component ProtectionPage inherits VerticalLayout {
+    init => { Protection.refresh(); }
+
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Protection");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("Windows restore points and the changes Vantix made.");
+            color: Theme.muted;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+
+        Card {
+            title: @tr("System protection");
+            icon: Icons.shield;
+            width: 380px;
+
+            HorizontalLayout {
+                Text {
+                    text: @tr("Restore points on the Windows drive");
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Chip {
+                        text: Protection.enabled ? @tr("On") : @tr("Off");
+                        tint: Protection.enabled ? Theme.accent : Theme.bad;
+                    }
+                }
+            }
+
+            Text {
+                text: Protection.enabled
+                    ? @tr("Vantix creates a point automatically before every system change.")
+                    : @tr("Without it Vantix can't create restore points. Turning it on reserves a small part of the drive.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                spacing: 10px;
+                if !Protection.enabled: Button {
+                    text: @tr("Turn on");
+                    primary: true;
+                    clicked => { Protection.enable(); }
+                }
+                Button {
+                    text: @tr("Open System Restore");
+                    icon: Icons.external;
+                    clicked => { Protection.open-system-restore(); }
+                }
+            }
+        }
+
+        Card {
+            title: @tr("Create a restore point now");
+            icon: Icons.plus;
+            horizontal-stretch: 1;
+
+            Text {
+                text: @tr("Useful before installing drivers or trying something risky.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                LineEdit {
+                    placeholder-text: @tr("Name (optional)");
+                    text <=> Protection.new-name;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: @tr("Create");
+                    icon: Icons.shield;
+                    primary: true;
+                    enabled: Protection.enabled;
+                    clicked => { Protection.create(); }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        vertical-stretch: 1;
+
+        Card {
+            title: @tr("Restore points");
+            icon: Icons.history;
+            horizontal-stretch: 1;
+
+            if Protection.points.length == 0: Text {
+                text: Protection.loading ? @tr("Loading...") : @tr("No restore points yet.");
+                color: Theme.faint;
+                vertical-stretch: 1;
+            }
+
+            if Protection.points.length > 0: ListView {
+                vertical-stretch: 1;
+                for point in Protection.points: HorizontalLayout {
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    padding-right: 14px;
+                    spacing: 12px;
+                    Text {
+                        text: point.created;
+                        color: Theme.faint;
+                        font-size: 12.5px;
+                        width: 120px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: point.description;
+                        color: Theme.text;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "#" + point.sequence;
+                        color: Theme.faint;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        Card {
+            title: @tr("Changes made by Vantix");
+            icon: Icons.layers;
+            width: 380px;
+
+            Text {
+                text: @tr("Nothing changed yet. Every tweak you apply shows up here with an option to undo it.");
+                color: Theme.faint;
+                wrap: word-wrap;
+                vertical-stretch: 1;
+            }
+        }
+    }
+}

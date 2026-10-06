@@ -2,6 +2,7 @@
 
 mod memory;
 mod reg;
+mod restore;
 mod settings;
 mod system;
 
@@ -280,6 +281,17 @@ impl App {
             let _ = std::fs::remove_dir_all(settings::data_dir());
             let _ = slint::quit_event_loop();
         });
+        let protection = ui.global::<Protection>();
+        protection.on_refresh(bind(self, |app| app.refresh_protection()));
+        protection.on_create(bind(self, |app| app.create_restore_point()));
+        protection.on_enable(bind(self, |app| app.enable_protection()));
+        protection.on_open_system_restore(|| {
+            let _ = std::process::Command::new("rstrui.exe").spawn();
+        });
+        ui.global::<Job>().on_dismiss(bind(self, |app| {
+            app.with_ui(|ui| ui.global::<Job>().set_state(JobState::Idle));
+        }));
+
         ui.window().on_close_requested(bind_close(self));
 
         ui.show()?;
@@ -292,6 +304,10 @@ impl App {
         if let Some(ui) = &*self.window.borrow() {
             f(ui);
         }
+    }
+
+    fn with_ui_value<T>(&self, f: impl FnOnce(&AppWindow) -> T) -> Option<T> {
+        self.window.borrow().as_ref().map(f)
     }
 
     fn tick(self: &Rc<Self>) {
@@ -331,48 +347,150 @@ impl App {
         };
         self.with_ui(|ui| ui.global::<Memory>().set_state(CleanState::Running));
 
+        self.run_job(
+            move || memory::clean(level),
+            move |app, report| {
+                let mut state = app.state.borrow_mut();
+                state.cleaning = false;
+                let Some(report) = report else {
+                    app.with_ui(|ui| ui.global::<Memory>().set_state(CleanState::Idle));
+                    return;
+                };
+
+                state.history.push(HistoryEntry {
+                    time: Local::now(),
+                    level,
+                    automatic,
+                    before_in_use: report.before.in_use(),
+                    after_in_use: report.after.in_use(),
+                });
+                let _ = settings::save_history(&mut state.history);
+
+                let freed = format_bytes(report.freed().max(0) as u64);
+                if automatic && state.settings.notifications {
+                    app.with_tray(|tray| {
+                        let body = tray.invoke_freed_body(freed.as_str().into());
+                        let _ = system::notify(&tray.invoke_freed_title(), &body);
+                    });
+                }
+
+                app.with_ui(|ui| {
+                    let mem = ui.global::<Memory>();
+                    mem.set_last_freed(freed.as_str().into());
+                    mem.set_state(CleanState::Done);
+                    show_stats(ui, &report.after);
+                    show_history(ui, &state.history);
+                });
+            },
+        );
+    }
+
+    /// Runs `work` on its own thread and hands the result back on the UI thread. `None`
+    /// means the work panicked.
+    fn run_job<T: Send + 'static>(
+        self: &Rc<Self>,
+        work: impl FnOnce() -> T + Send + 'static,
+        done: impl FnOnce(&Rc<App>, Option<T>) + 'static,
+    ) {
         let (tx, rx) = futures_channel::oneshot::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(memory::clean(level));
+            let _ = tx.send(work());
         });
-
         let app = Rc::downgrade(self);
         slint::spawn_local(async move {
-            let report = rx.await;
-            let Some(app) = app.upgrade() else { return };
-            let mut state = app.state.borrow_mut();
-            state.cleaning = false;
-            let Ok(report) = report else {
-                app.with_ui(|ui| ui.global::<Memory>().set_state(CleanState::Idle));
-                return;
-            };
-
-            state.history.push(HistoryEntry {
-                time: Local::now(),
-                level,
-                automatic,
-                before_in_use: report.before.in_use(),
-                after_in_use: report.after.in_use(),
-            });
-            let _ = settings::save_history(&mut state.history);
-
-            let freed = format_bytes(report.freed().max(0) as u64);
-            if automatic && state.settings.notifications {
-                app.with_tray(|tray| {
-                    let body = tray.invoke_freed_body(freed.as_str().into());
-                    let _ = system::notify(&tray.invoke_freed_title(), &body);
-                });
+            let result = rx.await.ok();
+            if let Some(app) = app.upgrade() {
+                done(&app, result);
             }
-
-            app.with_ui(|ui| {
-                let mem = ui.global::<Memory>();
-                mem.set_last_freed(freed.as_str().into());
-                mem.set_state(CleanState::Done);
-                show_stats(ui, &report.after);
-                show_history(ui, &state.history);
-            });
         })
         .unwrap();
+    }
+
+    fn refresh_protection(self: &Rc<Self>) {
+        self.with_ui(|ui| ui.global::<Protection>().set_loading(true));
+        self.run_job(
+            || (restore::protection_enabled(), restore::list().unwrap_or_default()),
+            |app, result| {
+                app.with_ui(|ui| {
+                    let protection = ui.global::<Protection>();
+                    protection.set_loading(false);
+                    let Some((enabled, points)) = result else { return };
+                    protection.set_enabled(enabled);
+                    let rows: Vec<RestorePoint> = points
+                        .iter()
+                        .map(|point| RestorePoint {
+                            sequence: point.sequence as i32,
+                            description: point.description.as_str().into(),
+                            created: point
+                                .created
+                                .map(|time| time.format("%d/%m/%Y %H:%M").to_string())
+                                .unwrap_or_default()
+                                .into(),
+                        })
+                        .collect();
+                    protection.set_points(ModelRc::new(VecModel::from(rows)));
+                })
+            },
+        );
+    }
+
+    fn create_restore_point(self: &Rc<Self>) {
+        let name = self
+            .with_ui_value(|ui| ui.global::<Protection>().get_new_name().trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Vantix manual point".into());
+        self.show_job(JobState::CreatingPoint, &name, false);
+
+        self.run_job(
+            move || restore::create(&name),
+            |app, result| {
+                match result {
+                    Some(Ok(_)) => {
+                        app.with_ui(|ui| ui.global::<Protection>().set_new_name("".into()));
+                        app.set_job(JobState::Done, "");
+                    }
+                    Some(Err(error)) => app.set_job(JobState::PointFailed, &error.message()),
+                    None => app.set_job(JobState::Failed, ""),
+                }
+                app.refresh_protection();
+                // WMI can lag a moment behind a brand new point.
+                let later = Rc::downgrade(app);
+                Timer::single_shot(Duration::from_secs(3), move || {
+                    if let Some(app) = later.upgrade() {
+                        app.refresh_protection();
+                    }
+                });
+            },
+        );
+    }
+
+    fn enable_protection(self: &Rc<Self>) {
+        self.run_job(restore::enable_protection, |app, result| {
+            if let Some(Err(error)) = result {
+                app.show_job(JobState::Failed, "System Restore", false);
+                app.set_job(JobState::Failed, &error.message());
+            }
+            app.refresh_protection();
+        });
+    }
+
+    fn show_job(&self, state: JobState, subject: &str, has_change: bool) {
+        self.with_ui(|ui| {
+            let job = ui.global::<Job>();
+            job.set_subject(subject.into());
+            job.set_has_change(has_change);
+            job.set_detail("".into());
+            job.set_elapsed(0);
+            job.set_state(state);
+        });
+    }
+
+    fn set_job(&self, state: JobState, detail: &str) {
+        self.with_ui(|ui| {
+            let job = ui.global::<Job>();
+            job.set_detail(detail.into());
+            job.set_state(state);
+        });
     }
 }
 

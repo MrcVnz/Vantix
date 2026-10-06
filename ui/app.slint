@@ -1,7 +1,8 @@
 import { Theme, Icons, Icon, Card, Segmented, Toggle, Button } from "theme.slint";
 import { Memory, MemoryPage, CleanState, HistoryRow } from "memory.slint";
+import { Protection, ProtectionPage, Job, JobState, JobSheet, RestorePoint } from "protection.slint";
 
-export { Memory, CleanState, HistoryRow }
+export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint }
 export { TermsWindow } from "terms.slint";
 export { Tray } from "tray.slint";
 
@@ -258,6 +259,24 @@ export component AppWindow inherits Window {
 
                 Rectangle { vertical-stretch: 1; }
 
+                HorizontalLayout {
+                    padding-left: 12px;
+                    Text {
+                        text: @tr("SYSTEM");
+                        color: Theme.faint;
+                        font-size: 11px;
+                        font-weight: 700;
+                        letter-spacing: 1px;
+                    }
+                }
+                Rectangle { height: 6px; }
+
+                NavItem {
+                    text: @tr("Protection");
+                    icon: Icons.shield;
+                    active: root.page == 2;
+                    clicked => { root.page = 2; }
+                }
                 NavItem {
                     text: @tr("Settings");
                     icon: Icons.settings;
@@ -285,6 +304,15 @@ export component AppWindow inherits Window {
                 width: parent.width;
                 height: parent.height;
             }
+            if root.page == 2: ProtectionPage {
+                width: parent.width;
+                height: parent.height;
+            }
         }
+    }
+
+    JobSheet {
+        width: parent.width;
+        height: parent.height;
     }
 }

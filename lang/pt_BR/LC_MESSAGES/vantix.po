@@ -203,3 +203,93 @@ msgstr "Clique de novo para confirmar"
 
 msgid "Delete all Vantix data"
 msgstr "Apagar todos os dados do Vantix"
+
+msgid "SYSTEM"
+msgstr "SISTEMA"
+
+msgid "Protection"
+msgstr "Proteção"
+
+msgid "Windows restore points and the changes Vantix made."
+msgstr "Pontos de restauração do Windows e as alterações feitas pelo Vantix."
+
+msgid "System protection"
+msgstr "Proteção do sistema"
+
+msgid "Restore points on the Windows drive"
+msgstr "Pontos de restauração no disco do Windows"
+
+msgid "On"
+msgstr "Ligada"
+
+msgid "Vantix creates a point automatically before every system change."
+msgstr "O Vantix cria um ponto automaticamente antes de cada alteração no sistema."
+
+msgid "Without it Vantix can't create restore points. Turning it on reserves a small part of the drive."
+msgstr "Sem ela o Vantix não consegue criar pontos de restauração. Ligar reserva uma pequena parte do disco."
+
+msgid "Turn on"
+msgstr "Ligar"
+
+msgid "Open System Restore"
+msgstr "Abrir a Restauração do Sistema"
+
+msgid "Create a restore point now"
+msgstr "Criar um ponto de restauração agora"
+
+msgid "Useful before installing drivers or trying something risky."
+msgstr "Útil antes de instalar drivers ou testar algo arriscado."
+
+msgid "Name (optional)"
+msgstr "Nome (opcional)"
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "Restore points"
+msgstr "Pontos de restauração"
+
+msgid "Loading..."
+msgstr "Carregando..."
+
+msgid "No restore points yet."
+msgstr "Nenhum ponto de restauração ainda."
+
+msgid "Changes made by Vantix"
+msgstr "Alterações feitas pelo Vantix"
+
+msgid "Nothing changed yet. Every tweak you apply shows up here with an option to undo it."
+msgstr "Nada foi alterado ainda. Cada ajuste aplicado aparece aqui com a opção de desfazer."
+
+msgid "Creating a restore point"
+msgstr "Criando ponto de restauração"
+
+msgid "Applying changes"
+msgstr "Aplicando alterações"
+
+msgid "Couldn't create the restore point"
+msgstr "Não foi possível criar o ponto de restauração"
+
+msgid "Done"
+msgstr "Concluído"
+
+msgid "Something went wrong"
+msgstr "Algo deu errado"
+
+msgid "This can take up to two minutes. Keep the PC on."
+msgstr "Isso pode levar até dois minutos. Mantenha o PC ligado."
+
+msgid "Almost there."
+msgstr "Quase lá."
+
+msgid "You can still apply the change without a restore point. Vantix keeps its own record to undo it."
+msgstr "Você ainda pode aplicar a alteração sem um ponto de restauração. O Vantix guarda o próprio registro para desfazê-la."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Apply without a restore point"
+msgstr "Aplicar sem ponto de restauração"
