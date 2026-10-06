@@ -377,12 +377,18 @@ export component AppWindow inherits Window {
         }
     }
 
+    // Overlays get an explicit position so their size hints stay out of the window's:
+    // otherwise every change in the sheet's content resizes the window.
     JobSheet {
+        x: 0;
+        y: 0;
         width: parent.width;
         height: parent.height;
     }
 
     TermsSheet {
+        x: 0;
+        y: 0;
         width: parent.width;
         height: parent.height;
     }
