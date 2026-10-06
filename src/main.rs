@@ -374,6 +374,7 @@ impl App {
         }
 
         ui.window().on_close_requested(bind_close(self));
+        repaint_after_restore(&ui);
 
         ui.show()?;
         style_when_ready(ui.as_weak(), 0);
@@ -1162,6 +1163,31 @@ fn format_bytes(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     let mb = bytes as f64 / MB;
     if mb >= 1024.0 { format!("{:.1} GB", mb / 1024.0) } else { format!("{mb:.0} MB") }
+}
+
+/// Windows drops a minimized window's pixels, and Slint 1.18's software renderer keeps
+/// treating its buffer as still on screen, so after a restore only the parts that changed
+/// get drawn and the rest shows whatever was behind. Making everything dirty once fixes it.
+fn repaint_after_restore(ui: &AppWindow) {
+    use slint::winit_030::winit::event::WindowEvent;
+    use slint::winit_030::{EventResult, WinitWindowAccessor};
+
+    let weak = ui.as_weak();
+    let mut hidden = false;
+    ui.window().on_winit_window_event(move |_, event| {
+        match event {
+            WindowEvent::Resized(size) if size.width == 0 || size.height == 0 => hidden = true,
+            WindowEvent::Occluded(true) => hidden = true,
+            WindowEvent::Resized(_) | WindowEvent::Occluded(false) if hidden => {
+                hidden = false;
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_repaint(!ui.get_repaint());
+                }
+            }
+            _ => {}
+        }
+        EventResult::Propagate
+    });
 }
 
 /// Retries every 50 ms until the native window exists, for at most a second.

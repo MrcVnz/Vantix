@@ -175,6 +175,9 @@ component SettingsPage inherits VerticalLayout {
 
 export component AppWindow inherits Window {
     property <int> page;
+    /// Flipped after a restore from minimized. The background differs by one step of
+    /// blue between the two values, which no one can see but makes the whole window dirty.
+    in-out property <bool> repaint;
 
     title: "Vantix";
     // Fixed so the window never resizes when switching pages; the Memory page is the largest.
@@ -182,7 +185,7 @@ export component AppWindow inherits Window {
     preferred-height: 800px;
     min-width: 1100px;
     min-height: 760px;
-    background: Theme.background;
+    background: root.repaint ? Theme.background : Theme.background.brighter(0.004);
     default-font-family: "Segoe UI Variable Text";
     default-font-size: 13px;
 
