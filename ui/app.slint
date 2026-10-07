@@ -8,10 +8,11 @@ import { Terms, TermsSheet, TermsLine, TermsParagraph } from "terms.slint";
 import { Startup, StartupRow, BackgroundPage } from "startup.slint";
 import { Live, ProBalanceCard, GameModeCard } from "live.slint";
 import { Net, InternetPage, PingRow, BloatResult, DnsRow, UsageRow } from "internet.slint";
+import { Monitor, MonitorPage, ProgramRow } from "monitor.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Theme }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -227,11 +228,14 @@ export component AppWindow inherits Window {
             VerticalLayout {
                 padding: 20px;
                 padding-top: 24px;
+                // The scroll below starts further left so the active item's marker,
+                // which sits left of the item, isn't clipped.
+                padding-left: 8px;
                 spacing: 4px;
 
                 HorizontalLayout {
                     spacing: 12px;
-                    padding-left: 4px;
+                    padding-left: 16px;
                     Image {
                         source: @image-url("../res/vantix.png");
                         // 1/8 of the 256 px art, so every pixel stays the same size.
@@ -256,88 +260,123 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Rectangle { height: 22px; }
+                // Scrolls only when the window is too short for every section, as on a
+                // 1366 x 768 laptop.
+                nav := ScrollView {
+                    vertical-stretch: 1;
+                    content-width: self.visible-width;
+                    content-height: max(self.visible-height, items.min-height);
+                    items := VerticalLayout {
+                        width: nav.visible-width;
+                        height: nav.content-height;
+                        padding-left: 12px;
+                        spacing: 4px;
 
-                HorizontalLayout {
-                    padding-left: 12px;
-                    Text {
-                        text: @tr("OPTIMIZE");
-                        color: Theme.faint;
-                        font-size: 11px;
-                        font-weight: 700;
-                        letter-spacing: 1px;
+                        Rectangle { height: 22px; }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: @tr("OPTIMIZE");
+                                color: Theme.faint;
+                                font-size: 11px;
+                                font-weight: 700;
+                                letter-spacing: 1px;
+                            }
+                        }
+                        Rectangle { height: 6px; }
+
+                        NavItem {
+                            text: @tr("Memory");
+                            icon: Icons.memory;
+                            active: root.page == 0;
+                            clicked => { root.page = 0; }
+                        }
+                        NavItem {
+                            text: @tr("Performance");
+                            icon: Icons.gauge;
+                            active: root.page == 4;
+                            clicked => { root.page = 4; }
+                        }
+                        NavItem {
+                            text: @tr("Games");
+                            icon: Icons.gamepad;
+                            active: root.page == 5;
+                            clicked => { root.page = 5; }
+                        }
+                        NavItem {
+                            text: @tr("Internet");
+                            icon: Icons.wifi;
+                            active: root.page == 8;
+                            clicked => { root.page = 8; }
+                        }
+                        NavItem {
+                            text: @tr("Input");
+                            icon: Icons.mouse;
+                            active: root.page == 6;
+                            clicked => { root.page = 6; }
+                        }
+                        NavItem {
+                            text: @tr("Storage");
+                            icon: Icons.drive;
+                            active: root.page == 3;
+                            clicked => { root.page = 3; }
+                        }
+                        NavItem {
+                            text: @tr("Background");
+                            icon: Icons.activity;
+                            active: root.page == 7;
+                            clicked => { root.page = 7; }
+                        }
+
+                        Rectangle { height: 22px; }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: @tr("TOOLS");
+                                color: Theme.faint;
+                                font-size: 11px;
+                                font-weight: 700;
+                                letter-spacing: 1px;
+                            }
+                        }
+                        Rectangle { height: 6px; }
+
+                        NavItem {
+                            text: @tr("Monitor");
+                            icon: Icons.monitor;
+                            active: root.page == 9;
+                            clicked => { root.page = 9; }
+                        }
+
+                        Rectangle { min-height: 22px; vertical-stretch: 1; }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: @tr("SYSTEM");
+                                color: Theme.faint;
+                                font-size: 11px;
+                                font-weight: 700;
+                                letter-spacing: 1px;
+                            }
+                        }
+                        Rectangle { height: 6px; }
+
+                        NavItem {
+                            text: @tr("Protection");
+                            icon: Icons.shield;
+                            active: root.page == 2;
+                            clicked => { root.page = 2; }
+                        }
+                        NavItem {
+                            text: @tr("Settings");
+                            icon: Icons.settings;
+                            active: root.page == 1;
+                            clicked => { root.page = 1; }
+                        }
                     }
-                }
-                Rectangle { height: 6px; }
-
-                NavItem {
-                    text: @tr("Memory");
-                    icon: Icons.memory;
-                    active: root.page == 0;
-                    clicked => { root.page = 0; }
-                }
-                NavItem {
-                    text: @tr("Performance");
-                    icon: Icons.gauge;
-                    active: root.page == 4;
-                    clicked => { root.page = 4; }
-                }
-                NavItem {
-                    text: @tr("Games");
-                    icon: Icons.gamepad;
-                    active: root.page == 5;
-                    clicked => { root.page = 5; }
-                }
-                NavItem {
-                    text: @tr("Internet");
-                    icon: Icons.wifi;
-                    active: root.page == 8;
-                    clicked => { root.page = 8; }
-                }
-                NavItem {
-                    text: @tr("Input");
-                    icon: Icons.mouse;
-                    active: root.page == 6;
-                    clicked => { root.page = 6; }
-                }
-                NavItem {
-                    text: @tr("Storage");
-                    icon: Icons.drive;
-                    active: root.page == 3;
-                    clicked => { root.page = 3; }
-                }
-                NavItem {
-                    text: @tr("Background");
-                    icon: Icons.activity;
-                    active: root.page == 7;
-                    clicked => { root.page = 7; }
-                }
-
-                Rectangle { vertical-stretch: 1; }
-
-                HorizontalLayout {
-                    padding-left: 12px;
-                    Text {
-                        text: @tr("SYSTEM");
-                        color: Theme.faint;
-                        font-size: 11px;
-                        font-weight: 700;
-                        letter-spacing: 1px;
-                    }
-                }
-                Rectangle { height: 6px; }
-
-                NavItem {
-                    text: @tr("Protection");
-                    icon: Icons.shield;
-                    active: root.page == 2;
-                    clicked => { root.page = 2; }
-                }
-                NavItem {
-                    text: @tr("Settings");
-                    icon: Icons.settings;
-                    active: root.page == 1;
-                    clicked => { root.page = 1; }
                 }
             }
 
@@ -438,6 +477,13 @@ export component AppWindow inherits Window {
                     p8 := InternetPage {
                         width: s8.visible-width;
                         height: s8.content-height;
+                    }
+                }
+                if root.page == 9: s9 := PageScroll {
+                    needs: p9.min-height;
+                    p9 := MonitorPage {
+                        width: s9.visible-width;
+                        height: s9.content-height;
                     }
                 }
             }

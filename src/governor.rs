@@ -713,7 +713,7 @@ fn fullscreen_foreground() -> bool {
 }
 
 /// Whether the process already chose efficiency mode itself; `None` when it can't be read.
-fn eco_set(handle: HANDLE) -> Option<bool> {
+pub fn eco_set(handle: HANDLE) -> Option<bool> {
     let mut state =
         PROCESS_POWER_THROTTLING_STATE { Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION, ..Default::default() };
     unsafe {
@@ -729,7 +729,7 @@ fn eco_set(handle: HANDLE) -> Option<bool> {
 }
 
 /// EcoQoS on, or back to letting Windows decide.
-fn eco(handle: HANDLE, on: bool) -> bool {
+pub fn eco(handle: HANDLE, on: bool) -> bool {
     let state = PROCESS_POWER_THROTTLING_STATE {
         Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
         ControlMask: if on { PROCESS_POWER_THROTTLING_EXECUTION_SPEED } else { 0 },

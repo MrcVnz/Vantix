@@ -4,6 +4,7 @@ mod boost;
 mod disk;
 mod governor;
 mod memory;
+mod monitor;
 mod net;
 mod reg;
 mod restore;
@@ -83,6 +84,8 @@ struct State {
     /// Since when the tray icon has been found missing, see check_tray.
     tray_missing: Option<Instant>,
     opened_without_tray: bool,
+    /// The rows on the Monitor page, in screen order, for its buttons.
+    programs: Vec<monitor::Program>,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -160,6 +163,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ticks: 0,
             tray_missing: None,
             opened_without_tray: false,
+            programs: Vec::new(),
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -200,6 +204,15 @@ fn bind_with<T>(app: &Rc<App>, f: impl Fn(&Rc<App>, T) + 'static) -> impl Fn(T) 
     move |value| {
         if let Some(app) = app.upgrade() {
             f(&app, value)
+        }
+    }
+}
+
+fn bind_with2<T, U>(app: &Rc<App>, f: impl Fn(&Rc<App>, T, U) + 'static) -> impl Fn(T, U) + 'static {
+    let app: Weak<App> = Rc::downgrade(app);
+    move |first, second| {
+        if let Some(app) = app.upgrade() {
+            f(&app, first, second)
         }
     }
 }
@@ -536,6 +549,31 @@ impl App {
             );
         }));
         internet.set_upload_known(self.state.borrow().settings.upload_mbps.is_some());
+
+        let monitor = ui.global::<Monitor>();
+        monitor.set_sort(monitor::sort() as i32);
+        monitor.on_sorted(|key| {
+            monitor::set_sort(match key {
+                1 => monitor::Sort::Gpu,
+                2 => monitor::Sort::Memory,
+                _ => monitor::Sort::Cpu,
+            })
+        });
+        monitor.on_end(bind_with(self, |app, i: i32| {
+            app.on_program(i, |p| {
+                monitor::end(&p.name, &p.pids);
+            })
+        }));
+        monitor.on_eco(bind_with2(self, |app, i: i32, on: bool| {
+            app.on_program(i, move |p| {
+                monitor::set_eco(&p.name, &p.pids, on);
+            })
+        }));
+        monitor.on_trim(bind_with(self, |app, i: i32| {
+            app.on_program(i, |p| {
+                monitor::trim(&p.name, &p.pids);
+            })
+        }));
         self.show_bloat(&ui);
         self.show_dns(&ui);
 
@@ -598,6 +636,7 @@ impl App {
             live.set_efficient(status.efficient as i32);
         });
         self.tick_internet();
+        self.tick_monitor();
         let due = {
             let mut state = self.state.borrow_mut();
             if state.loads.len() == SPARK_SAMPLES {
@@ -1469,6 +1508,26 @@ impl App {
         );
     }
 
+    /// Samples only while the Monitor page is on screen.
+    fn tick_monitor(&self) {
+        let open = self.with_ui_value(|ui| ui.get_page() == MONITOR_PAGE).unwrap_or(false);
+        if !open {
+            monitor::unwatch();
+            return;
+        }
+        monitor::watch();
+        let snapshot = monitor::snapshot();
+        let mut state = self.state.borrow_mut();
+        self.with_ui(|ui| show_monitor(ui, snapshot.as_ref(), &mut state.programs));
+    }
+
+    /// Runs a button of the Monitor page on its row's processes, off the UI thread. The
+    /// next sample shows the result.
+    fn on_program(self: &Rc<Self>, i: i32, f: impl FnOnce(&monitor::Program) + Send + 'static) {
+        let Some(program) = self.state.borrow().programs.get(i as usize).cloned() else { return };
+        self.run_job(move || f(&program), |_, _| {});
+    }
+
     /// The live ping runs only while its tab is on screen and the traffic count only while
     /// its own is, so neither costs anything the rest of the time.
     fn tick_internet(&self) {
@@ -1707,6 +1766,7 @@ impl App {
 }
 
 const INTERNET_PAGE: i32 = 8;
+const MONITOR_PAGE: i32 = 9;
 /// Ping targets the user can add, on top of the router and Cloudflare.
 const MAX_HOSTS: usize = 5;
 
@@ -1885,20 +1945,24 @@ fn show_stats(ui: &AppWindow, stats: &memory::Stats) {
     );
 }
 
-/// Builds the line and the filled area as SVG paths, newest sample on the right edge.
-fn show_sparkline(ui: &AppWindow, loads: &VecDeque<u32>) {
-    let offset = SPARK_SAMPLES - loads.len();
+/// The line and the filled area of a sparkline as SVG paths, on a 59 x 100 box with the
+/// newest sample on the right edge. Values are percentages.
+fn spark_paths(values: impl ExactSizeIterator<Item = u32>) -> (String, String) {
+    let offset = SPARK_SAMPLES - values.len().min(SPARK_SAMPLES);
     let mut line = String::new();
-    for (i, load) in loads.iter().enumerate() {
+    for (i, value) in values.take(SPARK_SAMPLES).enumerate() {
         let command = if i == 0 { 'M' } else { 'L' };
-        let _ = write!(line, "{command}{} {} ", offset + i, 100 - load.min(&100));
+        let _ = write!(line, "{command}{} {} ", offset + i, 100 - value.min(100));
     }
-    let area = if loads.is_empty() {
-        String::new()
-    } else {
-        format!("{line}L{} 100 L{offset} 100 Z", SPARK_SAMPLES - 1)
-    };
+    if line.is_empty() {
+        return (line, String::new());
+    }
+    let area = format!("{line}L{} 100 L{offset} 100 Z", SPARK_SAMPLES - 1);
+    (line, area)
+}
 
+fn show_sparkline(ui: &AppWindow, loads: &VecDeque<u32>) {
+    let (line, area) = spark_paths(loads.iter().copied());
     let mem = ui.global::<Memory>();
     mem.set_spark_line(line.into());
     mem.set_spark_fill(area.into());
@@ -1983,6 +2047,115 @@ fn startup_row(entry: &startup::Entry) -> StartupRow {
         enabled: entry.enabled,
         memory: entry.memory.map(format_bytes).unwrap_or_default().into(),
     }
+}
+
+fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, shown: &mut Vec<monitor::Program>) {
+    let m = ui.global::<Monitor>();
+    let Some(s) = snapshot else {
+        m.set_ready(false);
+        shown.clear();
+        m.set_programs(ModelRc::default());
+        return;
+    };
+    if !m.get_ready() {
+        let info = monitor::cpu_info();
+        m.set_cpu_name(info.name.as_str().into());
+        m.set_cpu_cores(info.cores as i32);
+        m.set_cpu_threads(info.threads as i32);
+        m.set_cpu_performance(info.performance as i32);
+        m.set_cpu_l3(format_bytes(info.l3).into());
+        m.set_cpu_base(format_ghz(f64::from(info.base_mhz)).into());
+        let features: Vec<slint::SharedString> = info.features.iter().map(|f| (*f).into()).collect();
+        m.set_features(ModelRc::new(VecModel::from(features)));
+        m.set_ready(true);
+    }
+    let percent = |value: f64| value.round().clamp(0.0, 100.0) as u32;
+    // Rates scale to the busiest second of the minute, with a floor so idle noise stays flat.
+    let scaled = |series: &VecDeque<f64>, floor: f64| {
+        let top = series.iter().copied().fold(floor, f64::max);
+        series.iter().map(|v| (v / top * 100.0).round() as u32).collect::<Vec<_>>()
+    };
+
+    m.set_cores(ModelRc::new(VecModel::from(s.cores.clone())));
+    m.set_cpu_load(format!("{:.0}%", s.cpu).into());
+    m.set_cpu_clock(if s.mhz > 0.0 { format_ghz(s.mhz) } else { String::new() }.into());
+    let (line, area) = spark_paths(s.history[0].iter().map(|v| percent(*v)));
+    m.set_cpu_line(line.into());
+    m.set_cpu_area(area.into());
+
+    m.set_has_gpu(!s.gpus.is_empty());
+    if let Some(gpu) = s.gpus.first() {
+        m.set_gpu_name(gpu.name.as_str().into());
+        m.set_gpu_load(format!("{:.0}%", gpu.load).into());
+        m.set_gpu_memory(format!("{} / {}", format_bytes(gpu.memory_used), format_bytes(gpu.memory_total)).into());
+        let (line, area) = spark_paths(s.history[1].iter().map(|v| percent(*v)));
+        m.set_gpu_line(line.into());
+        m.set_gpu_area(area.into());
+    }
+
+    let read: f64 = s.disks.iter().map(|d| d.read).sum();
+    let write: f64 = s.disks.iter().map(|d| d.write).sum();
+    let active = s.disks.iter().map(|d| d.active).fold(0.0, f32::max);
+    m.set_disk_load(format!("{active:.0}%").into());
+    m.set_disk_read(format_speed(read).into());
+    m.set_disk_write(format_speed(write).into());
+    let (line, area) = spark_paths(s.history[2].iter().map(|v| percent(*v)));
+    m.set_disk_line(line.into());
+    m.set_disk_area(area.into());
+
+    m.set_net_total(format_speed(s.net[0] + s.net[1]).into());
+    m.set_net_down(format_speed(s.net[0]).into());
+    m.set_net_up(format_speed(s.net[1]).into());
+    let (line, area) = spark_paths(scaled(&s.history[3], 100.0 * 1024.0).into_iter());
+    m.set_net_line(line.into());
+    m.set_net_area(area.into());
+
+    // While the pointer is over the list, rows keep their place and only their numbers
+    // change, so a button never moves away from under it.
+    let programs: Vec<monitor::Program> = if m.get_hovering() && !shown.is_empty() {
+        shown
+            .iter()
+            .map(|old| s.programs.iter().find(|p| p.name == old.name).cloned().unwrap_or_else(|| old.clone()))
+            .collect()
+    } else {
+        s.programs.clone()
+    };
+    let rows: Vec<ProgramRow> = programs
+        .iter()
+        .map(|p| ProgramRow {
+            name: p.name.trim_end_matches(".exe").into(),
+            count: p.pids.len() as i32,
+            cpu: format_percent(p.cpu).into(),
+            gpu: format_percent(p.gpu).into(),
+            memory: format_bytes(p.memory).into(),
+            eco: p.eco.map_or(-1, i32::from),
+            can_end: p.can_end,
+        })
+        .collect();
+    *shown = programs;
+    // In place when the count is the same, so each row keeps its state, like a pending End.
+    let model = m.get_programs();
+    match model.as_any().downcast_ref::<VecModel<ProgramRow>>() {
+        Some(current) if current.row_count() == rows.len() => {
+            for (i, row) in rows.into_iter().enumerate() {
+                current.set_row_data(i, row);
+            }
+        }
+        _ => m.set_programs(ModelRc::new(VecModel::from(rows))),
+    }
+}
+
+fn format_ghz(mhz: f64) -> String {
+    format!("{:.2} GHz", mhz / 1000.0)
+}
+
+fn format_percent(value: f32) -> String {
+    if value < 0.05 { "0%".into() } else if value < 10.0 { format!("{value:.1}%") } else { format!("{value:.0}%") }
+}
+
+/// Bytes per second, never empty.
+fn format_speed(bytes_per_second: f64) -> String {
+    format!("{}/s", format_traffic(bytes_per_second as u64))
 }
 
 fn format_bytes(bytes: u64) -> String {

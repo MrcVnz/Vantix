@@ -1,0 +1,366 @@
+import { Theme, Card, Button, Chip } from "theme.slint";
+import { Sparkline } from "memory.slint";
+
+/// Every process with the same exe name, as one row.
+export struct ProgramRow {
+    name: string,
+    /// How many processes share the name.
+    count: int,
+    cpu: string,
+    gpu: string,
+    memory: string,
+    /// 1 on, 0 off, -1 when Windows doesn't let Vantix look.
+    eco: int,
+    can-end: bool,
+}
+
+export global Monitor {
+    in property <string> cpu-name;
+    in property <int> cpu-cores;
+    in property <int> cpu-threads;
+    /// Performance cores on a hybrid CPU, 0 otherwise.
+    in property <int> cpu-performance;
+    in property <string> cpu-l3;
+    in property <string> cpu-base;
+    in property <[string]> features;
+    in property <[float]> cores;
+    in property <string> cpu-load;
+    in property <string> cpu-clock;
+    in property <string> cpu-line;
+    in property <string> cpu-area;
+
+    in property <bool> has-gpu;
+    in property <string> gpu-name;
+    in property <string> gpu-load;
+    in property <string> gpu-memory;
+    in property <string> gpu-line;
+    in property <string> gpu-area;
+
+    /// Active time of the busiest drive.
+    in property <string> disk-load;
+    in property <string> disk-read;
+    in property <string> disk-write;
+    in property <string> disk-line;
+    in property <string> disk-area;
+
+    in property <string> net-total;
+    in property <string> net-down;
+    in property <string> net-up;
+    in property <string> net-line;
+    in property <string> net-area;
+
+    in property <bool> ready;
+    in property <[ProgramRow]> programs;
+    /// 0 CPU, 1 GPU, 2 memory.
+    in-out property <int> sort;
+    /// The pointer is over the list, so main.rs keeps the rows where they are.
+    in-out property <bool> hovering;
+    callback sorted(int);
+    callback end(int);
+    callback eco(int, bool);
+    callback trim(int);
+}
+
+component Tile inherits Rectangle {
+    in property <string> title;
+    in property <string> value;
+    in property <string> detail;
+    in property <string> line;
+    in property <string> area;
+    in property <color> tint: Theme.accent;
+
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    horizontal-stretch: 1;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 4px;
+        Text {
+            text: root.title;
+            color: Theme.muted;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        Text {
+            text: root.value;
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 22px;
+            font-weight: 700;
+            overflow: elide;
+        }
+        Text {
+            text: root.detail;
+            color: Theme.faint;
+            font-size: 12px;
+            overflow: elide;
+        }
+        Rectangle { height: 6px; }
+        Sparkline {
+            height: 44px;
+            line: root.line;
+            area: root.area;
+            tint: root.tint;
+        }
+    }
+}
+
+component SortHeading inherits Text {
+    in property <int> key;
+    color: Monitor.sort == root.key ? Theme.text : Theme.faint;
+    font-size: 11.5px;
+    font-weight: 600;
+    horizontal-alignment: right;
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            Monitor.sort = root.key;
+            Monitor.sorted(root.key);
+        }
+    }
+}
+
+component Cell inherits Text {
+    color: Theme.text;
+    horizontal-alignment: right;
+    vertical-alignment: center;
+}
+
+component ProgramLine inherits HorizontalLayout {
+    in property <ProgramRow> item;
+    in property <int> index;
+    /// The program the first click on End was for. Tied to the name, not the row, so a
+    /// list that reorders between the two clicks can't end something else.
+    property <string> armed;
+    property <bool> confirm: root.armed != "" && root.armed == root.item.name;
+
+    spacing: 16px;
+    padding-left: 6px;
+    padding-right: 6px;
+    height: 44px;
+
+    HorizontalLayout {
+        horizontal-stretch: 1;
+        spacing: 8px;
+        alignment: start;
+        Text {
+            text: root.item.name;
+            color: Theme.text;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.item.count > 1: Text {
+            text: "×" + root.item.count;
+            color: Theme.faint;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    Cell { width: 64px; text: root.item.cpu; }
+    if Monitor.has-gpu: Cell { width: 64px; text: root.item.gpu; }
+    Cell { width: 84px; text: root.item.memory; }
+    HorizontalLayout {
+        width: 270px;
+        spacing: 6px;
+        alignment: end;
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: @tr("Eco");
+                tall: 30px;
+                primary: root.item.eco == 1;
+                enabled: root.item.eco >= 0;
+                clicked => { Monitor.eco(root.index, root.item.eco != 1); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: @tr("Trim");
+                tall: 30px;
+                clicked => { Monitor.trim(root.index); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: root.confirm ? @tr("Sure?") : @tr("End");
+                tall: 30px;
+                danger: true;
+                enabled: root.item.can-end;
+                clicked => {
+                    if root.confirm {
+                        root.armed = "";
+                        Monitor.end(root.index);
+                    } else {
+                        root.armed = root.item.name;
+                    }
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 4s;
+        running: root.armed != "";
+        triggered => { root.armed = ""; }
+    }
+}
+
+export component MonitorPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Monitor");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("What the PC is doing right now, updated every second while this page is open.");
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        Tile {
+            title: @tr("Processor");
+            value: Monitor.cpu-load;
+            detail: Monitor.cpu-clock == "" ? "" : @tr("Running at {}", Monitor.cpu-clock);
+            line: Monitor.cpu-line;
+            area: Monitor.cpu-area;
+        }
+        if Monitor.has-gpu: Tile {
+            title: @tr("Graphics card");
+            value: Monitor.gpu-load;
+            detail: @tr("Video memory {}", Monitor.gpu-memory);
+            line: Monitor.gpu-line;
+            area: Monitor.gpu-area;
+            tint: Theme.info;
+        }
+        Tile {
+            title: @tr("Disk");
+            value: Monitor.disk-load;
+            detail: @tr("Read {}, write {}", Monitor.disk-read, Monitor.disk-write);
+            line: Monitor.disk-line;
+            area: Monitor.disk-area;
+            tint: Theme.warn;
+        }
+        Tile {
+            title: @tr("Network");
+            value: Monitor.net-total;
+            detail: @tr("Down {}, up {}", Monitor.net-down, Monitor.net-up);
+            line: Monitor.net-line;
+            area: Monitor.net-area;
+            tint: Theme.accent;
+        }
+    }
+
+    Card {
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: Monitor.cpu-name;
+                color: Theme.text;
+                font-size: 15px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: (Monitor.cpu-performance > 0
+                        ? @tr("{} cores ({} performance), {} threads", Monitor.cpu-cores, Monitor.cpu-performance, Monitor.cpu-threads)
+                        : @tr("{} cores, {} threads", Monitor.cpu-cores, Monitor.cpu-threads))
+                    + ", " + @tr("{} base clock, {} L3 cache", Monitor.cpu-base, Monitor.cpu-l3)
+                    + (Monitor.has-gpu ? ". " + Monitor.gpu-name : "");
+                color: Theme.muted;
+                overflow: elide;
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            for feature in Monitor.features: Chip { text: feature; }
+        }
+        HorizontalLayout {
+            spacing: Monitor.cores.length > 32 ? 2px : 6px;
+            height: 64px;
+            for load in Monitor.cores: VerticalLayout {
+                spacing: 4px;
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: 3px;
+                    background: Theme.background;
+                    Rectangle {
+                        y: parent.height - self.height;
+                        height: parent.height * clamp(load, 0, 100) / 100;
+                        border-radius: 3px;
+                        background: load > 85 ? Theme.warn : Theme.accent.with-alpha(0.8);
+                    }
+                }
+                if Monitor.cores.length <= 24: Text {
+                    text: round(load) + "%";
+                    color: Theme.faint;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+
+    Card {
+        pad: 14px;
+        vertical-stretch: 1;
+
+        HorizontalLayout {
+            spacing: 16px;
+            padding-left: 6px;
+            padding-right: 6px;
+            Text {
+                horizontal-stretch: 1;
+                text: @tr("Program");
+                color: Theme.faint;
+                font-size: 11.5px;
+                font-weight: 600;
+            }
+            SortHeading { width: 64px; key: 0; text: @tr("CPU"); }
+            if Monitor.has-gpu: SortHeading { width: 64px; key: 1; text: @tr("GPU"); }
+            SortHeading { width: 84px; key: 2; text: @tr("Memory"); }
+            Text {
+                width: 270px;
+                text: @tr("Click a column to sort");
+                color: Theme.faint;
+                font-size: 11.5px;
+                horizontal-alignment: right;
+            }
+        }
+
+        if !Monitor.ready: Text {
+            x: 6px;
+            text: @tr("Measuring...");
+            color: Theme.faint;
+        }
+
+        list := TouchArea {
+            VerticalLayout {
+                alignment: start;
+                for program[i] in Monitor.programs: ProgramLine {
+                    item: program;
+                    index: i;
+                }
+            }
+            changed has-hover => { Monitor.hovering = self.has-hover; }
+        }
+    }
+}

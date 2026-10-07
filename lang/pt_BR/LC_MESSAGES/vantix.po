@@ -1227,3 +1227,69 @@ msgstr "Uma política de QoS do Windows segura o upload do programa em metade do
 
 msgid "That program uploads slower, so a backup or sync takes longer to finish."
 msgstr "Esse programa envia mais devagar, então um backup ou sincronização demora mais para terminar."
+
+msgid "TOOLS"
+msgstr "FERRAMENTAS"
+
+msgid "Monitor"
+msgstr "Monitor"
+
+msgid "Eco"
+msgstr "Eco"
+
+msgid "Trim"
+msgstr "Reduzir"
+
+msgid "Sure?"
+msgstr "Certeza?"
+
+msgid "End"
+msgstr "Finalizar"
+
+msgid "What the PC is doing right now, updated every second while this page is open."
+msgstr "O que o PC está fazendo agora, atualizado a cada segundo enquanto esta página está aberta."
+
+msgid "Processor"
+msgstr "Processador"
+
+msgid "Running at {}"
+msgstr "Rodando a {}"
+
+msgid "Graphics card"
+msgstr "Placa de vídeo"
+
+msgid "Video memory {}"
+msgstr "Memória de vídeo {}"
+
+msgid "Disk"
+msgstr "Disco"
+
+msgid "Read {}, write {}"
+msgstr "Leitura {}, escrita {}"
+
+msgid "Network"
+msgstr "Rede"
+
+msgid "Down {}, up {}"
+msgstr "Download {}, upload {}"
+
+msgid "{} cores ({} performance), {} threads"
+msgstr "{} núcleos ({} de desempenho), {} threads"
+
+msgid "{} cores, {} threads"
+msgstr "{} núcleos, {} threads"
+
+msgid "{} base clock, {} L3 cache"
+msgstr "clock base de {}, cache L3 de {}"
+
+msgid "CPU"
+msgstr "CPU"
+
+msgid "GPU"
+msgstr "GPU"
+
+msgid "Click a column to sort"
+msgstr "Clique numa coluna para ordenar"
+
+msgid "Measuring..."
+msgstr "Medindo..."
