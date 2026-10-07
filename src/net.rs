@@ -22,18 +22,13 @@ use windows::Win32::Networking::WinHttp::{
     WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts, WinHttpWriteData,
 };
 use windows::Win32::Networking::WinSock::SOCKET_ADDRESS;
-use windows::Win32::System::Diagnostics::Etw::{
-    CONTROLTRACE_HANDLE, CloseTrace, ControlTraceW, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
-    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE,
-    EnableTraceEx2, OpenTraceW, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME,
-    ProcessTrace, StartTraceW, WNODE_FLAG_TRACED_GUID,
-};
+use windows::Win32::System::Diagnostics::Etw::EVENT_RECORD;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::core::{GUID, HSTRING, PCWSTR, PWSTR};
 
-use crate::{reg, tweaks};
+use crate::{etw, reg, tweaks};
 
 /// Anycast, so it answers from close by nearly everywhere, and the same network as the
 /// speed test server.
@@ -1486,103 +1481,33 @@ const KEYWORDS: u64 = 0x30;
 static COUNTERS: Mutex<Option<HashMap<u32, [u64; 2]>>> = Mutex::new(None);
 static SESSION_ON: AtomicBool = AtomicBool::new(false);
 
-#[repr(C)]
-struct Properties {
-    base: EVENT_TRACE_PROPERTIES,
-    name: [u16; 64],
-}
-
-fn properties() -> Properties {
-    let mut properties = Properties { base: EVENT_TRACE_PROPERTIES::default(), name: [0; 64] };
-    properties.base.Wnode.BufferSize = size_of::<Properties>() as u32;
-    properties.base.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
-    properties.base.Wnode.ClientContext = 1; // QPC timestamps
-    properties.base.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-    properties.base.FlushTimer = 1;
-    // One event per send and receive adds up fast on a gigabit line; small default
-    // buffers fill and drop events, which would read as less traffic than there was.
-    properties.base.BufferSize = 256; // KB
-    properties.base.MinimumBuffers = 8;
-    properties.base.MaximumBuffers = 64;
-    properties.base.LoggerNameOffset = std::mem::offset_of!(Properties, name) as u32;
-    properties
-}
-
-fn stop_session() {
-    let mut properties = properties();
-    unsafe {
-        let _ = ControlTraceW(
-            CONTROLTRACE_HANDLE::default(),
-            &HSTRING::from(SESSION),
-            &mut properties.base,
-            EVENT_TRACE_CONTROL_STOP,
-        );
-    }
-}
-
-/// Starts counting. Needs admin rights, which Vantix always has.
+/// Starts counting.
 pub fn traffic_start() -> windows::core::Result<()> {
     if SESSION_ON.swap(true, Ordering::Relaxed) {
         return Ok(());
     }
     *COUNTERS.lock().unwrap() = Some(HashMap::new());
-    let result = start_session();
+    let provider = etw::Provider { guid: KERNEL_NETWORK, level: 4, keywords: KEYWORDS, events: &[] };
+    // One event per send and receive adds up fast on a gigabit line; small default
+    // buffers fill and drop events, which would read as less traffic than there was.
+    let result = etw::start(SESSION, &[provider], 256, 64, on_event);
     if result.is_err() {
         SESSION_ON.store(false, Ordering::Relaxed);
     }
     result
 }
 
-fn start_session() -> windows::core::Result<()> {
-    stop_session();
-    let name = HSTRING::from(SESSION);
-    let mut properties = properties();
-    let mut handle = CONTROLTRACE_HANDLE::default();
-    unsafe {
-        StartTraceW(&mut handle, &name, &mut properties.base).ok()?;
-        let enabled = EnableTraceEx2(
-            handle,
-            &KERNEL_NETWORK,
-            EVENT_CONTROL_CODE_ENABLE_PROVIDER.0,
-            4, // TRACE_LEVEL_INFORMATION
-            KEYWORDS,
-            0,
-            0,
-            None,
-        );
-        if let Err(e) = enabled.ok() {
-            stop_session();
-            return Err(e);
-        }
-        let mut logger: Vec<u16> = SESSION.encode_utf16().chain([0]).collect();
-        let mut logfile = EVENT_TRACE_LOGFILEW { LoggerName: PWSTR(logger.as_mut_ptr()), ..Default::default() };
-        logfile.Anonymous1.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
-        logfile.Anonymous2.EventRecordCallback = Some(on_event);
-        let trace = OpenTraceW(&mut logfile);
-        if trace.Value == u64::MAX {
-            let error = windows::core::Error::from_thread();
-            stop_session();
-            return Err(error);
-        }
-        std::thread::spawn(move || {
-            let _ = ProcessTrace(&[trace], None, None);
-            let _ = CloseTrace(trace);
-        });
-    }
-    Ok(())
-}
-
 /// Ends a session left running by a Vantix that was killed or crashed on the traffic tab.
 pub fn end_leftover_trace() {
     if !SESSION_ON.load(Ordering::Relaxed) {
-        stop_session();
+        etw::stop(SESSION);
     }
 }
 
 /// Ends the session, which also makes the consumer thread return.
 pub fn traffic_stop() {
     if SESSION_ON.swap(false, Ordering::Relaxed) {
-        stop_session();
+        etw::stop(SESSION);
         *COUNTERS.lock().unwrap() = None;
         *NAMES.lock().unwrap() = None;
     }
@@ -1597,11 +1522,12 @@ unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
         10 | 26 | 42 | 58 => 1,
         _ => return,
     };
-    if record.EventHeader.ProviderId != KERNEL_NETWORK || record.UserDataLength < 8 || record.UserData.is_null() {
+    let data = etw::payload(record);
+    if record.EventHeader.ProviderId != KERNEL_NETWORK || data.len() < 8 {
         return;
     }
-    let data = record.UserData.cast::<u8>();
-    let (pid, size) = unsafe { (data.cast::<u32>().read_unaligned(), data.add(4).cast::<u32>().read_unaligned()) };
+    let pid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    let size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
     if let Some(counters) = COUNTERS.lock().unwrap().as_mut() {
         counters.entry(pid).or_default()[direction] += u64::from(size);
     }
@@ -1628,7 +1554,7 @@ pub fn traffic() -> HashMap<String, [u64; 2]> {
 /// that time; the cache is dropped when counting stops.
 static NAMES: Mutex<Option<HashMap<u32, String>>> = Mutex::new(None);
 
-fn process_name(pid: u32) -> String {
+pub fn process_name(pid: u32) -> String {
     match pid {
         0 => return "Idle".into(),
         4 => return "System".into(),

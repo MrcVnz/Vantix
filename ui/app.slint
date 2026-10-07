@@ -9,10 +9,11 @@ import { Startup, StartupRow, BackgroundPage } from "startup.slint";
 import { Live, ProBalanceCard, GameModeCard } from "live.slint";
 import { Net, InternetPage, PingRow, BloatResult, DnsRow, UsageRow } from "internet.slint";
 import { Monitor, MonitorPage, ProgramRow } from "monitor.slint";
+import { Frames, FramesPage, LiveRow, RunRow } from "frames.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Theme }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Frames, LiveRow, RunRow, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -349,6 +350,12 @@ export component AppWindow inherits Window {
                             active: root.page == 9;
                             clicked => { root.page = 9; }
                         }
+                        NavItem {
+                            text: @tr("Frame rate");
+                            icon: Icons.film;
+                            active: root.page == 10;
+                            clicked => { root.page = 10; }
+                        }
 
                         Rectangle { min-height: 22px; vertical-stretch: 1; }
 
@@ -484,6 +491,13 @@ export component AppWindow inherits Window {
                     p9 := MonitorPage {
                         width: s9.visible-width;
                         height: s9.content-height;
+                    }
+                }
+                if root.page == 10: s10 := PageScroll {
+                    needs: p10.min-height;
+                    p10 := FramesPage {
+                        width: s10.visible-width;
+                        height: s10.content-height;
                     }
                 }
             }

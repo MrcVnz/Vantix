@@ -1293,3 +1293,69 @@ msgstr "Clique numa coluna para ordenar"
 
 msgid "Measuring..."
 msgstr "Medindo..."
+
+msgid "Frame rate"
+msgstr "FPS"
+
+msgid "Frames each program hands to Windows, measured the same way as PresentMon. Record a game, change one thing, record again in the same spot and compare."
+msgstr "Quadros que cada programa entrega ao Windows, medidos do mesmo jeito que o PresentMon. Grave um jogo, mude uma coisa, grave de novo no mesmo lugar e compare."
+
+msgid "Drawing now"
+msgstr "Desenhando agora"
+
+msgid "Recording {} starts in {} s. Switch to the game and play as usual."
+msgstr "A gravação de {} começa em {} s. Volte para o jogo e jogue normalmente."
+
+msgid "Recording {}: {} of {} s. You can keep playing; Vantix lets you know when it's done."
+msgstr "Gravando {}: {} de {} s. Pode continuar jogando; o Vantix avisa quando terminar."
+
+msgid "Windows didn't allow the frame trace, so frame rates can't be measured."
+msgstr "O Windows não permitiu o rastreio de quadros, então o FPS não pode ser medido."
+
+msgid "Starting the measurement..."
+msgstr "Iniciando a medição..."
+
+msgid "Nothing is drawing frames right now. Start a game and it shows up here within a few seconds."
+msgstr "Nada está desenhando quadros agora. Abra um jogo e ele aparece aqui em poucos segundos."
+
+msgid "FPS"
+msgstr "FPS"
+
+msgid "Frame time"
+msgstr "Tempo de quadro"
+
+msgid "Record {} s"
+msgstr "Gravar {} s"
+
+msgid "Recordings"
+msgstr "Gravações"
+
+msgid "B ({}) against A ({})"
+msgstr "B ({}) contra A ({})"
+
+msgid "1% low"
+msgstr "1% low"
+
+msgid "0.1% low"
+msgstr "0,1% low"
+
+msgid "The average moved by more than it wanders from one second to the next, so the change is real."
+msgstr "A média mudou mais do que varia de um segundo para o outro, então a diferença é real."
+
+msgid "The average stayed within how much it wanders from one second to the next: no real difference."
+msgstr "A média ficou dentro do quanto varia de um segundo para o outro: não há diferença real."
+
+msgid "Nothing recorded yet."
+msgstr "Nada gravado ainda."
+
+msgid "Click two recordings to compare them: the first is A, the second is B. Compare the same game, in the same place, with one change between them."
+msgstr "Clique em duas gravações para comparar: a primeira é A, a segunda é B. Compare o mesmo jogo, no mesmo lugar, com uma mudança entre elas."
+
+msgid "Frame rate recorded"
+msgstr "FPS gravado"
+
+msgid "{}: {} FPS on average, {} FPS 1% low"
+msgstr "{}: {} FPS de média, {} FPS no 1% low"
+
+msgid "{} closed before 10 seconds were recorded"
+msgstr "{} fechou antes de gravar 10 segundos"

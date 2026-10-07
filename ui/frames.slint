@@ -1,0 +1,324 @@
+import { Theme, Icons, Icon, Card, Button } from "theme.slint";
+
+export struct LiveRow {
+    name: string,
+    fps: string,
+    frame-time: string,
+}
+
+export struct RunRow {
+    name: string,
+    time: string,
+    average: string,
+    low1: string,
+    low01: string,
+    /// 0 not picked, 1 is A, 2 is B.
+    pick: int,
+}
+
+export global Frames {
+    in property <[LiveRow]> live;
+    /// Windows refused the trace.
+    in property <bool> failed;
+    /// The trace was just started; frames take a couple of seconds to show.
+    in property <bool> warming;
+    /// 0 idle, 1 counting down, 2 recording.
+    in property <int> stage;
+    in property <string> target;
+    /// Seconds left in the countdown, or recorded so far.
+    in property <int> seconds;
+    in property <int> length;
+    in property <[RunRow]> runs;
+
+    in property <bool> comparing;
+    in property <string> name-a;
+    in property <string> name-b;
+    in property <string> diff-average;
+    in property <string> diff-low1;
+    in property <string> diff-low01;
+    /// Sign of each difference, for its color: -1, 0 or 1.
+    in property <int> sign-average;
+    in property <int> sign-low1;
+    in property <int> sign-low01;
+    /// The average moved by more than it wanders from second to second.
+    in property <bool> real;
+
+    callback record(int);
+    callback cancel();
+    callback pick(int);
+    callback remove(int);
+}
+
+component Heading inherits Text {
+    color: Theme.faint;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+component Number inherits Text {
+    color: Theme.text;
+    font-weight: 600;
+    horizontal-alignment: right;
+    vertical-alignment: center;
+}
+
+component Difference inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <int> sign;
+    spacing: 2px;
+    horizontal-stretch: 1;
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+    }
+    Text {
+        text: root.value;
+        color: root.sign > 0 ? Theme.accent : root.sign < 0 ? Theme.bad : Theme.text;
+        font-family: Theme.display-font;
+        font-size: 22px;
+        font-weight: 700;
+    }
+}
+
+export component FramesPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Frame rate");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("Frames each program hands to Windows, measured the same way as PresentMon. Record a game, change one thing, record again in the same spot and compare.");
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    Card {
+        title: @tr("Drawing now");
+        icon: Icons.film;
+
+        if Frames.stage > 0: Rectangle {
+            border-radius: Theme.radius-small;
+            background: Theme.accent.with-alpha(0.08);
+            HorizontalLayout {
+                padding: 12px;
+                padding-left: 14px;
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 6px;
+                    alignment: center;
+                    Text {
+                        text: Frames.stage == 1
+                            ? @tr("Recording {} starts in {} s. Switch to the game and play as usual.", Frames.target, Frames.seconds)
+                            : @tr("Recording {}: {} of {} s. You can keep playing; Vantix lets you know when it's done.", Frames.target, Frames.seconds, Frames.length);
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+                    Rectangle {
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.background;
+                        Rectangle {
+                            x: 0;
+                            width: Frames.stage == 2 ? parent.width * Frames.seconds / max(1, Frames.length) : 0;
+                            border-radius: 2px;
+                            background: Theme.accent;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: @tr("Cancel");
+                        tall: 34px;
+                        clicked => { Frames.cancel(); }
+                    }
+                }
+            }
+        }
+
+        if Frames.failed: Text {
+            text: @tr("Windows didn't allow the frame trace, so frame rates can't be measured.");
+            color: Theme.bad;
+            wrap: word-wrap;
+        }
+        if !Frames.failed && Frames.live.length == 0: Text {
+            text: Frames.warming ? @tr("Starting the measurement...")
+                : @tr("Nothing is drawing frames right now. Start a game and it shows up here within a few seconds.");
+            color: Theme.faint;
+            wrap: word-wrap;
+        }
+        if Frames.live.length > 0: HorizontalLayout {
+            spacing: 16px;
+            Heading { horizontal-stretch: 1; text: @tr("Program"); }
+            Heading { width: 70px; text: @tr("FPS"); horizontal-alignment: right; }
+            Heading { width: 110px; text: @tr("Frame time"); horizontal-alignment: right; }
+            Rectangle { width: 130px; }
+        }
+        for row[i] in Frames.live: HorizontalLayout {
+            spacing: 16px;
+            height: 40px;
+            Text {
+                text: row.name;
+                color: Theme.text;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            Number { width: 70px; text: row.fps; }
+            Number {
+                width: 110px;
+                text: row.frame-time;
+                color: Theme.muted;
+                font-weight: 400;
+            }
+            HorizontalLayout {
+                width: 130px;
+                alignment: end;
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: @tr("Record {} s", Frames.length);
+                        tall: 32px;
+                        enabled: Frames.stage == 0;
+                        clicked => { Frames.record(i); }
+                    }
+                }
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Recordings");
+        icon: Icons.history;
+        vertical-stretch: 1;
+
+        if Frames.comparing: Rectangle {
+            border-radius: Theme.radius-small;
+            background: Theme.background;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                Text {
+                    text: @tr("B ({}) against A ({})", Frames.name-b, Frames.name-a);
+                    color: Theme.muted;
+                    overflow: elide;
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    Difference { label: @tr("Average"); value: Frames.diff-average; sign: Frames.sign-average; }
+                    Difference { label: @tr("1% low"); value: Frames.diff-low1; sign: Frames.sign-low1; }
+                    Difference { label: @tr("0.1% low"); value: Frames.diff-low01; sign: Frames.sign-low01; }
+                }
+                Text {
+                    text: Frames.real
+                        ? @tr("The average moved by more than it wanders from one second to the next, so the change is real.")
+                        : @tr("The average stayed within how much it wanders from one second to the next: no real difference.");
+                    color: Frames.real ? Theme.text : Theme.muted;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        Text {
+            text: Frames.runs.length == 0 ? @tr("Nothing recorded yet.")
+                : @tr("Click two recordings to compare them: the first is A, the second is B. Compare the same game, in the same place, with one change between them.");
+            color: Theme.faint;
+            wrap: word-wrap;
+        }
+
+        if Frames.runs.length > 0: HorizontalLayout {
+            spacing: 16px;
+            padding-left: 8px;
+            padding-right: 8px;
+            Rectangle { width: 22px; }
+            Heading { horizontal-stretch: 1; text: @tr("Program"); }
+            Heading { width: 80px; text: @tr("Average"); horizontal-alignment: right; }
+            Heading { width: 70px; text: @tr("1% low"); horizontal-alignment: right; }
+            Heading { width: 70px; text: @tr("0.1% low"); horizontal-alignment: right; }
+            Rectangle { width: 32px; }
+        }
+        for run[i] in Frames.runs: Rectangle {
+            height: 44px;
+            border-radius: Theme.radius-small;
+            background: run.pick > 0 ? Theme.raised : area.has-hover ? Theme.surface.brighter(0.15) : transparent;
+
+            area := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { Frames.pick(i); }
+            }
+
+            HorizontalLayout {
+                spacing: 16px;
+                padding-left: 8px;
+                padding-right: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 22px;
+                        height: 22px;
+                        border-radius: 11px;
+                        background: run.pick > 0 ? Theme.accent : transparent;
+                        border-width: run.pick > 0 ? 0 : 1px;
+                        border-color: Theme.border-strong;
+                        Text {
+                            text: run.pick == 1 ? "A" : run.pick == 2 ? "B" : "";
+                            color: Theme.background;
+                            font-size: 11px;
+                            font-weight: 700;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text {
+                        text: run.name;
+                        color: Theme.text;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: run.time;
+                        color: Theme.faint;
+                        font-size: 12px;
+                    }
+                }
+                Number { width: 80px; text: run.average; }
+                Number { width: 70px; text: run.low1; }
+                Number { width: 70px; text: run.low01; }
+                VerticalLayout {
+                    alignment: center;
+                    width: 32px;
+                    Rectangle {
+                        width: 32px;
+                        height: 32px;
+                        border-radius: Theme.radius-small;
+                        background: remove.has-hover ? Theme.bad.with-alpha(0.15) : transparent;
+                        Icon {
+                            data: Icons.trash;
+                            size: 16px;
+                            tint: remove.has-hover ? Theme.bad : Theme.faint;
+                        }
+                        remove := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { Frames.remove(i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
