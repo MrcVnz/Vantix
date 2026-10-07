@@ -1206,3 +1206,24 @@ msgstr "O 5 GHz alcança menos através de paredes. Se o sinal ficar fraco em al
 
 msgid "Carried around, the laptop stays on a far access point longer before it switches."
 msgstr "Se o notebook anda pela casa, ele fica mais tempo num ponto de acesso longe antes de trocar."
+
+msgid "Upload limit"
+msgstr "Limite de upload"
+
+msgid "Limit"
+msgstr "Limitar"
+
+msgid "TCP and UDP traffic of every program since this tab opened, games and voice chat included. Limit holds a program's upload to half your line, so it can't lag the rest."
+msgstr "Tráfego TCP e UDP de cada programa desde que esta aba abriu, incluindo jogos e chat de voz. Limitar segura o upload de um programa em metade da sua linha, para ele não atrasar o resto."
+
+msgid "TCP and UDP traffic of every program since this tab opened, games and voice chat included. Run the Bufferbloat test once to limit a program's upload."
+msgstr "Tráfego TCP e UDP de cada programa desde que esta aba abriu, incluindo jogos e chat de voz. Rode o teste de Bufferbloat uma vez para poder limitar o upload de um programa."
+
+msgid "Limit a program's upload"
+msgstr "Limitar o upload de um programa"
+
+msgid "A Windows QoS policy holds the program's upload to half of what the Bufferbloat test measured, so it can't fill the line and raise everyone's ping. Downloads stay as they are: Windows can only limit what a program sends. Takes effect at once."
+msgstr "Uma política de QoS do Windows segura o upload do programa em metade do que o teste de Bufferbloat mediu, para ele não encher a linha e subir o ping de todo mundo. Os downloads ficam como estão: o Windows só limita o que um programa envia. Vale na hora."
+
+msgid "That program uploads slower, so a backup or sync takes longer to finish."
+msgstr "Esse programa envia mais devagar, então um backup ou sincronização demora mais para terminar."

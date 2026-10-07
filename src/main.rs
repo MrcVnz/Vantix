@@ -516,6 +516,26 @@ impl App {
                 app.ask(Ask::Undo(tweak));
             }
         }));
+        internet.on_limit_upload(bind_with(self, |app, program: slint::SharedString| {
+            let mbps = app.state.borrow().settings.upload_mbps;
+            let (Some(mbps), Some(tweak)) = (mbps, limit_tweak()) else { return };
+            // Half the line leaves the other half for everything else, games and calls included.
+            net::choose_limit(&program, (mbps * 500_000.0).max(1_000_000.0) as u64);
+            app.ask(Ask::Apply(tweak));
+        }));
+        internet.on_remove_limit(bind_with(self, |app, program: slint::SharedString| {
+            let program = program.to_string();
+            app.run_job(
+                move || net::remove_limit(&program),
+                |app, result| {
+                    if let Some(Err(e)) = result {
+                        system::log_error(net::LIMIT_TWEAK, &e);
+                    }
+                    app.refresh_tweaks();
+                },
+            );
+        }));
+        internet.set_upload_known(self.state.borrow().settings.upload_mbps.is_some());
         self.show_bloat(&ui);
         self.show_dns(&ui);
 
@@ -1223,6 +1243,12 @@ impl App {
         {
             subject = format!("{subject}: {name}");
         }
+        if let (Ask::Apply(i), Some((program, bits))) = (ask, net::chosen_limit())
+            && CATALOG[i].id == net::LIMIT_TWEAK
+        {
+            let program = program.trim_end_matches(".exe");
+            subject = format!("{subject}: {program}, {}", format_mbps(bits as f64 / 1e6));
+        }
         // Only changes that can be undone need a restore point; a retrim has nothing to save.
         // One point covers them all: the one made before Vantix's first change.
         let toggle = index.is_some_and(|i| matches!(CATALOG[i].kind, Kind::Toggle { .. }));
@@ -1521,9 +1547,20 @@ impl App {
         // throw a scrolled list back to the top.
         rows.truncate(12);
         let busiest = rows.iter().map(|r| r.2[0] + r.2[1]).fold(0.0, f64::max).max(1.0);
+        let limits = net::known_limits();
         let rows: Vec<UsageRow> = rows
             .into_iter()
             .map(|(name, total, rate)| UsageRow {
+                limit: limits
+                    .iter()
+                    .find(|(program, _)| program.eq_ignore_ascii_case(&name))
+                    .map(|(_, bits)| format_mbps(*bits as f64 / 1e6))
+                    .unwrap_or_default()
+                    .into(),
+                // Sending a lot now or since the tab opened: a button that comes and goes
+                // with every second's rate would move under the pointer.
+                can_limit: net::limitable(&name) && (rate[1] >= 125_000.0 || total[1] >= 5 << 20),
+                program: name.as_str().into(),
                 name: name.trim_end_matches(".exe").into(),
                 down: format_rate(rate[0]).into(),
                 up: format_rate(rate[1]).into(),
@@ -1545,8 +1582,17 @@ impl App {
                 let mut state = app.state.borrow_mut();
                 state.bloat_running = false;
                 state.bloat = Some(result.unwrap_or(Err(net::BloatError::NoServer)));
+                if let Some(Ok(bloat)) = &state.bloat
+                    && bloat.upload.mbps > 0.0
+                {
+                    state.settings.upload_mbps = Some(bloat.upload.mbps);
+                    let _ = state.settings.save();
+                }
             }
-            app.with_ui(|ui| app.show_bloat(ui));
+            app.with_ui(|ui| {
+                app.show_bloat(ui);
+                ui.global::<Net>().set_upload_known(app.state.borrow().settings.upload_mbps.is_some());
+            });
         });
     }
 
@@ -1666,6 +1712,10 @@ const MAX_HOSTS: usize = 5;
 
 fn dns_tweak() -> Option<usize> {
     CATALOG.iter().position(|t| t.id == net::DNS_TWEAK)
+}
+
+fn limit_tweak() -> Option<usize> {
+    CATALOG.iter().position(|t| t.id == net::LIMIT_TWEAK)
 }
 
 fn show_pings(ui: &AppWindow) {

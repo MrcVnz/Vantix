@@ -38,6 +38,8 @@ pub enum Section {
     Network,
     /// Set from the DNS tab, not listed as a card.
     Dns,
+    /// Set from the Network use tab, not listed as a card.
+    Usage,
     Input,
     Storage,
     Background,
@@ -705,6 +707,23 @@ pub const CATALOG: &[Tweak] = &[
             apply: net::disable_do_upload,
             revert: net::restore_do_upload,
             reset: net::reset_do_upload,
+        },
+    },
+    Tweak {
+        id: net::LIMIT_TWEAK,
+        section: Section::Usage,
+        gain: Level::High,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Toggle {
+            read: net::limits_on,
+            apply: net::set_limit,
+            revert: net::remove_limits,
+            reset: net::reset_limits,
         },
     },
 ];

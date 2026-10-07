@@ -925,7 +925,7 @@ fn set_family(family: &str, index: u32, servers: &[String]) -> windows::core::Re
     Ok(())
 }
 
-fn dns_error(message: &str) -> windows::core::Error {
+fn failure(message: &str) -> windows::core::Error {
     windows::core::Error::new(windows::Win32::Foundation::E_FAIL, message)
 }
 
@@ -946,8 +946,8 @@ pub fn dns_set() -> windows::core::Result<bool> {
 }
 
 pub fn set_dns() -> windows::core::Result<Option<String>> {
-    let provider = (*CHOSEN.lock().unwrap()).ok_or_else(|| dns_error("no DNS service picked"))?;
-    let adapter = dns_adapter().ok_or_else(|| dns_error("no cable or Wi-Fi connection"))?;
+    let provider = (*CHOSEN.lock().unwrap()).ok_or_else(|| failure("no DNS service picked"))?;
+    let adapter = dns_adapter().ok_or_else(|| failure("no cable or Wi-Fi connection"))?;
     // Switching from one service to another keeps what was there before Vantix. A change
     // left on another adapter is put back first, since this one replaces it in the journal.
     let saved = match SavedDns::from_journal() {
@@ -970,12 +970,12 @@ pub fn set_dns() -> windows::core::Result<Option<String>> {
 }
 
 pub fn restore_dns(previous: Option<&str>) -> windows::core::Result<()> {
-    previous.and_then(SavedDns::decode).ok_or_else(|| dns_error("nothing saved to put back"))?.put_back()
+    previous.and_then(SavedDns::decode).ok_or_else(|| failure("nothing saved to put back"))?.put_back()
 }
 
 /// Back to DHCP on the adapter in use, for DNS that was set before Vantix.
 pub fn reset_dns() -> windows::core::Result<()> {
-    let adapter = dns_adapter().ok_or_else(|| dns_error("no cable or Wi-Fi connection"))?;
+    let adapter = dns_adapter().ok_or_else(|| failure("no cable or Wi-Fi connection"))?;
     SavedDns { guid: adapter.guid, v4: Vec::new(), v6: Vec::new() }.put_back()
 }
 
@@ -1139,7 +1139,7 @@ fn setting_adapter(id: &str, wifi: Option<bool>) -> Option<(String, String)> {
 }
 
 fn changed_adapter(id: &str, wifi: Option<bool>) -> windows::core::Result<(String, String)> {
-    setting_adapter(id, wifi).ok_or_else(|| dns_error("no adapter to change"))
+    setting_adapter(id, wifi).ok_or_else(|| failure("no adapter to change"))
 }
 
 fn present(setting: &AdapterSetting, key: &str) -> Vec<&'static Property> {
@@ -1380,6 +1380,98 @@ pub fn reset_do_upload() -> windows::core::Result<()> {
     set_do_mode(Some(3))
 }
 
+// Upload limits per program, from the Network use tab. A QoS policy throttles what one
+// program sends: a cloud sync or backup filling the upload is what makes the ping of
+// everything else climb. Windows can't hold back what a program receives, so downloads
+// aren't touched. The policies themselves are the state, all named with Vantix's prefix;
+// the journal holds one entry and undoing it removes them all.
+
+pub const LIMIT_TWEAK: &str = "upload-limits";
+const LIMIT_PREFIX: &str = "Vantix upload ";
+
+/// Program and bits per second the next apply sets, picked right before asking.
+static CHOSEN_LIMIT: Mutex<Option<(String, u64)>> = Mutex::new(None);
+/// What the last read found, for the Network use tab to show without asking PowerShell
+/// every second.
+static LIMITS: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
+
+pub fn choose_limit(program: &str, bits: u64) {
+    *CHOSEN_LIMIT.lock().unwrap() = Some((program.into(), bits));
+}
+
+pub fn chosen_limit() -> Option<(String, u64)> {
+    CHOSEN_LIMIT.lock().unwrap().clone()
+}
+
+/// Programs with a limit, as last read, with their rate in bits per second.
+pub fn known_limits() -> Vec<(String, u64)> {
+    LIMITS.lock().unwrap().clone()
+}
+
+/// A program the policy can name on its own. Services share svchost.exe, so limiting it
+/// would slow Windows Update and everything else with it.
+pub fn limitable(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase();
+    lower.ends_with(".exe")
+        && !program.contains(['\'', '"', '\\'])
+        && !matches!(lower.as_str(), "svchost.exe" | "system" | "vantix.exe")
+}
+
+fn read_limits() -> windows::core::Result<Vec<(String, u64)>> {
+    let out = tweaks::powershell(&format!(
+        "Get-NetQosPolicy | Where-Object Name -like '{LIMIT_PREFIX}*' | \
+         ForEach-Object {{ \"$($_.AppPathName)|$($_.ThrottleRate)\" }}"
+    ))?;
+    let limits: Vec<(String, u64)> = out
+        .lines()
+        .filter_map(|line| line.trim().split_once('|'))
+        .filter_map(|(program, rate)| Some((program.to_string(), rate.parse().ok()?)))
+        .collect();
+    *LIMITS.lock().unwrap() = limits.clone();
+    Ok(limits)
+}
+
+pub fn limits_on() -> windows::core::Result<bool> {
+    Ok(!read_limits()?.is_empty())
+}
+
+/// Replaces the program's limit if it already had one.
+pub fn set_limit() -> windows::core::Result<Option<String>> {
+    let (program, bits) = chosen_limit().ok_or_else(|| failure("no program picked"))?;
+    if !limitable(&program) {
+        return Err(failure("this program can't be limited on its own"));
+    }
+    tweaks::powershell(&format!(
+        "$n = '{LIMIT_PREFIX}{program}'; \
+         Remove-NetQosPolicy -Name $n -Confirm:$false -ErrorAction SilentlyContinue; \
+         New-NetQosPolicy -Name $n -AppPathNameMatchCondition '{program}' \
+         -ThrottleRateActionBitsPerSecond {bits} -ErrorAction Stop | Out-Null"
+    ))?;
+    read_limits()?;
+    Ok(None)
+}
+
+pub fn remove_limit(program: &str) -> windows::core::Result<()> {
+    if !limitable(program) {
+        return Ok(());
+    }
+    tweaks::powershell(&format!(
+        "Remove-NetQosPolicy -Name '{LIMIT_PREFIX}{program}' -Confirm:$false -ErrorAction Stop"
+    ))?;
+    read_limits().map(drop)
+}
+
+pub fn remove_limits(_: Option<&str>) -> windows::core::Result<()> {
+    tweaks::powershell(&format!(
+        "Get-NetQosPolicy | Where-Object Name -like '{LIMIT_PREFIX}*' | Remove-NetQosPolicy -Confirm:$false"
+    ))?;
+    read_limits().map(drop)
+}
+
+pub fn reset_limits() -> windows::core::Result<()> {
+    remove_limits(None)
+}
+
 // Traffic per program, from the Microsoft-Windows-Kernel-Network ETW provider: it sees
 // TCP and UDP, so games, voice chat and QUIC in browsers count too. A real-time session
 // outlives the process that started it, so it's always stopped by name before a start
@@ -1596,6 +1688,23 @@ mod tests {
         assert_eq!(reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, "*InterruptModeration").unwrap(), original);
         assert_eq!(moderation_off().unwrap(), was_off);
         println!("connection: {:?}", connection().map(|c| c.gateway));
+    }
+
+    /// Adds a limit for a program that doesn't exist and removes it:
+    /// `cargo test limit_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn limit_round_trip() {
+        let before = read_limits().unwrap();
+        choose_limit("vantix-probe.exe", 8_000_000);
+        let start = Instant::now();
+        set_limit().unwrap();
+        println!("set in {:.1?}", start.elapsed());
+        assert!(known_limits().contains(&("vantix-probe.exe".into(), 8_000_000)));
+        assert!(limits_on().unwrap());
+        remove_limit("vantix-probe.exe").unwrap();
+        assert_eq!(read_limits().unwrap(), before);
+        assert!(!limitable("svchost.exe") && !limitable("System") && limitable("OneDrive.exe"));
     }
 
     /// `cargo test net_dns -- --ignored --nocapture`

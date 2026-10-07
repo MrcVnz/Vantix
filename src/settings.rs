@@ -98,6 +98,8 @@ pub struct Settings {
     pub game_mode: GameMode,
     /// Extra targets for the live ping, as typed: names or IPv4 addresses.
     pub ping_hosts: Vec<String>,
+    /// Upload speed from the last bufferbloat test, which upload limits are set from.
+    pub upload_mbps: Option<f64>,
 }
 
 impl Default for Settings {
@@ -116,6 +118,7 @@ impl Default for Settings {
             probalance: false,
             game_mode: GameMode::default(),
             ping_hosts: Vec::new(),
+            upload_mbps: None,
         }
     }
 }

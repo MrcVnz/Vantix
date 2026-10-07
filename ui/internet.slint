@@ -50,6 +50,11 @@ export struct DnsRow {
 
 export struct UsageRow {
     name: string,
+    /// The exe name, as upload limits match it.
+    program: string,
+    /// The upload limit Vantix set, empty when there's none.
+    limit: string,
+    can-limit: bool,
     down: string,
     up: string,
     total-down: string,
@@ -99,6 +104,10 @@ export global Net {
 
     in property <[UsageRow]> usage;
     in property <bool> usage-failed;
+    /// A bufferbloat test measured the upload, which limits are set from.
+    in property <bool> upload-known;
+    callback limit-upload(string);
+    callback remove-limit(string);
 }
 
 component Heading inherits Text {
@@ -550,7 +559,8 @@ component UsageTab inherits Card {
     Text {
         x: 6px;
         text: Net.usage-failed ? @tr("Windows didn't allow the network trace, so traffic can't be counted.")
-            : @tr("TCP and UDP traffic of every program since this tab opened, games and voice chat included.");
+            : Net.upload-known ? @tr("TCP and UDP traffic of every program since this tab opened, games and voice chat included. Limit holds a program's upload to half your line, so it can't lag the rest.")
+            : @tr("TCP and UDP traffic of every program since this tab opened, games and voice chat included. Run the Bufferbloat test once to limit a program's upload.");
         color: Net.usage-failed ? Theme.bad : Theme.muted;
         wrap: word-wrap;
     }
@@ -563,6 +573,7 @@ component UsageTab inherits Card {
         Heading { width: 96px; text: @tr("Download"); horizontal-alignment: right; }
         Heading { width: 96px; text: @tr("Upload"); horizontal-alignment: right; }
         Heading { width: 150px; text: @tr("Total down / up"); horizontal-alignment: right; }
+        Heading { width: 120px; text: @tr("Upload limit"); horizontal-alignment: right; }
     }
 
     if Net.usage.length == 0 && !Net.usage-failed: Text {
@@ -609,6 +620,35 @@ component UsageTab inherits Card {
                 text: row.total-down + " / " + row.total-up;
                 color: Theme.muted;
                 font-weight: 400;
+            }
+            HorizontalLayout {
+                width: 120px;
+                alignment: end;
+                if row.limit != "": VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: row.limit;
+                        icon: Icons.x;
+                        tall: 30px;
+                        enabled: !Tweaks.busy;
+                        clicked => { Net.remove-limit(row.program); }
+                    }
+                }
+                if row.limit == "" && row.can-limit: VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: @tr("Limit");
+                        tall: 30px;
+                        enabled: !Tweaks.busy;
+                        clicked => {
+                            if Net.upload-known {
+                                Net.limit-upload(row.program);
+                            } else {
+                                Net.tab = 1;
+                            }
+                        }
+                    }
+                }
             }
         }
     }

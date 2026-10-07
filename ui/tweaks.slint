@@ -101,6 +101,7 @@ export global TweakText {
         @tr("Prefer the 5 GHz Wi-Fi band"),
         @tr("Lowest Wi-Fi roaming"),
         @tr("Stop uploading updates to PCs on the internet"),
+        @tr("Limit a program's upload"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -141,6 +142,7 @@ export global TweakText {
         @tr("The Intel Wi-Fi card joins your router's 5 GHz band whenever it can, which is faster and less crowded than 2.4 GHz. The connection drops for a few seconds while the adapter restarts."),
         @tr("The Intel Wi-Fi card only looks for another access point when the signal is very weak. Each search stalls the connection for a moment. For PCs that stay in one place. The connection drops for a few seconds while the adapter restarts."),
         @tr("Windows is set to send updates to other PCs on the internet, which fills your upload and lags everything else. This keeps the sharing to your local network, the Windows default."),
+        @tr("A Windows QoS policy holds the program's upload to half of what the Bufferbloat test measured, so it can't fill the line and raise everyone's ping. Downloads stay as they are: Windows can only limit what a program sends. Takes effect at once."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -181,6 +183,7 @@ export global TweakText {
         @tr("5 GHz reaches less far through walls. If the signal gets weak in some room, undo this."),
         @tr("Carried around, the laptop stays on a far access point longer before it switches."),
         "",
+        @tr("That program uploads slower, so a backup or sync takes longer to finish."),
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }
