@@ -2,6 +2,7 @@
 
 mod boost;
 mod disk;
+mod dupes;
 mod etw;
 mod frames;
 mod governor;
@@ -107,6 +108,13 @@ struct State {
     space_dir: u32,
     space_rows: Vec<u32>,
     space_progress: Option<Arc<AtomicU32>>,
+    /// The Duplicates page: the last search, which copies are ticked to go, and what
+    /// each row on screen stands for, as (group, copy) with no copy for a heading.
+    dupes: Vec<dupes::Group>,
+    dup_checked: Vec<Vec<bool>>,
+    dup_rows: Vec<(usize, Option<usize>)>,
+    dup_progress: Option<Arc<dupes::Progress>>,
+    dup_searched: bool,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -194,6 +202,11 @@ fn main() -> Result<(), slint::PlatformError> {
             space_dir: space::ROOT,
             space_rows: Vec::new(),
             space_progress: None,
+            dupes: Vec::new(),
+            dup_checked: Vec::new(),
+            dup_rows: Vec::new(),
+            dup_progress: None,
+            dup_searched: false,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -659,6 +672,67 @@ impl App {
             let at = state.space_drives.iter().position(|&l| Some(l) == system).unwrap_or(0);
             disk.set_drive(at as i32);
         }
+        let dups = ui.global::<Dupes>();
+        dups.on_add_folder(bind(self, |app| {
+            let owner = app.with_ui_value(|ui| system::hwnd(ui.window())).flatten();
+            let Some(folder) = dupes::pick_folder(owner) else { return };
+            {
+                let settings = &mut app.state.borrow_mut().settings;
+                let mut folders = dup_folders(settings);
+                if !folders.contains(&folder) {
+                    folders.push(folder);
+                }
+                settings.dup_folders = Some(folders);
+                let _ = settings.save();
+            }
+            app.with_ui(|ui| show_dupes(ui, &mut app.state.borrow_mut()));
+        }));
+        dups.on_remove_folder(bind_with(self, |app, i: i32| {
+            {
+                let settings = &mut app.state.borrow_mut().settings;
+                let mut folders = dup_folders(settings);
+                if (i as usize) < folders.len() {
+                    folders.remove(i as usize);
+                }
+                settings.dup_folders = Some(folders);
+                let _ = settings.save();
+            }
+            app.with_ui(|ui| show_dupes(ui, &mut app.state.borrow_mut()));
+        }));
+        dups.on_find(bind(self, |app| app.find_dupes()));
+        dups.on_cancel(bind(self, |app| {
+            if let Some(progress) = &app.state.borrow().dup_progress {
+                progress.cancel.store(true, Ordering::Relaxed);
+            }
+        }));
+        dups.on_toggle(bind_with(self, |app, i: i32| {
+            {
+                let mut state = app.state.borrow_mut();
+                let Some(&(group, Some(copy))) = state.dup_rows.get(i as usize) else { return };
+                let checked = &mut state.dup_checked[group];
+                // One copy always stays.
+                if checked[copy] || checked.iter().filter(|&&c| !c).count() > 1 {
+                    checked[copy] = !checked[copy];
+                }
+            }
+            app.with_ui(|ui| show_dupes(ui, &mut app.state.borrow_mut()));
+        }));
+        dups.on_reveal(bind_with(self, |app, i: i32| {
+            let state = app.state.borrow();
+            if let Some(&(group, Some(copy))) = state.dup_rows.get(i as usize) {
+                reveal(&state.dupes[group].copies[copy].path.to_string_lossy());
+            }
+        }));
+        dups.on_recycle(bind(self, |app| app.recycle_dupes()));
+        dups.on_tick_newer(bind(self, |app| {
+            for checked in &mut app.state.borrow_mut().dup_checked {
+                for (i, c) in checked.iter_mut().enumerate() {
+                    *c = i > 0;
+                }
+            }
+            app.with_ui(|ui| show_dupes(ui, &mut app.state.borrow_mut()));
+        }));
+        show_dupes(&ui, &mut self.state.borrow_mut());
         rates.on_remove(bind_with(self, |app, i: i32| {
             {
                 let mut state = app.state.borrow_mut();
@@ -763,6 +837,17 @@ impl App {
         if let Some(progress) = &self.state.borrow().space_progress {
             let done = progress.load(Ordering::Relaxed) as f32 / 1000.0;
             self.with_ui(|ui| ui.global::<Space>().set_progress(done));
+        }
+        if let Some(progress) = &self.state.borrow().dup_progress {
+            self.with_ui(|ui| {
+                let page = ui.global::<Dupes>();
+                let done = progress.done.load(Ordering::Relaxed);
+                let total = progress.total.load(Ordering::Relaxed);
+                page.set_stage(progress.stage.load(Ordering::Relaxed) as i32);
+                page.set_progress(if total == 0 { 0.0 } else { (done as f64 / total as f64) as f32 });
+                page.set_read(format_size(done).into());
+                page.set_total(format_size(total).into());
+            });
         }
         if self.with_ui_value(|ui| ui.get_page() == LATENCY_PAGE).unwrap_or(false) {
             self.with_ui(show_latency);
@@ -923,6 +1008,103 @@ impl App {
                         disk.set_error(disk.invoke_failed());
                     }
                     show_space(ui, &mut state);
+                });
+            },
+        );
+    }
+
+    fn find_dupes(self: &Rc<Self>) {
+        let progress = Arc::new(dupes::Progress::default());
+        let folders = {
+            let mut state = self.state.borrow_mut();
+            if state.dup_progress.is_some() {
+                return;
+            }
+            state.dup_progress = Some(progress.clone());
+            dup_folders(&state.settings)
+        };
+        self.with_ui(|ui| {
+            let page = ui.global::<Dupes>();
+            page.set_searching(true);
+            page.set_stage(0);
+            page.set_progress(0.0);
+            page.set_result("".into());
+        });
+        self.run_job(
+            move || dupes::find(&folders, &progress),
+            |app, result| {
+                let mut state = app.state.borrow_mut();
+                state.dup_progress = None;
+                // A cancelled search keeps the previous results.
+                if let Some(Some(groups)) = result {
+                    // Nothing is ticked until asked: a copy can be there on purpose.
+                    state.dup_checked = groups.iter().map(|g| vec![false; g.copies.len()]).collect();
+                    state.dupes = groups;
+                    state.dup_searched = true;
+                }
+                app.with_ui(|ui| {
+                    ui.global::<Dupes>().set_searching(false);
+                    show_dupes(ui, &mut state);
+                });
+            },
+        );
+    }
+
+    fn recycle_dupes(self: &Rc<Self>) {
+        let chosen: Vec<dupes::Copy> = {
+            let state = self.state.borrow();
+            state
+                .dupes
+                .iter()
+                .zip(&state.dup_checked)
+                .flat_map(|(group, checked)| {
+                    group.copies.iter().zip(checked).filter(|(_, c)| **c).map(|(copy, _)| copy.clone())
+                })
+                .collect()
+        };
+        if chosen.is_empty() {
+            return;
+        }
+        let asked = chosen.len();
+        self.run_job(
+            move || dupes::recycle(&chosen),
+            move |app, gone| {
+                let gone = gone.unwrap_or_default();
+                let freed: u64 = {
+                    let mut state = app.state.borrow_mut();
+                    let state = &mut *state;
+                    let mut freed = 0;
+                    for (group, checked) in state.dupes.iter_mut().zip(state.dup_checked.iter_mut()) {
+                        let mut i = 0;
+                        while i < group.copies.len() {
+                            if gone.contains(&group.copies[i].path) {
+                                freed += group.size;
+                                group.copies.remove(i);
+                                checked.remove(i);
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    }
+                    // Groups down to one copy aren't duplicates any more.
+                    let keep: Vec<bool> = state.dupes.iter().map(|g| g.copies.len() > 1).collect();
+                    let mut keep_it = keep.iter();
+                    state.dupes.retain(|_| *keep_it.next().unwrap());
+                    let mut keep_it = keep.iter();
+                    state.dup_checked.retain(|_| *keep_it.next().unwrap());
+                    freed
+                };
+                app.with_ui(|ui| {
+                    let page = ui.global::<Dupes>();
+                    let skipped = asked - gone.len();
+                    let text = if skipped == 0 {
+                        page.invoke_recycled(gone.len() as i32, format_size(freed).into())
+                    } else {
+                        let (count, size) = (gone.len() as i32, format_size(freed).into());
+                        page.invoke_recycled_some(count, size, skipped as i32)
+                    };
+                    page.set_result(text);
+                    show_dupes(ui, &mut app.state.borrow_mut());
                 });
             },
         );
@@ -2080,6 +2262,8 @@ const LATENCY_PAGE: i32 = 11;
 /// Rows on the Disk space page: the largest files, and the items of a folder.
 const LARGEST_FILES: usize = 20;
 const FOLDER_ROWS: usize = 100;
+/// Groups listed on the Duplicates page, the ones that free the most space.
+const DUP_GROUPS: usize = 100;
 /// Ping targets the user can add, on top of the router and Cloudflare.
 const MAX_HOSTS: usize = 5;
 
@@ -2372,6 +2556,57 @@ fn format_size(bytes: u64) -> String {
         unit += 1;
     }
     if unit == 0 { format!("{bytes} B") } else { format!("{value:.1} {}", UNITS[unit]) }
+}
+
+/// Folders searched for duplicates: the chosen ones, or the user's own by default.
+fn dup_folders(settings: &Settings) -> Vec<std::path::PathBuf> {
+    settings.dup_folders.clone().unwrap_or_else(dupes::default_folders)
+}
+
+fn show_dupes(ui: &AppWindow, state: &mut State) {
+    let page = ui.global::<Dupes>();
+    let folders: Vec<slint::SharedString> =
+        dup_folders(&state.settings).iter().map(|f| f.to_string_lossy().into_owned().into()).collect();
+    page.set_folders(ModelRc::new(VecModel::from(folders)));
+    page.set_searching(state.dup_progress.is_some());
+    page.set_searched(state.dup_searched);
+    page.set_groups(state.dupes.len() as i32);
+    page.set_wasted(format_size(state.dupes.iter().map(|g| g.wasted()).sum()).into());
+    let (mut count, mut bytes) = (0, 0);
+    for (group, checked) in state.dupes.iter().zip(&state.dup_checked) {
+        let n = checked.iter().filter(|&&c| c).count();
+        count += n;
+        bytes += group.size * n as u64;
+    }
+    page.set_selected(count as i32);
+    page.set_selected_size(format_size(bytes).into());
+    let mut rows = Vec::new();
+    let mut map = Vec::new();
+    for (g, (group, checked)) in state.dupes.iter().zip(&state.dup_checked).enumerate().take(DUP_GROUPS) {
+        let name = group.copies[0].path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        rows.push(DupRow {
+            header: true,
+            name: name.into(),
+            size: format!("{} × {}", format_size(group.size), group.copies.len()).into(),
+            ..Default::default()
+        });
+        map.push((g, None));
+        for (c, (copy, &on)) in group.copies.iter().zip(checked).enumerate() {
+            let folder = copy.path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            let date: chrono::DateTime<Local> = copy.modified.into();
+            rows.push(DupRow {
+                header: false,
+                name: folder.into(),
+                detail: date.format("%d/%m/%Y %H:%M").to_string().into(),
+                size: Default::default(),
+                checked: on,
+            });
+            map.push((g, Some(c)));
+        }
+    }
+    page.set_rows(ModelRc::new(VecModel::from(rows)));
+    page.set_more(state.dupes.len().saturating_sub(DUP_GROUPS) as i32);
+    state.dup_rows = map;
 }
 
 /// Opens Explorer on the folder of `path` with it selected.

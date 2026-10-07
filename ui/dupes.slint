@@ -1,0 +1,306 @@
+import { Theme, Icons, Icon, Card, Button } from "theme.slint";
+
+export struct DupRow {
+    /// A group's heading: the file's name, its size and how many copies there are.
+    header: bool,
+    name: string,
+    detail: string,
+    size: string,
+    checked: bool,
+}
+
+export global Dupes {
+    in property <[string]> folders;
+    in property <bool> searching;
+    /// 0 listing, 1 comparing the first 64 KB, 2 reading whole files.
+    in property <int> stage;
+    /// 0 to 1.
+    in property <float> progress;
+    in property <string> read;
+    in property <string> total;
+    in property <bool> searched;
+    in property <int> groups;
+    in property <string> wasted;
+    /// Groups past the ones listed.
+    in property <int> more;
+    in property <[DupRow]> rows;
+    in property <int> selected;
+    in property <string> selected-size;
+    /// What the last move to the Recycle Bin did.
+    in property <string> result;
+
+    public pure function recycled(count: int, size: string) -> string {
+        return @tr("Files moved to the Recycle Bin: {}. Space freed: {}.", count, size);
+    }
+    public pure function recycled-some(count: int, size: string, skipped: int) -> string {
+        return @tr("Files moved to the Recycle Bin: {}. Space freed: {}. Left alone because they changed or are open: {}.", count, size, skipped);
+    }
+
+    callback add-folder();
+    callback remove-folder(int);
+    callback find();
+    callback cancel();
+    callback toggle(int);
+    callback reveal(int);
+    callback recycle();
+    callback tick-newer();
+}
+
+component Square inherits Rectangle {
+    in property <bool> checked;
+    callback clicked();
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    background: root.checked ? Theme.accent : transparent;
+    border-width: root.checked ? 0 : 1px;
+    border-color: area.has-hover ? Theme.muted : Theme.border-strong;
+    if root.checked: Icon {
+        data: Icons.check;
+        size: 14px;
+        thickness: 2.4px;
+        tint: Theme.on-accent;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <color> hover-tint: Theme.text;
+    callback clicked();
+    width: 32px;
+    height: 32px;
+    border-radius: Theme.radius-small;
+    background: area.has-hover ? Theme.hover : transparent;
+    Icon {
+        data: root.icon;
+        size: 16px;
+        tint: area.has-hover ? root.hover-tint : Theme.faint;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component DupesPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Duplicate files");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("Files with exactly the same content, whatever their names. One copy of each stays; the others go to the Recycle Bin, so nothing is lost until you empty it.");
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    Card {
+        title: @tr("Where to look");
+        icon: Icons.folder;
+
+        for folder[i] in Dupes.folders: HorizontalLayout {
+            spacing: 10px;
+            height: 32px;
+            VerticalLayout {
+                alignment: center;
+                Icon { data: Icons.folder; size: 16px; tint: Theme.accent; }
+            }
+            Text {
+                text: folder;
+                color: Theme.text;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            IconButton {
+                icon: Icons.x;
+                hover-tint: Theme.bad;
+                clicked => { Dupes.remove-folder(i); }
+            }
+        }
+        if Dupes.folders.length == 0: Text {
+            text: @tr("Add a folder to search.");
+            color: Theme.faint;
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                color: Theme.muted;
+                text: !Dupes.searching ? @tr("Only files of 1 MB or more, where the space is. Files kept only in the cloud are skipped so they don't download.")
+                    : Dupes.stage == 0 ? @tr("Listing files...")
+                    : Dupes.stage == 1 ? @tr("Comparing the start of files with the same size...")
+                    : @tr("Reading files that start alike: {} of {}.", Dupes.read, Dupes.total);
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Add folder");
+                    icon: Icons.plus;
+                    tall: 36px;
+                    enabled: !Dupes.searching;
+                    clicked => { Dupes.add-folder(); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: Dupes.searching ? @tr("Cancel") : @tr("Find duplicates");
+                    primary: !Dupes.searching;
+                    tall: 36px;
+                    enabled: Dupes.searching || Dupes.folders.length > 0;
+                    clicked => {
+                        if Dupes.searching {
+                            Dupes.cancel();
+                        } else {
+                            Dupes.find();
+                        }
+                    }
+                }
+            }
+        }
+
+        if Dupes.searching: Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Theme.background;
+            Rectangle {
+                x: 0;
+                width: parent.width * Dupes.progress;
+                border-radius: 2px;
+                background: Theme.accent;
+            }
+        }
+    }
+
+    if Dupes.searched: Card {
+        title: @tr("Duplicates");
+        icon: Icons.copy;
+        vertical-stretch: 1;
+
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                color: Dupes.result != "" ? Theme.text : Theme.muted;
+                text: Dupes.result != "" ? Dupes.result
+                    : Dupes.groups == 0 ? @tr("No duplicates of 1 MB or more in these folders.")
+                    : @tr("{} files have copies, which take {} that can be freed. Tick the copies to remove; one copy of each always stays.", Dupes.groups, Dupes.wasted);
+            }
+            if Dupes.groups > 0: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Tick all but the oldest");
+                    tall: 36px;
+                    clicked => { Dupes.tick-newer(); }
+                }
+            }
+            if Dupes.groups > 0: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Move {} to the Recycle Bin ({})", Dupes.selected, Dupes.selected-size);
+                    icon: Icons.trash;
+                    danger: true;
+                    tall: 36px;
+                    enabled: Dupes.selected > 0;
+                    clicked => { Dupes.recycle(); }
+                }
+            }
+        }
+
+        for row[i] in Dupes.rows: Rectangle {
+            height: row.header ? 44px : 36px;
+            border-radius: Theme.radius-small;
+            background: !row.header && area.has-hover ? Theme.surface.brighter(0.15) : transparent;
+
+            area := TouchArea {
+                mouse-cursor: row.header ? default : pointer;
+                clicked => {
+                    if !row.header {
+                        Dupes.toggle(i);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                padding-left: row.header ? 0 : 8px;
+                padding-right: 8px;
+                if row.header: VerticalLayout {
+                    alignment: end;
+                    padding-bottom: 4px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: row.name;
+                        color: Theme.text;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                }
+                if row.header: VerticalLayout {
+                    alignment: end;
+                    padding-bottom: 4px;
+                    Text {
+                        text: row.size;
+                        color: Theme.muted;
+                        font-size: 12px;
+                    }
+                }
+                if !row.header: VerticalLayout {
+                    alignment: center;
+                    Square {
+                        checked: row.checked;
+                        clicked => { Dupes.toggle(i); }
+                    }
+                }
+                if !row.header: Text {
+                    text: row.name;
+                    color: row.checked ? Theme.muted : Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                if !row.header: Text {
+                    text: row.detail;
+                    color: Theme.faint;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    width: 120px;
+                }
+                if !row.header: VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: Icons.external;
+                        clicked => { Dupes.reveal(i); }
+                    }
+                }
+            }
+        }
+
+        if Dupes.more > 0: Text {
+            text: @tr("And {} more files with copies, which free less space.", Dupes.more);
+            color: Theme.faint;
+        }
+        // Keeps the rows at the top of the card, which stretches to the window's bottom.
+        Rectangle { vertical-stretch: 1; }
+    }
+}

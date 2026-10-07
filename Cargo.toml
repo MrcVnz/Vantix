@@ -14,6 +14,7 @@ ttf-parser = "0.25"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 futures-channel = "0.3"
 windows-link = "0.2"
+twox-hash = { version = "2.1", default-features = false, features = ["std", "xxhash3_64"] }
 
 [dependencies.windows]
 version = "0.62"

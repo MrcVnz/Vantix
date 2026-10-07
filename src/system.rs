@@ -133,15 +133,20 @@ pub fn tray_icon_present() -> bool {
     }
 }
 
+pub fn hwnd(window: &slint::Window) -> Option<HWND> {
+    let handle = window.window_handle();
+    let RawWindowHandle::Win32(handle) = handle.window_handle().ok()?.as_raw() else { return None };
+    Some(HWND(handle.hwnd.get() as _))
+}
+
 /// The part of the window's monitor not taken by the taskbar, in physical pixels, as
 /// left, top, right and bottom.
 pub fn work_area(window: &slint::Window) -> Option<(i32, i32, i32, i32)> {
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow};
-    let handle = window.window_handle();
-    let RawWindowHandle::Win32(handle) = handle.window_handle().ok()?.as_raw() else { return None };
+    let hwnd = hwnd(window)?;
     let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
     unsafe {
-        let monitor = MonitorFromWindow(HWND(handle.hwnd.get() as _), MONITOR_DEFAULTTONEAREST);
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         GetMonitorInfoW(monitor, &mut info).as_bool().then_some(())?;
     }
     let r = info.rcWork;

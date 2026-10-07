@@ -3,6 +3,7 @@
 //! full drive takes seconds. Only parents and sizes are kept, about 25 bytes a file; the
 //! names of the rows on screen are read back from the table when shown.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::os::windows::fs::{FileExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
@@ -15,7 +16,8 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
-    FSCTL_GET_NTFS_FILE_RECORD, FSCTL_GET_NTFS_VOLUME_DATA, NTFS_FILE_RECORD_INPUT_BUFFER, NTFS_VOLUME_DATA_BUFFER,
+    FSCTL_GET_NTFS_FILE_RECORD, FSCTL_GET_NTFS_VOLUME_DATA, NTFS_FILE_RECORD_INPUT_BUFFER,
+    NTFS_VOLUME_DATA_BUFFER,
 };
 use windows::core::HSTRING;
 
@@ -213,6 +215,8 @@ pub struct Scan {
     size: Vec<u64>,
     /// Files under a folder; 1 for a file.
     count: Vec<u32>,
+    /// Bytes in a file's main stream, the size Explorer shows.
+    length: Vec<u64>,
     folder: Vec<bool>,
     /// Children of each record, as `children[first[r]..first[r + 1]]`.
     first: Vec<u32>,
@@ -262,6 +266,7 @@ pub fn scan(letter: char, progress: &AtomicU32) -> std::io::Result<Scan> {
 
     let mut parent = vec![NONE; records];
     let mut own = vec![0u64; records];
+    let mut length = vec![0u64; records];
     let mut folder = vec![false; records];
     // 4 MB reads: large enough that the drive streams, small enough to stay cheap.
     let chunk = (4 << 20) / record_size * record_size;
@@ -277,7 +282,7 @@ pub fn scan(letter: char, progress: &AtomicU32) -> std::io::Result<Scan> {
             let len = (left as usize).min(chunk).min((records - number) * record_size);
             read_at(&volume, &mut buffer[..len], offset)?;
             for record in buffer[..len].chunks_exact_mut(record_size) {
-                read_record(record, number, cluster, &mut parent, &mut own, &mut folder);
+                read_record(record, number, cluster, &mut parent, &mut own, &mut length, &mut folder);
                 number += 1;
             }
             offset += len as u64;
@@ -287,12 +292,20 @@ pub fn scan(letter: char, progress: &AtomicU32) -> std::io::Result<Scan> {
     }
     drop(buffer);
     parent[ROOT as usize] = ROOT;
-    Ok(Scan::build(letter, record_size, parent, own, folder, started))
+    Ok(Scan::build(letter, record_size, parent, own, length, folder, started))
 }
 
 /// Takes the parent, the space used and the kind of one record. Records that continue
 /// a long file elsewhere ("extension" records) add to their base record.
-fn read_record(record: &mut [u8], number: usize, cluster: u64, parent: &mut [u32], own: &mut [u64], folder: &mut [bool]) {
+fn read_record(
+    record: &mut [u8],
+    number: usize,
+    cluster: u64,
+    parent: &mut [u32],
+    own: &mut [u64],
+    length: &mut [u64],
+    folder: &mut [bool],
+) {
     if !fixup(record) || u16_at(record, 22) & IN_USE == 0 {
         return;
     }
@@ -311,6 +324,15 @@ fn read_record(record: &mut [u8], number: usize, cluster: u64, parent: &mut [u32
                     parent[target] = record_of(u64_at(value, 0));
                 }
             }
+            // The unnamed stream is the file's content; only its first part has the size.
+            DATA if !attribute.named => {
+                if attribute.resident {
+                    length[target] = attribute.value().map_or(0, |v| v.len() as u64);
+                } else if attribute.bytes.len() >= 56 && u64_at(attribute.bytes, 16) == 0 {
+                    length[target] = u64_at(attribute.bytes, 48);
+                }
+                own[target] += attribute.on_disk(cluster);
+            }
             // Streams, folder indexes and the rarer ones ($EA, $BITMAP, a long attribute
             // list) all take clusters.
             _ => own[target] += attribute.on_disk(cluster),
@@ -319,7 +341,15 @@ fn read_record(record: &mut [u8], number: usize, cluster: u64, parent: &mut [u32
 }
 
 impl Scan {
-    fn build(letter: char, record_size: usize, mut parent: Vec<u32>, own: Vec<u64>, folder: Vec<bool>, started: Instant) -> Self {
+    fn build(
+        letter: char,
+        record_size: usize,
+        mut parent: Vec<u32>,
+        own: Vec<u64>,
+        length: Vec<u64>,
+        folder: Vec<bool>,
+        started: Instant,
+    ) -> Self {
         let n = parent.len();
         // A parent that isn't in use, or is a file, leaves the record out.
         for r in 0..n {
@@ -371,7 +401,19 @@ impl Scan {
                 next[p as usize] += 1;
             }
         }
-        Scan { letter, record_size, seconds: started.elapsed().as_secs_f64(), files, parent, size, count, folder, first, children }
+        Scan {
+            letter,
+            record_size,
+            seconds: started.elapsed().as_secs_f64(),
+            files,
+            parent,
+            size,
+            count,
+            length,
+            folder,
+            first,
+            children,
+        }
     }
 
     fn entry(&self, record: u32) -> Entry {
@@ -395,8 +437,10 @@ impl Scan {
     /// What's inside a folder, largest first.
     pub fn children(&self, record: u32) -> Vec<Entry> {
         let r = record as usize;
-        let mut list: Vec<Entry> =
-            self.children[self.first[r] as usize..self.first[r + 1] as usize].iter().map(|&c| self.entry(c)).collect();
+        let mut list: Vec<Entry> = self.children[self.first[r] as usize..self.first[r + 1] as usize]
+            .iter()
+            .map(|&c| self.entry(c))
+            .collect();
         list.sort_by_key(|e| std::cmp::Reverse(e.size));
         list
     }
@@ -450,6 +494,53 @@ impl Scan {
             return String::new();
         }
         file_name(record).map(|(_, name)| name).unwrap_or_default()
+    }
+
+    /// The size Explorer shows for a file.
+    pub fn length(&self, record: u32) -> u64 {
+        self.length[record as usize]
+    }
+
+    /// Every file under a folder, at any depth.
+    pub fn files_under(&self, record: u32) -> Vec<u32> {
+        let mut files = Vec::new();
+        let mut stack = vec![record];
+        while let Some(r) = stack.pop() {
+            let r = r as usize;
+            for &child in &self.children[self.first[r] as usize..self.first[r + 1] as usize] {
+                if self.folder[child as usize] {
+                    stack.push(child);
+                } else {
+                    files.push(child);
+                }
+            }
+        }
+        files
+    }
+
+    /// Full paths of many records at once. Each folder is read once, however many files
+    /// it holds.
+    pub fn paths(&self, records: &[u32]) -> Vec<String> {
+        let Ok(volume) = open(self.letter) else { return vec![String::new(); records.len()] };
+        let mut folders: HashMap<u32, String> = HashMap::from([(ROOT, format!("{}:", self.letter))]);
+        records
+            .iter()
+            .map(|&record| {
+                // Climbs to the nearest folder already known, then names the way down.
+                let mut chain = Vec::new();
+                let mut r = self.parent(record).unwrap_or(ROOT);
+                while !folders.contains_key(&r) && chain.len() < 256 {
+                    chain.push(r);
+                    r = self.parent(r).unwrap_or(ROOT);
+                }
+                let mut path = folders.get(&r).cloned().unwrap_or_default();
+                for &folder in chain.iter().rev() {
+                    path = format!("{path}\\{}", self.name_of(&volume, folder));
+                    folders.insert(folder, path.clone());
+                }
+                format!("{path}\\{}", self.name_of(&volume, record))
+            })
+            .collect()
     }
 
     /// Full path of a record, such as C:\Users\me\Videos.
@@ -513,7 +604,12 @@ mod tests {
         assert!(scan.total() as f64 > used as f64 * 0.85 && scan.total() <= used + (1 << 30));
         for letter in volumes().into_iter().filter(|&l| l != 'C') {
             let scan = super::scan(letter, &progress).unwrap();
-            println!("{letter}: {:.2} s, {} files, {:.2} GB", scan.seconds, scan.files, scan.total() as f64 / 1e9);
+            println!(
+                "{letter}: {:.2} s, {} files, {:.2} GB",
+                scan.seconds,
+                scan.files,
+                scan.total() as f64 / 1e9
+            );
         }
     }
 }

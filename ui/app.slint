@@ -12,10 +12,11 @@ import { Monitor, MonitorPage, ProgramRow } from "monitor.slint";
 import { Frames, FramesPage, LiveRow, RunRow } from "frames.slint";
 import { Latency, LatencyPage, DriverRow } from "latency.slint";
 import { Space, SpacePage, SpaceRow } from "space.slint";
+import { Dupes, DupesPage, DupRow } from "dupes.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Frames, LiveRow, RunRow, Latency, DriverRow, Space, SpaceRow, Theme }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Frames, LiveRow, RunRow, Latency, DriverRow, Space, SpaceRow, Dupes, DupRow, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -370,6 +371,12 @@ export component AppWindow inherits Window {
                             active: root.page == 12;
                             clicked => { root.page = 12; }
                         }
+                        NavItem {
+                            text: @tr("Duplicates");
+                            icon: Icons.copy;
+                            active: root.page == 13;
+                            clicked => { root.page = 13; }
+                        }
 
                         Rectangle { min-height: 14px; vertical-stretch: 1; }
 
@@ -526,6 +533,13 @@ export component AppWindow inherits Window {
                     p12 := SpacePage {
                         width: s12.visible-width;
                         height: s12.content-height;
+                    }
+                }
+                if root.page == 13: s13 := PageScroll {
+                    needs: p13.min-height;
+                    p13 := DupesPage {
+                        width: s13.visible-width;
+                        height: s13.content-height;
                     }
                 }
             }

@@ -1482,3 +1482,57 @@ msgstr "Esta pasta está vazia."
 
 msgid "Largest files"
 msgstr "Maiores arquivos"
+
+msgid "Duplicates"
+msgstr "Duplicados"
+
+msgid "Duplicate files"
+msgstr "Arquivos duplicados"
+
+msgid "Files with exactly the same content, whatever their names. One copy of each stays; the others go to the Recycle Bin, so nothing is lost until you empty it."
+msgstr "Arquivos com exatamente o mesmo conteúdo, seja qual for o nome. Uma cópia de cada fica; as outras vão para a Lixeira, então nada se perde até você esvaziá-la."
+
+msgid "Where to look"
+msgstr "Onde procurar"
+
+msgid "Add a folder to search."
+msgstr "Adicione uma pasta para procurar."
+
+msgid "Only files of 1 MB or more, where the space is. Files kept only in the cloud are skipped so they don't download."
+msgstr "Só arquivos de 1 MB ou mais, onde está o espaço. Arquivos que ficam só na nuvem são pulados para não serem baixados."
+
+msgid "Listing files..."
+msgstr "Listando arquivos..."
+
+msgid "Comparing the start of files with the same size..."
+msgstr "Comparando o começo dos arquivos de mesmo tamanho..."
+
+msgid "Reading files that start alike: {} of {}."
+msgstr "Lendo os arquivos que começam iguais: {} de {}."
+
+msgid "Add folder"
+msgstr "Adicionar pasta"
+
+msgid "Find duplicates"
+msgstr "Procurar duplicados"
+
+msgid "No duplicates of 1 MB or more in these folders."
+msgstr "Nenhum duplicado de 1 MB ou mais nessas pastas."
+
+msgid "{} files have copies, which take {} that can be freed. Tick the copies to remove; one copy of each always stays."
+msgstr "{} arquivos têm cópias, que ocupam {} que podem ser liberados. Marque as cópias a remover; uma cópia de cada sempre fica."
+
+msgid "Tick all but the oldest"
+msgstr "Marcar todas menos a mais antiga"
+
+msgid "Move {} to the Recycle Bin ({})"
+msgstr "Mover {} para a Lixeira ({})"
+
+msgid "And {} more files with copies, which free less space."
+msgstr "E mais {} arquivos com cópias, que liberam menos espaço."
+
+msgid "Files moved to the Recycle Bin: {}. Space freed: {}."
+msgstr "Arquivos movidos para a Lixeira: {}. Espaço liberado: {}."
+
+msgid "Files moved to the Recycle Bin: {}. Space freed: {}. Left alone because they changed or are open: {}."
+msgstr "Arquivos movidos para a Lixeira: {}. Espaço liberado: {}. Deixados como estavam porque mudaram ou estão abertos: {}."

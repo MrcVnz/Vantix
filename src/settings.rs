@@ -100,6 +100,9 @@ pub struct Settings {
     pub ping_hosts: Vec<String>,
     /// Upload speed from the last bufferbloat test, which upload limits are set from.
     pub upload_mbps: Option<f64>,
+    /// Folders searched for duplicates; `None` until changed, which means the user's own
+    /// folders (see dupes::default_folders).
+    pub dup_folders: Option<Vec<std::path::PathBuf>>,
 }
 
 impl Default for Settings {
@@ -119,6 +122,7 @@ impl Default for Settings {
             game_mode: GameMode::default(),
             ping_hosts: Vec::new(),
             upload_mbps: None,
+            dup_folders: None,
         }
     }
 }
