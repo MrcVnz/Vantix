@@ -303,4 +303,8 @@ export component DupesPage inherits VerticalLayout {
         // Keeps the rows at the top of the card, which stretches to the window's bottom.
         Rectangle { vertical-stretch: 1; }
     }
+
+    // Until there are results nothing on the page stretches, so this keeps the cards
+    // at the top.
+    if !Dupes.searched: Rectangle { vertical-stretch: 1; }
 }

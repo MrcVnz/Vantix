@@ -9,14 +9,12 @@ import { Startup, StartupRow, BackgroundPage } from "startup.slint";
 import { Live, ProBalanceCard, GameModeCard } from "live.slint";
 import { Net, InternetPage, PingRow, BloatResult, DnsRow, UsageRow } from "internet.slint";
 import { Monitor, MonitorPage, ProgramRow } from "monitor.slint";
-import { Frames, FramesPage, LiveRow, RunRow } from "frames.slint";
-import { Latency, LatencyPage, DriverRow } from "latency.slint";
 import { Space, SpacePage, SpaceRow } from "space.slint";
 import { Dupes, DupesPage, DupRow } from "dupes.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Frames, LiveRow, RunRow, Latency, DriverRow, Space, SpaceRow, Dupes, DupRow, Theme }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Space, SpaceRow, Dupes, DupRow, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -354,28 +352,16 @@ export component AppWindow inherits Window {
                             clicked => { root.page = 9; }
                         }
                         NavItem {
-                            text: @tr("Frame rate");
-                            icon: Icons.film;
+                            text: @tr("Disk space");
+                            icon: Icons.pie;
                             active: root.page == 10;
                             clicked => { root.page = 10; }
                         }
                         NavItem {
-                            text: @tr("Latency");
-                            icon: Icons.timer;
-                            active: root.page == 11;
-                            clicked => { root.page = 11; }
-                        }
-                        NavItem {
-                            text: @tr("Disk space");
-                            icon: Icons.pie;
-                            active: root.page == 12;
-                            clicked => { root.page = 12; }
-                        }
-                        NavItem {
                             text: @tr("Duplicates");
                             icon: Icons.copy;
-                            active: root.page == 13;
-                            clicked => { root.page = 13; }
+                            active: root.page == 11;
+                            clicked => { root.page = 11; }
                         }
 
                         Rectangle { min-height: 14px; vertical-stretch: 1; }
@@ -516,30 +502,16 @@ export component AppWindow inherits Window {
                 }
                 if root.page == 10: s10 := PageScroll {
                     needs: p10.min-height;
-                    p10 := FramesPage {
+                    p10 := SpacePage {
                         width: s10.visible-width;
                         height: s10.content-height;
                     }
                 }
                 if root.page == 11: s11 := PageScroll {
                     needs: p11.min-height;
-                    p11 := LatencyPage {
+                    p11 := DupesPage {
                         width: s11.visible-width;
                         height: s11.content-height;
-                    }
-                }
-                if root.page == 12: s12 := PageScroll {
-                    needs: p12.min-height;
-                    p12 := SpacePage {
-                        width: s12.visible-width;
-                        height: s12.content-height;
-                    }
-                }
-                if root.page == 13: s13 := PageScroll {
-                    needs: p13.min-height;
-                    p13 := DupesPage {
-                        width: s13.visible-width;
-                        height: s13.content-height;
                     }
                 }
             }

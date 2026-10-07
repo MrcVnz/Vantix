@@ -5,8 +5,8 @@
 use windows::Win32::System::Diagnostics::Etw::{
     CONTROLTRACE_HANDLE, CloseTrace, ControlTraceW, ENABLE_TRACE_PARAMETERS, ENABLE_TRACE_PARAMETERS_VERSION_2,
     EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_FILTER_DESCRIPTOR, EVENT_FILTER_TYPE_EVENT_ID, EVENT_RECORD,
-    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES,
-    EVENT_TRACE_REAL_TIME_MODE, EVENT_TRACE_SYSTEM_LOGGER_MODE, EnableTraceEx2, OpenTraceW, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_RAW_TIMESTAMP,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE,
+    EnableTraceEx2, OpenTraceW, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_RAW_TIMESTAMP,
     PROCESS_TRACE_MODE_REAL_TIME, ProcessTrace,
     StartTraceW, WNODE_FLAG_TRACED_GUID,
 };
@@ -99,19 +99,6 @@ pub fn start(name: &str, providers: &[Provider], buffer_kb: u32, max_buffers: u3
             }
         }
     }
-    consume(name, callback)
-}
-
-/// Starts a private session for kernel events, the ones the "NT Kernel Logger" carries,
-/// without taking that single shared session from other tools. `flags` picks the event
-/// groups (EVENT_TRACE_FLAG_*).
-pub fn start_kernel(name: &str, flags: EVENT_TRACE_FLAG, buffer_kb: u32, max_buffers: u32, callback: Callback) -> Result<()> {
-    stop(name);
-    let mut properties = properties(buffer_kb, max_buffers);
-    properties.base.LogFileMode |= EVENT_TRACE_SYSTEM_LOGGER_MODE;
-    properties.base.EnableFlags = flags;
-    let mut handle = CONTROLTRACE_HANDLE::default();
-    unsafe { StartTraceW(&mut handle, &HSTRING::from(name), &mut properties.base).ok()? };
     consume(name, callback)
 }
 

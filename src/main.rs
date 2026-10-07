@@ -4,9 +4,7 @@ mod boost;
 mod disk;
 mod dupes;
 mod etw;
-mod frames;
 mod governor;
-mod latency;
 mod memory;
 mod monitor;
 mod net;
@@ -93,13 +91,6 @@ struct State {
     opened_without_tray: bool,
     /// The rows on the Monitor page, in screen order, for its buttons.
     programs: Vec<monitor::Program>,
-    /// Frame rate recordings, newest first, and the ones picked as A and B.
-    runs: Vec<frames::Run>,
-    picks: Vec<usize>,
-    /// Programs drawing frames, as listed on the Frame rate page.
-    drawing: Vec<(u32, String)>,
-    /// When the frame trace started, since frames take a moment to arrive.
-    frames_since: Option<Instant>,
     /// The Disk space page: drives on offer, the last scan with the paths of its largest
     /// files, the folder shown and the records of its rows. The scan goes when the
     /// window closes, since it holds about 25 bytes per file.
@@ -193,10 +184,6 @@ fn main() -> Result<(), slint::PlatformError> {
             tray_missing: None,
             opened_without_tray: false,
             programs: Vec::new(),
-            runs: frames::load_runs(),
-            picks: Vec::new(),
-            drawing: Vec::new(),
-            frames_since: None,
             space_drives: Vec::new(),
             space: None,
             space_dir: space::ROOT,
@@ -235,11 +222,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let result = slint::run_event_loop_until_quit();
     // Puts back what ProBalance and the game mode changed before the process goes, and
-    // ends the network and frame traces, which would outlive the process.
+    // ends the network traces, which would outlive the process.
     governor::stop();
     net::traffic_stop();
-    frames::stop();
-    latency::stop();
     net::unwatch();
     result
 }
@@ -293,8 +278,6 @@ impl App {
         }
         self.ticker.start(TimerMode::Repeated, Duration::from_secs(1), bind(self, |app| app.tick()));
         net::end_leftover_trace();
-        frames::end_leftover_trace();
-        latency::end_leftover_trace();
         governor::start(live_config(&self.state.borrow().settings));
 
         apply_language(self.state.borrow().settings.language);
@@ -598,44 +581,6 @@ impl App {
         }));
         internet.set_upload_known(self.state.borrow().settings.upload_mbps.is_some());
 
-        let rates = ui.global::<Frames>();
-        rates.set_length(frames::LENGTH as i32);
-        rates.on_record(bind_with(self, |app, i: i32| {
-            if let Some((pid, name)) = app.state.borrow().drawing.get(i as usize) {
-                frames::record(*pid, name);
-            }
-            app.with_ui(|ui| app.show_frames(ui));
-        }));
-        rates.on_cancel(bind(self, |app| {
-            frames::cancel();
-            app.with_ui(|ui| app.show_frames(ui));
-        }));
-        rates.on_pick(bind_with(self, |app, i: i32| {
-            {
-                let mut state = app.state.borrow_mut();
-                let i = i as usize;
-                if let Some(at) = state.picks.iter().position(|&p| p == i) {
-                    state.picks.remove(at);
-                } else if state.picks.len() < 2 {
-                    state.picks.push(i);
-                } else {
-                    state.picks = vec![i];
-                }
-            }
-            app.with_ui(|ui| app.show_runs(ui));
-        }));
-        let latency = ui.global::<Latency>();
-        latency.on_start(bind(self, |app| {
-            let failed = latency::start().is_err();
-            app.with_ui(|ui| {
-                ui.global::<Latency>().set_failed(failed);
-                show_latency(ui);
-            });
-        }));
-        latency.on_stop(bind(self, |app| {
-            latency::stop();
-            app.with_ui(show_latency);
-        }));
         let disk = ui.global::<Space>();
         disk.on_scan(bind(self, |app| app.scan_space()));
         disk.on_enter(bind_with(self, |app, i: i32| {
@@ -733,19 +678,6 @@ impl App {
             app.with_ui(|ui| show_dupes(ui, &mut app.state.borrow_mut()));
         }));
         show_dupes(&ui, &mut self.state.borrow_mut());
-        rates.on_remove(bind_with(self, |app, i: i32| {
-            {
-                let mut state = app.state.borrow_mut();
-                if (i as usize) < state.runs.len() {
-                    state.runs.remove(i as usize);
-                    state.picks.clear();
-                    frames::save_runs(&mut state.runs);
-                }
-            }
-            app.with_ui(|ui| app.show_runs(ui));
-        }));
-        self.show_runs(&ui);
-
         let monitor = ui.global::<Monitor>();
         monitor.set_sort(monitor::sort() as i32);
         monitor.on_sorted(|key| {
@@ -833,7 +765,6 @@ impl App {
         });
         self.tick_internet();
         self.tick_monitor();
-        self.tick_frames();
         if let Some(progress) = &self.state.borrow().space_progress {
             let done = progress.load(Ordering::Relaxed) as f32 / 1000.0;
             self.with_ui(|ui| ui.global::<Space>().set_progress(done));
@@ -848,9 +779,6 @@ impl App {
                 page.set_read(format_size(done).into());
                 page.set_total(format_size(total).into());
             });
-        }
-        if self.with_ui_value(|ui| ui.get_page() == LATENCY_PAGE).unwrap_or(false) {
-            self.with_ui(show_latency);
         }
         let due = {
             let mut state = self.state.borrow_mut();
@@ -1898,119 +1826,6 @@ impl App {
         self.with_ui(|ui| show_monitor(ui, snapshot.as_ref(), &mut state.programs));
     }
 
-    /// The frame trace runs while its page is open or a recording is under way, which
-    /// carries on with the window closed.
-    fn tick_frames(&self) {
-        if let Some(result) = frames::finished() {
-            let notify = self.state.borrow().settings.notifications;
-            match result {
-                Ok(run) => {
-                    let name = run.name.trim_end_matches(".exe").to_string();
-                    let (average, low) = (format!("{:.0}", run.average), format!("{:.0}", run.low1));
-                    {
-                        let mut state = self.state.borrow_mut();
-                        state.runs.insert(0, run);
-                        for pick in &mut state.picks {
-                            *pick += 1;
-                        }
-                        frames::save_runs(&mut state.runs);
-                    }
-                    if notify {
-                        self.with_tray(|tray| {
-                            let body = tray.invoke_recorded_body(name.into(), average.into(), low.into());
-                            system::notify(&tray.invoke_recorded_title(), &body);
-                        });
-                    }
-                }
-                Err(name) if notify => self.with_tray(|tray| {
-                    let body = tray.invoke_recorded_short(name.trim_end_matches(".exe").into());
-                    system::notify(&tray.invoke_recorded_title(), &body);
-                }),
-                Err(_) => {}
-            }
-            self.with_ui(|ui| self.show_runs(ui));
-        }
-
-        let open = self.with_ui_value(|ui| ui.get_page() == FRAMES_PAGE).unwrap_or(false);
-        if open || frames::recording() {
-            let failed = frames::start().is_err();
-            let since = *self.state.borrow_mut().frames_since.get_or_insert_with(Instant::now);
-            self.with_ui(|ui| {
-                let rates = ui.global::<Frames>();
-                rates.set_failed(failed);
-                rates.set_warming(since.elapsed() < Duration::from_secs(4));
-            });
-        } else {
-            frames::stop();
-            self.state.borrow_mut().frames_since = None;
-        }
-        if open {
-            self.with_ui(|ui| self.show_frames(ui));
-        }
-    }
-
-    fn show_frames(&self, ui: &AppWindow) {
-        let live = frames::live();
-        let rows: Vec<LiveRow> = live
-            .iter()
-            .take(8)
-            .map(|l| LiveRow {
-                name: l.name.trim_end_matches(".exe").into(),
-                fps: format!("{:.0}", l.fps).into(),
-                frame_time: format!("{:.1} ms", 1000.0 / l.fps).into(),
-            })
-            .collect();
-        self.state.borrow_mut().drawing = live.into_iter().take(8).map(|l| (l.pid, l.name)).collect();
-        let rates = ui.global::<Frames>();
-        rates.set_live(ModelRc::new(VecModel::from(rows)));
-        let (progress, target) = frames::progress();
-        let (stage, seconds) = match progress {
-            frames::Progress::Idle => (0, 0),
-            frames::Progress::Countdown(s) => (1, s),
-            frames::Progress::Recording(s) => (2, s),
-        };
-        rates.set_stage(stage);
-        rates.set_seconds(seconds as i32);
-        rates.set_target(target.trim_end_matches(".exe").into());
-    }
-
-    fn show_runs(&self, ui: &AppWindow) {
-        let state = self.state.borrow();
-        let rows: Vec<RunRow> = state
-            .runs
-            .iter()
-            .enumerate()
-            .map(|(i, run)| RunRow {
-                name: run.name.trim_end_matches(".exe").into(),
-                time: format!("{}, {:.0} s", run.time.format("%d/%m %H:%M"), run.seconds).into(),
-                average: format!("{:.0}", run.average).into(),
-                low1: format!("{:.0}", run.low1).into(),
-                low01: format!("{:.0}", run.low01).into(),
-                pick: state.picks.iter().position(|&p| p == i).map_or(0, |at| at as i32 + 1),
-            })
-            .collect();
-        let rates = ui.global::<Frames>();
-        rates.set_runs(ModelRc::new(VecModel::from(rows)));
-        let pair = match state.picks.as_slice() {
-            &[a, b] => state.runs.get(a).zip(state.runs.get(b)),
-            _ => None,
-        };
-        rates.set_comparing(pair.is_some());
-        if let Some((a, b)) = pair {
-            let c = frames::compare(a, b);
-            let sign = |v: f64| if v.abs() < 0.05 { 0 } else { v.signum() as i32 };
-            rates.set_name_a(a.name.trim_end_matches(".exe").into());
-            rates.set_name_b(b.name.trim_end_matches(".exe").into());
-            rates.set_diff_average(format!("{:+.1}%", c.average).into());
-            rates.set_diff_low1(format!("{:+.1}%", c.low1).into());
-            rates.set_diff_low01(format!("{:+.1}%", c.low01).into());
-            rates.set_sign_average(sign(c.average));
-            rates.set_sign_low1(sign(c.low1));
-            rates.set_sign_low01(sign(c.low01));
-            rates.set_real(c.real);
-        }
-    }
-
     /// Runs a button of the Monitor page on its row's processes, off the UI thread. The
     /// next sample shows the result.
     fn on_program(self: &Rc<Self>, i: i32, f: impl FnOnce(&monitor::Program) + Send + 'static) {
@@ -2257,8 +2072,6 @@ impl App {
 
 const INTERNET_PAGE: i32 = 8;
 const MONITOR_PAGE: i32 = 9;
-const FRAMES_PAGE: i32 = 10;
-const LATENCY_PAGE: i32 = 11;
 /// Rows on the Disk space page: the largest files, and the items of a folder.
 const LARGEST_FILES: usize = 20;
 const FOLDER_ROWS: usize = 100;
@@ -2660,51 +2473,6 @@ fn show_space(ui: &AppWindow, state: &mut State) {
         .collect();
     disk.set_largest(ModelRc::new(VecModel::from(largest)));
     state.space_rows = records;
-}
-
-/// Microseconds as the Latency page shows them: whole below a millisecond.
-fn format_micros(us: f64) -> String {
-    if us < 1000.0 { format!("{us:.0} µs") } else { format!("{:.2} ms", us / 1000.0) }
-}
-
-fn show_latency(ui: &AppWindow) {
-    let page = ui.global::<Latency>();
-    page.set_running(latency::running());
-    let Some(report) = latency::report() else {
-        page.set_measured(false);
-        return;
-    };
-    let level = |us: f64| if us >= latency::BAD { 2 } else if us >= latency::WARN { 1 } else { 0 };
-    let seconds = report.seconds as u64;
-    page.set_measured(true);
-    page.set_elapsed(if seconds < 60 { format!("{seconds} s") } else { format!("{} min {} s", seconds / 60, seconds % 60) }.into());
-    let (isr, isr_driver) = report.worst_isr().map_or((String::from("-"), ""), |(us, name)| (format_micros(us), name));
-    let (dpc, dpc_driver) = report.worst_dpc().map_or((String::from("-"), ""), |(us, name)| (format_micros(us), name));
-    page.set_isr(isr.into());
-    page.set_isr_driver(isr_driver.into());
-    page.set_dpc(dpc.into());
-    page.set_dpc_driver(dpc_driver.into());
-    let worst = report.drivers.first();
-    page.set_level(worst.map_or(0, |d| level(d.worst())));
-    page.set_worst(worst.map(|d| format_micros(d.worst())).unwrap_or_default().into());
-    page.set_worst_driver(worst.map(|d| d.name.clone()).unwrap_or_default().into());
-    let max = |count: u64, us: f64| if count == 0 { String::from("-") } else { format_micros(us) };
-    let rows: Vec<DriverRow> = report
-        .drivers
-        .iter()
-        .take(15)
-        .map(|d| DriverRow {
-            name: d.name.clone().into(),
-            description: d.description.clone().into(),
-            isrs: d.isr_count.to_string().into(),
-            isr_max: max(d.isr_count, d.isr_max).into(),
-            dpcs: d.dpc_count.to_string().into(),
-            dpc_max: max(d.dpc_count, d.dpc_max).into(),
-            busy: format!("{:.2}%", d.busy).into(),
-            level: level(d.worst()),
-        })
-        .collect();
-    page.set_drivers(ModelRc::new(VecModel::from(rows)));
 }
 
 fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, shown: &mut Vec<monitor::Program>) {

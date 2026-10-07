@@ -11,11 +11,6 @@ export component Tray inherits SystemTrayIcon {
     public pure function freed-title() -> string { return @tr("Automatic cleanup"); }
     public pure function freed-body(amount: string) -> string { return @tr("Freed {}", amount); }
     public pure function hint-title() -> string { return @tr("Vantix is still running"); }
-    public pure function recorded-title() -> string { return @tr("Frame rate recorded"); }
-    public pure function recorded-body(name: string, average: string, low: string) -> string {
-        return @tr("{}: {} FPS on average, {} FPS 1% low", name, average, low);
-    }
-    public pure function recorded-short(name: string) -> string { return @tr("{} closed before 10 seconds were recorded", name); }
     public pure function hint-body() -> string { return @tr("It keeps working from the tray. Use Quit in the tray menu to close it."); }
 
     icon: @image-url("../res/vantix-tray.png");

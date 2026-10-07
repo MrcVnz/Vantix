@@ -168,7 +168,7 @@ fn link_target(link: &Path) -> Option<PathBuf> {
 }
 
 /// File description and company name from the version resource.
-pub fn version_info(path: &Path) -> (String, String) {
+fn version_info(path: &Path) -> (String, String) {
     unsafe {
         let file = HSTRING::from(path.as_os_str());
         let size = GetFileVersionInfoSizeW(&file, None);
