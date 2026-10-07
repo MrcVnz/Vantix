@@ -1431,3 +1431,54 @@ msgstr "DPCs"
 
 msgid "Time"
 msgstr "Tempo"
+
+msgid "Disk space"
+msgstr "Espaço em disco"
+
+msgid "Reads the drive's file table directly, the way WizTree does, so a full drive takes seconds instead of minutes. Sizes are the space files take on disk."
+msgstr "Lê direto a tabela de arquivos do disco, como o WizTree, então um disco cheio leva segundos em vez de minutos. Os tamanhos são o espaço que os arquivos ocupam no disco."
+
+msgid "Drive"
+msgstr "Disco"
+
+msgid "Reading the file table..."
+msgstr "Lendo a tabela de arquivos..."
+
+msgid "{} files taking {}, read in {} s."
+msgstr "{} arquivos ocupando {}, lidos em {} s."
+
+msgid "No NTFS drive to read."
+msgstr "Nenhum disco NTFS para ler."
+
+msgid "Only fixed NTFS drives can be read this way."
+msgstr "Só discos NTFS fixos podem ser lidos assim."
+
+msgid "Scan again"
+msgstr "Ler de novo"
+
+msgid "Scan"
+msgstr "Ler disco"
+
+msgid "Couldn't read this drive's file table."
+msgstr "Não deu para ler a tabela de arquivos deste disco."
+
+msgid "Folders"
+msgstr "Pastas"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Size"
+msgstr "Tamanho"
+
+msgid "Files"
+msgstr "Arquivos"
+
+msgid "And {} smaller items."
+msgstr "E mais {} itens menores."
+
+msgid "This folder is empty."
+msgstr "Esta pasta está vazia."
+
+msgid "Largest files"
+msgstr "Maiores arquivos"

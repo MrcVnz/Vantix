@@ -320,5 +320,7 @@ export component FramesPage inherits VerticalLayout {
                 }
             }
         }
+        // Keeps the rows at the top of the card, which stretches to the window's bottom.
+        Rectangle { vertical-stretch: 1; }
     }
 }

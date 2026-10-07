@@ -1,0 +1,292 @@
+import { Theme, Icons, Icon, Card, Button, Segmented } from "theme.slint";
+
+export struct SpaceRow {
+    name: string,
+    /// The folder a file is in, for the largest files list.
+    detail: string,
+    size: string,
+    /// Of the folder being shown, 0 to 1.
+    share: float,
+    files: string,
+    folder: bool,
+}
+
+export global Space {
+    in property <[string]> drives;
+    in-out property <int> drive;
+    in property <bool> scanning;
+    /// 0 to 1.
+    in property <float> progress;
+    in property <string> error;
+    in property <bool> scanned;
+    /// Files found, the space they take and how long reading took.
+    in property <string> files;
+    in property <string> used;
+    in property <string> seconds;
+    in property <string> path;
+    in property <bool> can-up;
+    in property <[SpaceRow]> rows;
+    /// Items in the folder past the ones listed.
+    in property <int> more;
+    in property <[SpaceRow]> largest;
+
+    public pure function failed() -> string {
+        return @tr("Couldn't read this drive's file table.");
+    }
+
+    callback scan();
+    callback enter(int);
+    callback up();
+    callback reveal(int);
+    callback reveal-largest(int);
+}
+
+component Heading inherits Text {
+    color: Theme.faint;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+component Reveal inherits Rectangle {
+    callback clicked();
+    width: 32px;
+    height: 32px;
+    border-radius: Theme.radius-small;
+    background: area.has-hover ? Theme.hover : transparent;
+    Icon {
+        data: Icons.external;
+        size: 16px;
+        tint: area.has-hover ? Theme.text : Theme.faint;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component SpacePage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Disk space");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("Reads the drive's file table directly, the way WizTree does, so a full drive takes seconds instead of minutes. Sizes are the space files take on disk.");
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    Card {
+        title: @tr("Drive");
+        icon: Icons.drive;
+
+        HorizontalLayout {
+            spacing: 16px;
+            if Space.drives.length > 1: Segmented {
+                width: min(120px * Space.drives.length, 480px);
+                options: Space.drives;
+                selected <=> Space.drive;
+                changed => { Space.scan(); }
+            }
+            Text {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                text: Space.error != "" ? Space.error
+                    : Space.scanning ? @tr("Reading the file table...")
+                    : Space.scanned ? @tr("{} files taking {}, read in {} s.", Space.files, Space.used, Space.seconds)
+                    : Space.drives.length == 0 ? @tr("No NTFS drive to read.")
+                    : @tr("Only fixed NTFS drives can be read this way.");
+                color: Space.error != "" ? Theme.bad : Theme.muted;
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: Space.scanned ? @tr("Scan again") : @tr("Scan");
+                    primary: !Space.scanned;
+                    enabled: !Space.scanning && Space.drives.length > 0;
+                    tall: 36px;
+                    clicked => { Space.scan(); }
+                }
+            }
+        }
+
+        if Space.scanning: Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Theme.background;
+            Rectangle {
+                x: 0;
+                width: parent.width * Space.progress;
+                border-radius: 2px;
+                background: Theme.accent;
+            }
+        }
+    }
+
+    if Space.scanned: Card {
+        title: @tr("Folders");
+        icon: Icons.folder;
+        vertical-stretch: 1;
+
+        HorizontalLayout {
+            spacing: 10px;
+            if Space.can-up: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: Theme.radius-small;
+                    background: up.has-hover ? Theme.hover : Theme.raised;
+                    Icon { data: Icons.back; size: 16px; }
+                    up := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Space.up(); }
+                    }
+                }
+            }
+            Text {
+                text: Space.path;
+                color: Theme.text;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 16px;
+            padding-left: 8px;
+            padding-right: 8px;
+            Heading { horizontal-stretch: 1; text: @tr("Name"); }
+            Heading { width: 90px; text: @tr("Size"); horizontal-alignment: right; }
+            Heading { width: 80px; text: @tr("Files"); horizontal-alignment: right; }
+            Rectangle { width: 32px; }
+        }
+        for row[i] in Space.rows: Rectangle {
+            height: 40px;
+            border-radius: Theme.radius-small;
+            background: row.folder && area.has-hover ? Theme.surface.brighter(0.15) : transparent;
+
+            // The row's share of the folder, behind its text.
+            if row.share >= 0.02: Rectangle {
+                x: 0;
+                width: parent.width * row.share;
+                border-radius: Theme.radius-small;
+                background: Theme.accent.with-alpha(0.07);
+            }
+
+            area := TouchArea {
+                mouse-cursor: row.folder ? pointer : default;
+                clicked => {
+                    if row.folder {
+                        Space.enter(i);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 16px;
+                padding-left: 8px;
+                padding-right: 8px;
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            data: row.folder ? Icons.folder : Icons.file;
+                            size: 16px;
+                            tint: row.folder ? Theme.accent : Theme.faint;
+                        }
+                    }
+                    Text {
+                        text: row.name;
+                        color: Theme.text;
+                        font-weight: row.folder ? 600 : 400;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+                Text {
+                    width: 90px;
+                    text: row.size;
+                    color: Theme.text;
+                    font-weight: 600;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                Text {
+                    width: 80px;
+                    text: row.files;
+                    color: Theme.muted;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Reveal { clicked => { Space.reveal(i); } }
+                }
+            }
+        }
+        if Space.more > 0: Text {
+            text: @tr("And {} smaller items.", Space.more);
+            color: Theme.faint;
+        }
+        if Space.rows.length == 0: Text {
+            text: @tr("This folder is empty.");
+            color: Theme.faint;
+        }
+        // Keeps the rows at the top of the card, which stretches to the window's bottom.
+        Rectangle { vertical-stretch: 1; }
+    }
+
+    if Space.scanned: Card {
+        title: @tr("Largest files");
+        icon: Icons.file;
+
+        for row[i] in Space.largest: HorizontalLayout {
+            spacing: 16px;
+            height: 44px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                Text {
+                    text: row.name;
+                    color: Theme.text;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Text {
+                    text: row.detail;
+                    color: Theme.faint;
+                    font-size: 12px;
+                    overflow: elide;
+                }
+            }
+            Text {
+                width: 90px;
+                text: row.size;
+                color: Theme.text;
+                font-weight: 600;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                Reveal { clicked => { Space.reveal-largest(i); } }
+            }
+        }
+    }
+}

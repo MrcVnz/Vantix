@@ -12,6 +12,7 @@ mod net;
 mod reg;
 mod restore;
 mod settings;
+mod space;
 mod startup;
 mod system;
 mod text;
@@ -21,6 +22,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::Local;
@@ -96,6 +99,14 @@ struct State {
     drawing: Vec<(u32, String)>,
     /// When the frame trace started, since frames take a moment to arrive.
     frames_since: Option<Instant>,
+    /// The Disk space page: drives on offer, the last scan with the paths of its largest
+    /// files, the folder shown and the records of its rows. The scan goes when the
+    /// window closes, since it holds about 25 bytes per file.
+    space_drives: Vec<char>,
+    space: Option<(space::Scan, Vec<(u32, String)>)>,
+    space_dir: u32,
+    space_rows: Vec<u32>,
+    space_progress: Option<Arc<AtomicU32>>,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -178,6 +189,11 @@ fn main() -> Result<(), slint::PlatformError> {
             picks: Vec::new(),
             drawing: Vec::new(),
             frames_since: None,
+            space_drives: Vec::new(),
+            space: None,
+            space_dir: space::ROOT,
+            space_rows: Vec::new(),
+            space_progress: None,
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -350,6 +366,7 @@ impl App {
         Timer::single_shot(Duration::ZERO, move || {
             let Some(app) = app.upgrade() else { return };
             app.window.borrow_mut().take();
+            app.state.borrow_mut().space = None;
             memory::trim_self();
 
             let mut state = app.state.borrow_mut();
@@ -606,6 +623,42 @@ impl App {
             latency::stop();
             app.with_ui(show_latency);
         }));
+        let disk = ui.global::<Space>();
+        disk.on_scan(bind(self, |app| app.scan_space()));
+        disk.on_enter(bind_with(self, |app, i: i32| {
+            let Some(&record) = app.state.borrow().space_rows.get(i as usize) else { return };
+            app.state.borrow_mut().space_dir = record;
+            app.with_ui(|ui| show_space(ui, &mut app.state.borrow_mut()));
+        }));
+        disk.on_up(bind(self, |app| {
+            {
+                let mut state = app.state.borrow_mut();
+                let up = state.space.as_ref().and_then(|(scan, _)| scan.parent(state.space_dir));
+                state.space_dir = up.unwrap_or(space::ROOT);
+            }
+            app.with_ui(|ui| show_space(ui, &mut app.state.borrow_mut()));
+        }));
+        disk.on_reveal(bind_with(self, |app, i: i32| {
+            let state = app.state.borrow();
+            if let (Some((scan, _)), Some(&record)) = (&state.space, state.space_rows.get(i as usize)) {
+                reveal(&scan.path(record));
+            }
+        }));
+        disk.on_reveal_largest(bind_with(self, |app, i: i32| {
+            if let Some((_, path)) = app.state.borrow().space.as_ref().and_then(|(_, l)| l.get(i as usize)) {
+                reveal(path);
+            }
+        }));
+        {
+            let mut state = self.state.borrow_mut();
+            let volumes = space::volumes();
+            let labels: Vec<slint::SharedString> = volumes.iter().map(|letter| format!("{letter}:").into()).collect();
+            state.space_drives = volumes;
+            disk.set_drives(ModelRc::new(VecModel::from(labels)));
+            let system = std::env::var("SystemDrive").ok().and_then(|d| d.chars().next());
+            let at = state.space_drives.iter().position(|&l| Some(l) == system).unwrap_or(0);
+            disk.set_drive(at as i32);
+        }
         rates.on_remove(bind_with(self, |app, i: i32| {
             {
                 let mut state = app.state.borrow_mut();
@@ -707,6 +760,10 @@ impl App {
         self.tick_internet();
         self.tick_monitor();
         self.tick_frames();
+        if let Some(progress) = &self.state.borrow().space_progress {
+            let done = progress.load(Ordering::Relaxed) as f32 / 1000.0;
+            self.with_ui(|ui| ui.global::<Space>().set_progress(done));
+        }
         if self.with_ui_value(|ui| ui.get_page() == LATENCY_PAGE).unwrap_or(false) {
             self.with_ui(show_latency);
         }
@@ -804,6 +861,71 @@ impl App {
             }
         })
         .unwrap();
+    }
+
+    /// Reads the chosen drive's file table off the UI thread, then the paths of its
+    /// largest files, which take a lookup per folder.
+    fn scan_space(self: &Rc<Self>) {
+        if self.state.borrow().space_progress.is_some() {
+            return;
+        }
+        let Some(letter) = self
+            .with_ui_value(|ui| ui.global::<Space>().get_drive())
+            .and_then(|i| self.state.borrow().space_drives.get(i as usize).copied())
+        else {
+            return;
+        };
+        let progress = Arc::new(AtomicU32::new(0));
+        {
+            let mut state = self.state.borrow_mut();
+            // The old scan's memory goes before the new one is built.
+            state.space = None;
+            state.space_progress = Some(progress.clone());
+        }
+        self.with_ui(|ui| {
+            let disk = ui.global::<Space>();
+            disk.set_scanning(true);
+            disk.set_scanned(false);
+            disk.set_error("".into());
+            disk.set_progress(0.0);
+        });
+        self.run_job(
+            move || {
+                let scan = space::scan(letter, &progress)?;
+                let largest =
+                    scan.largest_files(LARGEST_FILES).iter().map(|e| (e.record, scan.path(e.record))).collect();
+                Ok::<_, std::io::Error>((scan, largest))
+            },
+            |app, result| {
+                let error = match result {
+                    Some(Ok(scan)) => {
+                        let mut state = app.state.borrow_mut();
+                        state.space = Some(scan);
+                        state.space_dir = space::ROOT;
+                        None
+                    }
+                    Some(Err(e)) => Some(e.to_string()),
+                    None => Some(String::from("the scan panicked")),
+                };
+                if let Some(e) = &error {
+                    system::log_error("disk space scan", e);
+                }
+                let mut state = app.state.borrow_mut();
+                state.space_progress = None;
+                // The window closed while it read: nothing shows it, so it isn't kept.
+                if app.window.borrow().is_none() {
+                    state.space = None;
+                }
+                app.with_ui(|ui| {
+                    let disk = ui.global::<Space>();
+                    disk.set_scanning(false);
+                    if error.is_some() {
+                        disk.set_error(disk.invoke_failed());
+                    }
+                    show_space(ui, &mut state);
+                });
+            },
+        );
     }
 
     /// Measures every category in parallel; each one is a handful of folders.
@@ -1955,6 +2077,9 @@ const INTERNET_PAGE: i32 = 8;
 const MONITOR_PAGE: i32 = 9;
 const FRAMES_PAGE: i32 = 10;
 const LATENCY_PAGE: i32 = 11;
+/// Rows on the Disk space page: the largest files, and the items of a folder.
+const LARGEST_FILES: usize = 20;
+const FOLDER_ROWS: usize = 100;
 /// Ping targets the user can add, on top of the router and Cloudflare.
 const MAX_HOSTS: usize = 5;
 
@@ -2235,6 +2360,71 @@ fn startup_row(entry: &startup::Entry) -> StartupRow {
         enabled: entry.enabled,
         memory: entry.memory.map(format_bytes).unwrap_or_default().into(),
     }
+}
+
+/// Sizes on the Disk space page, which go from a few bytes to terabytes.
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 { format!("{bytes} B") } else { format!("{value:.1} {}", UNITS[unit]) }
+}
+
+/// Opens Explorer on the folder of `path` with it selected.
+fn reveal(path: &str) {
+    use std::os::windows::process::CommandExt;
+    let _ = std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{path}\"")).spawn();
+}
+
+fn show_space(ui: &AppWindow, state: &mut State) {
+    let disk = ui.global::<Space>();
+    let Some((scan, largest)) = &state.space else {
+        disk.set_scanned(false);
+        return;
+    };
+    disk.set_scanned(true);
+    disk.set_files(scan.files.to_string().into());
+    disk.set_used(format_size(scan.total()).into());
+    disk.set_seconds(format!("{:.1}", scan.seconds).into());
+    let dir = scan.get(state.space_dir);
+    disk.set_path(scan.path(state.space_dir).into());
+    disk.set_can_up(scan.parent(state.space_dir).is_some());
+    let children = scan.children(state.space_dir);
+    let shown = &children[..children.len().min(FOLDER_ROWS)];
+    let records: Vec<u32> = shown.iter().map(|e| e.record).collect();
+    let names = scan.names(&records);
+    let rows: Vec<SpaceRow> = shown
+        .iter()
+        .zip(names)
+        .map(|(e, name)| SpaceRow {
+            name: name.into(),
+            detail: Default::default(),
+            size: format_size(e.size).into(),
+            share: (e.size as f64 / dir.size.max(1) as f64) as f32,
+            files: if e.folder { e.files.to_string().into() } else { Default::default() },
+            folder: e.folder,
+        })
+        .collect();
+    disk.set_rows(ModelRc::new(VecModel::from(rows)));
+    disk.set_more((children.len() - shown.len()) as i32);
+    let largest: Vec<SpaceRow> = largest
+        .iter()
+        .map(|(record, path)| {
+            let (folder, name) = path.rsplit_once('\\').unwrap_or(("", path));
+            SpaceRow {
+                name: name.into(),
+                detail: folder.into(),
+                size: format_size(scan.get(*record).size).into(),
+                ..Default::default()
+            }
+        })
+        .collect();
+    disk.set_largest(ModelRc::new(VecModel::from(largest)));
+    state.space_rows = records;
 }
 
 /// Microseconds as the Latency page shows them: whole below a millisecond.

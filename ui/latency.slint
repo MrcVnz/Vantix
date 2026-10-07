@@ -200,5 +200,7 @@ export component LatencyPage inherits VerticalLayout {
             Number { width: 84px; text: row.dpc-max; }
             Number { width: 56px; text: row.busy; color: Theme.muted; }
         }
+        // Keeps the rows at the top of the card, which stretches to the window's bottom.
+        Rectangle { vertical-stretch: 1; }
     }
 }
