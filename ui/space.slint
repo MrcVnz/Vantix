@@ -15,9 +15,12 @@ export global Space {
     in property <[string]> drives;
     in-out property <int> drive;
     in property <bool> scanning;
+    /// The drive being read, such as "E:".
+    in property <string> reading;
     /// 0 to 1.
     in property <float> progress;
     in property <string> error;
+    /// Results of the selected drive are in; another drive's stay hidden.
     in property <bool> scanned;
     /// Files found, the space they take and how long reading took.
     in property <string> files;
@@ -35,6 +38,7 @@ export global Space {
     }
 
     callback scan();
+    callback drive-changed();
     callback enter(int);
     callback up();
     callback reveal(int);
@@ -88,6 +92,8 @@ export component SpacePage inherits VerticalLayout {
     Card {
         title: @tr("Drive");
         icon: Icons.drive;
+        // Only the results stretch; this card keeps its height while it reads too.
+        vertical-stretch: 0;
 
         HorizontalLayout {
             spacing: 16px;
@@ -95,14 +101,17 @@ export component SpacePage inherits VerticalLayout {
                 width: min(120px * Space.drives.length, 480px);
                 options: Space.drives;
                 selected <=> Space.drive;
-                changed => { Space.scan(); }
+                // Picking a drive only selects it; reading waits for the button. The
+                // drive can't change mid-read, so the results match what's selected.
+                enabled: !Space.scanning;
+                changed => { Space.drive-changed(); }
             }
             Text {
                 horizontal-stretch: 1;
                 vertical-alignment: center;
                 wrap: word-wrap;
                 text: Space.error != "" ? Space.error
-                    : Space.scanning ? @tr("Reading the file table...")
+                    : Space.scanning ? @tr("Reading the file table of {}...", Space.reading)
                     : Space.scanned ? @tr("{} files taking {}, read in {} s.", Space.files, Space.used, Space.seconds)
                     : Space.drives.length == 0 ? @tr("No NTFS drive to read.")
                     : @tr("Only fixed NTFS drives can be read this way.");

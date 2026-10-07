@@ -1303,8 +1303,8 @@ msgstr "Lê direto a tabela de arquivos do disco, como o WizTree, então um disc
 msgid "Drive"
 msgstr "Disco"
 
-msgid "Reading the file table..."
-msgstr "Lendo a tabela de arquivos..."
+msgid "Reading the file table of {}..."
+msgstr "Lendo a tabela de arquivos de {}..."
 
 msgid "{} files taking {}, read in {} s."
 msgstr "{} arquivos ocupando {}, lidos em {} s."

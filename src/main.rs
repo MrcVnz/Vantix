@@ -583,6 +583,7 @@ impl App {
 
         let disk = ui.global::<Space>();
         disk.on_scan(bind(self, |app| app.scan_space()));
+        disk.on_drive_changed(bind(self, |app| app.with_ui(|ui| show_space(ui, &mut app.state.borrow_mut()))));
         disk.on_enter(bind_with(self, |app, i: i32| {
             let Some(&record) = app.state.borrow().space_rows.get(i as usize) else { return };
             app.state.borrow_mut().space_dir = record;
@@ -898,6 +899,7 @@ impl App {
         self.with_ui(|ui| {
             let disk = ui.global::<Space>();
             disk.set_scanning(true);
+            disk.set_reading(format!("{letter}:").into());
             disk.set_scanned(false);
             disk.set_error("".into());
             disk.set_progress(0.0);
@@ -2430,7 +2432,9 @@ fn reveal(path: &str) {
 
 fn show_space(ui: &AppWindow, state: &mut State) {
     let disk = ui.global::<Space>();
-    let Some((scan, largest)) = &state.space else {
+    let selected = state.space_drives.get(disk.get_drive() as usize).copied();
+    // A scan of another drive stays in memory for when it's picked again.
+    let Some((scan, largest)) = state.space.as_ref().filter(|(scan, _)| Some(scan.letter) == selected) else {
         disk.set_scanned(false);
         return;
     };

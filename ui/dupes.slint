@@ -110,6 +110,8 @@ export component DupesPage inherits VerticalLayout {
     Card {
         title: @tr("Where to look");
         icon: Icons.folder;
+        // Only the results stretch; this card keeps its height while it searches too.
+        vertical-stretch: 0;
 
         for folder[i] in Dupes.folders: HorizontalLayout {
             spacing: 10px;

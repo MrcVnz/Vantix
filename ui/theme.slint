@@ -177,6 +177,7 @@ export component Button inherits Rectangle {
 export component Segmented inherits Rectangle {
     in property <[string]> options;
     in-out property <int> selected;
+    in property <bool> enabled: true;
     callback changed(int);
 
     property <length> slot: (self.width - 8px) / max(1, self.options.length);
@@ -205,14 +206,17 @@ export component Segmented inherits Rectangle {
 
         Text {
             text: option;
-            color: i == root.selected ? Theme.text : area.has-hover ? Theme.text.transparentize(0.25) : Theme.muted;
+            color: i == root.selected ? Theme.text
+                : !root.enabled ? Theme.faint
+                : area.has-hover ? Theme.text.transparentize(0.25) : Theme.muted;
             font-weight: 600;
             font-size: 12.5px;
             animate color { duration: 150ms; }
         }
 
         area := TouchArea {
-            mouse-cursor: pointer;
+            enabled: root.enabled;
+            mouse-cursor: root.enabled ? pointer : default;
             clicked => {
                 if root.selected != i {
                     root.selected = i;
