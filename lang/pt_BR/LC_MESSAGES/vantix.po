@@ -1273,14 +1273,89 @@ msgstr "Rede"
 msgid "Down {}, up {}"
 msgstr "Download {}, upload {}"
 
-msgid "{} cores ({} performance), {} threads"
-msgstr "{} núcleos ({} de desempenho), {} threads"
+msgid "Cores"
+msgstr "Núcleos"
 
-msgid "{} cores, {} threads"
-msgstr "{} núcleos, {} threads"
+msgid "Threads"
+msgstr "Threads"
 
-msgid "{} base clock, {} L3 cache"
-msgstr "clock base de {}, cache L3 de {}"
+msgid "P + E cores"
+msgstr "Núcleos P + E"
+
+msgid "Base clock"
+msgstr "Clock base"
+
+msgid "Clock now"
+msgstr "Clock agora"
+
+msgid "L3 cache"
+msgstr "Cache L3"
+
+msgid "Use per core"
+msgstr "Uso por núcleo"
+
+msgid "Video memory"
+msgstr "Memória de vídeo"
+
+msgid "3D"
+msgstr "3D"
+
+msgid "Compute"
+msgstr "Computação"
+
+msgid "Copy"
+msgstr "Cópia"
+
+msgid "Video decode"
+msgstr "Decodificação de vídeo"
+
+msgid "Video encode"
+msgstr "Codificação de vídeo"
+
+msgid "Does four calculations at a time. Every program built in the last fifteen years uses it."
+msgstr "Faz quatro cálculos de uma vez. Todo programa feito nos últimos quinze anos usa."
+
+msgid "Does eight calculations at a time, in video, audio and compression."
+msgstr "Faz oito cálculos de uma vez, em vídeo, áudio e compressão."
+
+msgid "The whole-number half of AVX, used by compressors and by game engines."
+msgstr "A parte de números inteiros do AVX, usada por compressores e por motores de jogo."
+
+msgid "Multiplies and adds in one step, in physics and image work."
+msgstr "Multiplica e soma num só passo, em física e tratamento de imagem."
+
+msgid "Sixteen calculations at a time. Few programs ask for it outside servers and emulators."
+msgstr "Dezesseis cálculos de uma vez. Fora de servidores e emuladores, poucos programas pedem."
+
+msgid "Encrypts in hardware: disk encryption and HTTPS without the cost in CPU."
+msgstr "Criptografa no hardware: disco criptografado e HTTPS sem o custo em CPU."
+
+msgid "Hashes in hardware, which speeds up checksums and signatures."
+msgstr "Faz hash no hardware, o que acelera somas de verificação e assinaturas."
+
+msgid "Bit handling that compilers lean on, in compression and in databases."
+msgstr "Manipulação de bits em que os compiladores se apoiam, em compressão e em bancos de dados."
+
+msgid "Ending..."
+msgstr "Finalizando..."
+
+msgid "Ended"
+msgstr "Finalizado"
+
+msgid "Protected by Windows"
+msgstr "Protegido pelo Windows"
+
+msgid "Service: {}"
+msgstr "Serviço: {}"
+
+msgid "Reopened by {}"
+msgstr "Reaberto por {}"
+
+msgid "Part of Windows"
+msgstr "Faz parte do Windows"
+
+msgid "Windows wouldn't let it end"
+msgstr "O Windows não deixou finalizar"
 
 msgid "CPU"
 msgstr "CPU"

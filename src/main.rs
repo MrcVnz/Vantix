@@ -91,6 +91,9 @@ struct State {
     opened_without_tray: bool,
     /// The rows on the Monitor page, in screen order, for its buttons.
     programs: Vec<monitor::Program>,
+    /// What the last End came to, for the row it was pressed on to say so for a few
+    /// seconds: the program, the outcome and when it arrived. `None` while it runs.
+    ended: Option<(String, Option<monitor::EndOutcome>, Instant)>,
     /// The Disk space page: drives on offer, the last scan with the paths of its largest
     /// files, the folder shown and the records of its rows. The scan goes when the
     /// window closes, since it holds about 25 bytes per file.
@@ -184,6 +187,7 @@ fn main() -> Result<(), slint::PlatformError> {
             tray_missing: None,
             opened_without_tray: false,
             programs: Vec::new(),
+            ended: None,
             space_drives: Vec::new(),
             space: None,
             space_dir: space::ROOT,
@@ -688,11 +692,7 @@ impl App {
                 _ => monitor::Sort::Cpu,
             })
         });
-        monitor.on_end(bind_with(self, |app, i: i32| {
-            app.on_program(i, |p| {
-                monitor::end(&p.name, &p.pids);
-            })
-        }));
+        monitor.on_end(bind_with(self, |app, i: i32| app.end_program(i)));
         monitor.on_eco(bind_with2(self, |app, i: i32, on: bool| {
             app.on_program(i, move |p| {
                 monitor::set_eco(&p.name, &p.pids, on);
@@ -1825,7 +1825,7 @@ impl App {
         monitor::watch();
         let snapshot = monitor::snapshot();
         let mut state = self.state.borrow_mut();
-        self.with_ui(|ui| show_monitor(ui, snapshot.as_ref(), &mut state.programs));
+        self.with_ui(|ui| show_monitor(ui, snapshot.as_ref(), &mut state));
     }
 
     /// Runs a button of the Monitor page on its row's processes, off the UI thread. The
@@ -1833,6 +1833,31 @@ impl App {
     fn on_program(self: &Rc<Self>, i: i32, f: impl FnOnce(&monitor::Program) + Send + 'static) {
         let Some(program) = self.state.borrow().programs.get(i as usize).cloned() else { return };
         self.run_job(move || f(&program), |_, _| {});
+    }
+
+    /// Ending takes about two seconds, since it goes back to see whether the program is
+    /// really gone, so the row says "Ending..." meanwhile and then what happened.
+    fn end_program(self: &Rc<Self>, i: i32) {
+        let Some(program) = self.state.borrow().programs.get(i as usize).cloned() else { return };
+        let name = program.name.clone();
+        self.state.borrow_mut().ended = Some((name.clone(), None, Instant::now()));
+        self.tick_monitor();
+        let ending = name.clone();
+        self.run_job(
+            move || monitor::end(&ending),
+            move |app, outcome| {
+                {
+                    let mut state = app.state.borrow_mut();
+                    // End may have been pressed on another row meanwhile, and that row
+                    // owns the line now.
+                    let mine = state.ended.as_ref().is_some_and(|(row, pending, _)| *row == name && pending.is_none());
+                    if mine {
+                        state.ended = outcome.map(|outcome| (name.clone(), Some(outcome), Instant::now()));
+                    }
+                }
+                app.tick_monitor();
+            },
+        );
     }
 
     /// The live ping runs only while its tab is on screen and the traffic count only while
@@ -2479,26 +2504,69 @@ fn show_space(ui: &AppWindow, state: &mut State) {
     state.space_rows = records;
 }
 
-fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, shown: &mut Vec<monitor::Program>) {
+fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, state: &mut State) {
     let m = ui.global::<Monitor>();
+    // The facts cost nothing to read, so they're on screen before the first sample.
+    if m.get_cpu_name().is_empty() {
+        let info = monitor::cpu_info();
+        m.set_cpu_name(info.name.as_str().into());
+        m.set_cpu_cores(info.cores.to_string().into());
+        m.set_cpu_threads(info.threads.to_string().into());
+        m.set_cpu_hybrid(
+            match info.performance {
+                0 => String::new(),
+                performance => format!("{} + {}", performance, info.cores.saturating_sub(performance)),
+            }
+            .into(),
+        );
+        m.set_cpu_base(format_ghz(f64::from(info.base_mhz)).into());
+        m.set_cpu_l3(format_bytes(info.l3).into());
+        let features: Vec<Feature> = info
+            .features
+            .iter()
+            .map(|&kind| Feature { text: monitor::FEATURES[kind].into(), kind: kind as i32 })
+            .collect();
+        m.set_features(ModelRc::new(VecModel::from(features)));
+        let cards: Vec<GpuCard> = monitor::adapters()
+            .iter()
+            .map(|card| GpuCard {
+                name: card.name.as_str().into(),
+                driver: [card.driver.as_str(), card.wddm.as_str()]
+                    .iter()
+                    .filter(|part| !part.is_empty())
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into(),
+                memory: format!("- / {}", format_bytes(card.memory)).into(),
+                ..Default::default()
+            })
+            .collect();
+        m.set_has_gpu(!cards.is_empty());
+        m.set_gpus(ModelRc::new(VecModel::from(cards)));
+    }
+    // The bars, from the sample or flat while there is none.
+    let set_cores = |loads: Option<&[f32]>| {
+        let groups: Vec<ModelRc<f32>> = monitor::cpu_info()
+            .groups
+            .iter()
+            .map(|core| {
+                let core: Vec<f32> =
+                    core.iter().map(|&thread| loads.and_then(|l| l.get(thread)).copied().unwrap_or(0.0)).collect();
+                ModelRc::new(VecModel::from(core))
+            })
+            .collect();
+        m.set_core_groups(ModelRc::new(VecModel::from(groups)));
+    };
     let Some(s) = snapshot else {
-        m.set_ready(false);
-        shown.clear();
+        m.set_measured(false);
+        set_cores(None);
+        state.programs.clear();
         m.set_programs(ModelRc::default());
         return;
     };
-    if !m.get_ready() {
-        let info = monitor::cpu_info();
-        m.set_cpu_name(info.name.as_str().into());
-        m.set_cpu_cores(info.cores as i32);
-        m.set_cpu_threads(info.threads as i32);
-        m.set_cpu_performance(info.performance as i32);
-        m.set_cpu_l3(format_bytes(info.l3).into());
-        m.set_cpu_base(format_ghz(f64::from(info.base_mhz)).into());
-        let features: Vec<slint::SharedString> = info.features.iter().map(|f| (*f).into()).collect();
-        m.set_features(ModelRc::new(VecModel::from(features)));
-        m.set_ready(true);
-    }
+    m.set_measured(s.measured);
+    let dash = |text: String| if s.measured { text } else { "-".to_string() };
     let percent = |value: f64| value.round().clamp(0.0, 100.0) as u32;
     // Rates scale to the busiest second of the minute, with a floor so idle noise stays flat.
     let scaled = |series: &VecDeque<f64>, floor: f64| {
@@ -2506,29 +2574,45 @@ fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, shown: &mu
         series.iter().map(|v| (v / top * 100.0).round() as u32).collect::<Vec<_>>()
     };
 
-    m.set_cores(ModelRc::new(VecModel::from(s.cores.clone())));
-    m.set_cpu_load(format!("{:.0}%", s.cpu).into());
+    set_cores(s.measured.then_some(s.cores.as_slice()));
+    m.set_cpu_load(dash(format!("{:.0}%", s.cpu)).into());
     m.set_cpu_clock(if s.mhz > 0.0 { format_ghz(s.mhz) } else { String::new() }.into());
     let (line, area) = spark_paths(s.history[0].iter().map(|v| percent(*v)));
     m.set_cpu_line(line.into());
     m.set_cpu_area(area.into());
 
-    m.set_has_gpu(!s.gpus.is_empty());
     if let Some(gpu) = s.gpus.first() {
-        m.set_gpu_name(gpu.name.as_str().into());
-        m.set_gpu_load(format!("{:.0}%", gpu.load).into());
-        m.set_gpu_memory(format!("{} / {}", format_bytes(gpu.memory_used), format_bytes(gpu.memory_total)).into());
+        m.set_gpu_load(dash(format!("{:.0}%", gpu.load)).into());
+        m.set_gpu_memory(
+            dash(format!("{} / {}", format_bytes(gpu.memory_used), format_bytes(gpu.memory_total))).into(),
+        );
         let (line, area) = spark_paths(s.history[1].iter().map(|v| percent(*v)));
         m.set_gpu_line(line.into());
         m.set_gpu_area(area.into());
+    }
+    // One card per graphics card, in the order the cards were listed in.
+    if s.measured
+        && let Some(cards) = m.get_gpus().as_any().downcast_ref::<VecModel<GpuCard>>()
+    {
+        for (i, gpu) in s.gpus.iter().enumerate() {
+            let Some(mut card) = cards.row_data(i) else { continue };
+            card.memory = format!("{} / {}", format_bytes(gpu.memory_used), format_bytes(gpu.memory_total)).into();
+            card.memory_fraction = if gpu.memory_total == 0 {
+                0.0
+            } else {
+                (gpu.memory_used as f64 / gpu.memory_total as f64) as f32
+            };
+            card.engines = ModelRc::new(VecModel::from(gpu.engines.to_vec()));
+            cards.set_row_data(i, card);
+        }
     }
 
     let read: f64 = s.disks.iter().map(|d| d.read).sum();
     let write: f64 = s.disks.iter().map(|d| d.write).sum();
     let active = s.disks.iter().map(|d| d.active).fold(0.0, f32::max);
-    m.set_disk_load(format!("{active:.0}%").into());
-    m.set_disk_read(format_speed(read).into());
-    m.set_disk_write(format_speed(write).into());
+    m.set_disk_load(dash(format!("{active:.0}%")).into());
+    m.set_disk_read(dash(format_speed(read)).into());
+    m.set_disk_write(dash(format_speed(write)).into());
     let (line, area) = spark_paths(s.history[2].iter().map(|v| percent(*v)));
     m.set_disk_line(line.into());
     m.set_disk_area(area.into());
@@ -2542,27 +2626,52 @@ fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, shown: &mu
 
     // While the pointer is over the list, rows keep their place and only their numbers
     // change, so a button never moves away from under it.
-    let programs: Vec<monitor::Program> = if m.get_hovering() && !shown.is_empty() {
-        shown
+    let programs: Vec<monitor::Program> = if m.get_hovering() && !state.programs.is_empty() {
+        state
+            .programs
             .iter()
             .map(|old| s.programs.iter().find(|p| p.name == old.name).cloned().unwrap_or_else(|| old.clone()))
             .collect()
     } else {
         s.programs.clone()
     };
+    // The result of an End stays on its row for four seconds, and "Ending..." never
+    // outstays the work, which takes about two.
+    let ended = state.ended.take().filter(|(_, outcome, at)| match outcome {
+        None => at.elapsed() < Duration::from_secs(15),
+        Some(_) => at.elapsed() < Duration::from_secs(4),
+    });
+    let status = |name: &str| -> (i32, slint::SharedString) {
+        match ended.as_ref().filter(|(row, ..)| row == name).map(|(_, outcome, _)| outcome) {
+            None => (0, Default::default()),
+            Some(None) => (1, Default::default()),
+            Some(Some(monitor::EndOutcome::Ended)) => (2, Default::default()),
+            Some(Some(monitor::EndOutcome::Protected)) => (3, Default::default()),
+            Some(Some(monitor::EndOutcome::Service(service))) => (4, service.as_str().into()),
+            Some(Some(monitor::EndOutcome::Reopened(parent))) => (5, parent.as_str().into()),
+            Some(Some(monitor::EndOutcome::Core)) => (6, Default::default()),
+            Some(Some(monitor::EndOutcome::Failed)) => (7, Default::default()),
+        }
+    };
     let rows: Vec<ProgramRow> = programs
         .iter()
-        .map(|p| ProgramRow {
-            name: p.name.trim_end_matches(".exe").into(),
-            count: p.pids.len() as i32,
-            cpu: format_percent(p.cpu).into(),
-            gpu: format_percent(p.gpu).into(),
-            memory: format_bytes(p.memory).into(),
-            eco: p.eco.map_or(-1, i32::from),
-            can_end: p.can_end,
+        .map(|p| {
+            let (status, status_name) = status(&p.name);
+            ProgramRow {
+                name: p.name.trim_end_matches(".exe").into(),
+                count: p.pids.len() as i32,
+                cpu: format_percent(p.cpu).into(),
+                gpu: format_percent(p.gpu).into(),
+                memory: format_bytes(p.memory).into(),
+                eco: p.eco.map_or(-1, i32::from),
+                can_end: p.can_end,
+                status,
+                status_name,
+            }
         })
         .collect();
-    *shown = programs;
+    state.programs = programs;
+    state.ended = ended;
     // In place when the count is the same, so each row keeps its state, like a pending End.
     let model = m.get_programs();
     match model.as_any().downcast_ref::<VecModel<ProgramRow>>() {
