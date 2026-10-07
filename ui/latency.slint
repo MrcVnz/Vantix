@@ -1,0 +1,204 @@
+import { Theme, Icons, Card, Button } from "theme.slint";
+
+export struct DriverRow {
+    name: string,
+    description: string,
+    isrs: string,
+    isr-max: string,
+    dpcs: string,
+    dpc-max: string,
+    busy: string,
+    /// 0 fine, 1 can crackle audio, 2 causes dropouts and stutter.
+    level: int,
+}
+
+export global Latency {
+    in property <bool> running;
+    /// Windows refused the trace.
+    in property <bool> failed;
+    /// A measurement ran or is running, so there are numbers to show.
+    in property <bool> measured;
+    in property <string> elapsed;
+    in property <string> isr;
+    in property <string> isr-driver;
+    in property <string> dpc;
+    in property <string> dpc-driver;
+    /// The longest routine of all and its driver, for the verdict.
+    in property <int> level;
+    in property <string> worst;
+    in property <string> worst-driver;
+    in property <[DriverRow]> drivers;
+
+    callback start();
+    callback stop();
+}
+
+component Heading inherits Text {
+    color: Theme.faint;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+component Number inherits Text {
+    color: Theme.text;
+    horizontal-alignment: right;
+    vertical-alignment: center;
+}
+
+component Stat inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> detail;
+    spacing: 2px;
+    horizontal-stretch: 1;
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+    }
+    Text {
+        text: root.value;
+        color: Theme.text;
+        font-family: Theme.display-font;
+        font-size: 22px;
+        font-weight: 700;
+    }
+    Text {
+        text: root.detail;
+        color: Theme.faint;
+        font-size: 12px;
+        overflow: elide;
+    }
+}
+
+export component LatencyPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    pure function level-color(level: int) -> color {
+        return level >= 2 ? Theme.bad : level == 1 ? Theme.warn : Theme.text;
+    }
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("System latency");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("How long each driver holds a processor core in its interrupt routines (ISR and DPC), measured the same way as LatencyMon. Nothing else runs on that core meanwhile, so a slow driver is what crackles audio and makes games stutter.");
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    Card {
+        title: @tr("Measurement");
+        icon: Icons.timer;
+
+        HorizontalLayout {
+            spacing: 16px;
+            Text {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                text: Latency.failed ? @tr("Windows didn't allow the kernel trace, so latency can't be measured.")
+                    : Latency.running ? @tr("Measuring. Use the PC the way it is when the problem shows up: play, listen to music, download. It keeps running with the window closed.")
+                    : Latency.measured ? @tr("Measurement stopped. Start again to measure from zero.")
+                    : @tr("Start, then use the PC the way it is when the problem shows up: play, listen to music, download. A few minutes is enough.");
+                color: Latency.failed ? Theme.bad : Theme.muted;
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: Latency.running ? @tr("Stop") : Latency.measured ? @tr("Start again") : @tr("Start");
+                    primary: !Latency.running;
+                    tall: 36px;
+                    clicked => {
+                        if Latency.running {
+                            Latency.stop();
+                        } else {
+                            Latency.start();
+                        }
+                    }
+                }
+            }
+        }
+
+        if Latency.measured: HorizontalLayout {
+            spacing: 16px;
+            Stat { label: @tr("Measured for"); value: Latency.elapsed; }
+            Stat { label: @tr("Longest ISR"); value: Latency.isr; detail: Latency.isr-driver; }
+            Stat { label: @tr("Longest DPC"); value: Latency.dpc; detail: Latency.dpc-driver; }
+        }
+
+        if Latency.measured && Latency.worst-driver != "": Rectangle {
+            border-radius: Theme.radius-small;
+            background: level-color(Latency.level).with-alpha(Latency.level > 0 ? 0.1 : 0.05);
+            HorizontalLayout {
+                padding: 12px;
+                padding-left: 14px;
+                Text {
+                    wrap: word-wrap;
+                    color: Latency.level > 0 ? level-color(Latency.level) : Theme.text;
+                    text: Latency.level >= 2
+                        ? @tr("{} held a core for {}. That's enough for audio dropouts and stutter in games. Update that driver, or turn off the device it belongs to and measure again.", Latency.worst-driver, Latency.worst)
+                        : Latency.level == 1
+                        ? @tr("{} held a core for {}. Audio recorded or played at small buffers can crackle; games don't feel it yet.", Latency.worst-driver, Latency.worst)
+                        : @tr("No driver held a core for long: the longest was {}, by {}. Drivers aren't what holds audio or games back.", Latency.worst, Latency.worst-driver);
+                }
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Drivers");
+        icon: Icons.layers;
+        vertical-stretch: 1;
+
+        if Latency.drivers.length == 0: Text {
+            text: Latency.running ? @tr("Waiting for the first routines...") : @tr("Nothing measured yet.");
+            color: Theme.faint;
+            wrap: word-wrap;
+        }
+
+        if Latency.drivers.length > 0: HorizontalLayout {
+            spacing: 16px;
+            Heading { horizontal-stretch: 1; text: @tr("Driver"); }
+            Heading { width: 64px; text: @tr("ISRs"); horizontal-alignment: right; }
+            Heading { width: 84px; text: @tr("Longest ISR"); horizontal-alignment: right; }
+            Heading { width: 64px; text: @tr("DPCs"); horizontal-alignment: right; }
+            Heading { width: 84px; text: @tr("Longest DPC"); horizontal-alignment: right; }
+            Heading { width: 56px; text: @tr("Time"); horizontal-alignment: right; }
+        }
+        for row in Latency.drivers: HorizontalLayout {
+            spacing: 16px;
+            height: 40px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                Text {
+                    text: row.name;
+                    color: row.level > 0 ? level-color(row.level) : Theme.text;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                if row.description != "": Text {
+                    text: row.description;
+                    color: Theme.faint;
+                    font-size: 12px;
+                    overflow: elide;
+                }
+            }
+            Number { width: 64px; text: row.isrs; color: Theme.muted; }
+            Number { width: 84px; text: row.isr-max; }
+            Number { width: 64px; text: row.dpcs; color: Theme.muted; }
+            Number { width: 84px; text: row.dpc-max; }
+            Number { width: 56px; text: row.busy; color: Theme.muted; }
+        }
+    }
+}

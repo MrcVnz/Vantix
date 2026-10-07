@@ -5,6 +5,7 @@ mod disk;
 mod etw;
 mod frames;
 mod governor;
+mod latency;
 mod memory;
 mod monitor;
 mod net;
@@ -209,6 +210,7 @@ fn main() -> Result<(), slint::PlatformError> {
     governor::stop();
     net::traffic_stop();
     frames::stop();
+    latency::stop();
     net::unwatch();
     result
 }
@@ -263,6 +265,7 @@ impl App {
         self.ticker.start(TimerMode::Repeated, Duration::from_secs(1), bind(self, |app| app.tick()));
         net::end_leftover_trace();
         frames::end_leftover_trace();
+        latency::end_leftover_trace();
         governor::start(live_config(&self.state.borrow().settings));
 
         apply_language(self.state.borrow().settings.language);
@@ -591,6 +594,18 @@ impl App {
             }
             app.with_ui(|ui| app.show_runs(ui));
         }));
+        let latency = ui.global::<Latency>();
+        latency.on_start(bind(self, |app| {
+            let failed = latency::start().is_err();
+            app.with_ui(|ui| {
+                ui.global::<Latency>().set_failed(failed);
+                show_latency(ui);
+            });
+        }));
+        latency.on_stop(bind(self, |app| {
+            latency::stop();
+            app.with_ui(show_latency);
+        }));
         rates.on_remove(bind_with(self, |app, i: i32| {
             {
                 let mut state = app.state.borrow_mut();
@@ -692,6 +707,9 @@ impl App {
         self.tick_internet();
         self.tick_monitor();
         self.tick_frames();
+        if self.with_ui_value(|ui| ui.get_page() == LATENCY_PAGE).unwrap_or(false) {
+            self.with_ui(show_latency);
+        }
         let due = {
             let mut state = self.state.borrow_mut();
             if state.loads.len() == SPARK_SAMPLES {
@@ -1936,6 +1954,7 @@ impl App {
 const INTERNET_PAGE: i32 = 8;
 const MONITOR_PAGE: i32 = 9;
 const FRAMES_PAGE: i32 = 10;
+const LATENCY_PAGE: i32 = 11;
 /// Ping targets the user can add, on top of the router and Cloudflare.
 const MAX_HOSTS: usize = 5;
 
@@ -2216,6 +2235,51 @@ fn startup_row(entry: &startup::Entry) -> StartupRow {
         enabled: entry.enabled,
         memory: entry.memory.map(format_bytes).unwrap_or_default().into(),
     }
+}
+
+/// Microseconds as the Latency page shows them: whole below a millisecond.
+fn format_micros(us: f64) -> String {
+    if us < 1000.0 { format!("{us:.0} µs") } else { format!("{:.2} ms", us / 1000.0) }
+}
+
+fn show_latency(ui: &AppWindow) {
+    let page = ui.global::<Latency>();
+    page.set_running(latency::running());
+    let Some(report) = latency::report() else {
+        page.set_measured(false);
+        return;
+    };
+    let level = |us: f64| if us >= latency::BAD { 2 } else if us >= latency::WARN { 1 } else { 0 };
+    let seconds = report.seconds as u64;
+    page.set_measured(true);
+    page.set_elapsed(if seconds < 60 { format!("{seconds} s") } else { format!("{} min {} s", seconds / 60, seconds % 60) }.into());
+    let (isr, isr_driver) = report.worst_isr().map_or((String::from("-"), ""), |(us, name)| (format_micros(us), name));
+    let (dpc, dpc_driver) = report.worst_dpc().map_or((String::from("-"), ""), |(us, name)| (format_micros(us), name));
+    page.set_isr(isr.into());
+    page.set_isr_driver(isr_driver.into());
+    page.set_dpc(dpc.into());
+    page.set_dpc_driver(dpc_driver.into());
+    let worst = report.drivers.first();
+    page.set_level(worst.map_or(0, |d| level(d.worst())));
+    page.set_worst(worst.map(|d| format_micros(d.worst())).unwrap_or_default().into());
+    page.set_worst_driver(worst.map(|d| d.name.clone()).unwrap_or_default().into());
+    let max = |count: u64, us: f64| if count == 0 { String::from("-") } else { format_micros(us) };
+    let rows: Vec<DriverRow> = report
+        .drivers
+        .iter()
+        .take(15)
+        .map(|d| DriverRow {
+            name: d.name.clone().into(),
+            description: d.description.clone().into(),
+            isrs: d.isr_count.to_string().into(),
+            isr_max: max(d.isr_count, d.isr_max).into(),
+            dpcs: d.dpc_count.to_string().into(),
+            dpc_max: max(d.dpc_count, d.dpc_max).into(),
+            busy: format!("{:.2}%", d.busy).into(),
+            level: level(d.worst()),
+        })
+        .collect();
+    page.set_drivers(ModelRc::new(VecModel::from(rows)));
 }
 
 fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, shown: &mut Vec<monitor::Program>) {

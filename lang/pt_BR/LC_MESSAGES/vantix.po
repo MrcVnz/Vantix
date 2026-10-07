@@ -1359,3 +1359,75 @@ msgstr "{}: {} FPS de média, {} FPS no 1% low"
 
 msgid "{} closed before 10 seconds were recorded"
 msgstr "{} fechou antes de gravar 10 segundos"
+
+msgid "Latency"
+msgstr "Latência"
+
+msgid "System latency"
+msgstr "Latência do sistema"
+
+msgid "How long each driver holds a processor core in its interrupt routines (ISR and DPC), measured the same way as LatencyMon. Nothing else runs on that core meanwhile, so a slow driver is what crackles audio and makes games stutter."
+msgstr "Quanto tempo cada driver segura um núcleo do processador nas suas rotinas de interrupção (ISR e DPC), medido do mesmo jeito que o LatencyMon. Nada mais roda nesse núcleo enquanto isso, então um driver lento é o que faz o áudio estalar e os jogos travarem."
+
+msgid "Measurement"
+msgstr "Medição"
+
+msgid "Windows didn't allow the kernel trace, so latency can't be measured."
+msgstr "O Windows não permitiu o rastreamento do kernel, então não dá para medir a latência."
+
+msgid "Measuring. Use the PC the way it is when the problem shows up: play, listen to music, download. It keeps running with the window closed."
+msgstr "Medindo. Use o PC do jeito que o problema aparece: jogue, ouça música, baixe algo. Continua rodando com a janela fechada."
+
+msgid "Measurement stopped. Start again to measure from zero."
+msgstr "Medição parada. Comece de novo para medir do zero."
+
+msgid "Start, then use the PC the way it is when the problem shows up: play, listen to music, download. A few minutes is enough."
+msgstr "Comece e use o PC do jeito que o problema aparece: jogue, ouça música, baixe algo. Alguns minutos bastam."
+
+msgid "Stop"
+msgstr "Parar"
+
+msgid "Start again"
+msgstr "Começar de novo"
+
+msgid "Start"
+msgstr "Começar"
+
+msgid "Measured for"
+msgstr "Tempo medido"
+
+msgid "Longest ISR"
+msgstr "ISR mais longo"
+
+msgid "Longest DPC"
+msgstr "DPC mais longo"
+
+msgid "{} held a core for {}. That's enough for audio dropouts and stutter in games. Update that driver, or turn off the device it belongs to and measure again."
+msgstr "{} segurou um núcleo por {}. Isso basta para cortes no áudio e travadas nos jogos. Atualize esse driver, ou desative o dispositivo dele e meça de novo."
+
+msgid "{} held a core for {}. Audio recorded or played at small buffers can crackle; games don't feel it yet."
+msgstr "{} segurou um núcleo por {}. Áudio gravado ou tocado com buffer pequeno pode estalar; os jogos ainda não sentem."
+
+msgid "No driver held a core for long: the longest was {}, by {}. Drivers aren't what holds audio or games back."
+msgstr "Nenhum driver segurou um núcleo por muito tempo: o mais longo foi {}, de {}. Não são os drivers que atrapalham o áudio ou os jogos."
+
+msgid "Drivers"
+msgstr "Drivers"
+
+msgid "Waiting for the first routines..."
+msgstr "Esperando as primeiras rotinas..."
+
+msgid "Nothing measured yet."
+msgstr "Nada medido ainda."
+
+msgid "Driver"
+msgstr "Driver"
+
+msgid "ISRs"
+msgstr "ISRs"
+
+msgid "DPCs"
+msgstr "DPCs"
+
+msgid "Time"
+msgstr "Tempo"

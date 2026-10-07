@@ -10,10 +10,11 @@ import { Live, ProBalanceCard, GameModeCard } from "live.slint";
 import { Net, InternetPage, PingRow, BloatResult, DnsRow, UsageRow } from "internet.slint";
 import { Monitor, MonitorPage, ProgramRow } from "monitor.slint";
 import { Frames, FramesPage, LiveRow, RunRow } from "frames.slint";
+import { Latency, LatencyPage, DriverRow } from "latency.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Frames, LiveRow, RunRow, Theme }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Frames, LiveRow, RunRow, Latency, DriverRow, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -356,6 +357,12 @@ export component AppWindow inherits Window {
                             active: root.page == 10;
                             clicked => { root.page = 10; }
                         }
+                        NavItem {
+                            text: @tr("Latency");
+                            icon: Icons.timer;
+                            active: root.page == 11;
+                            clicked => { root.page = 11; }
+                        }
 
                         Rectangle { min-height: 22px; vertical-stretch: 1; }
 
@@ -498,6 +505,13 @@ export component AppWindow inherits Window {
                     p10 := FramesPage {
                         width: s10.visible-width;
                         height: s10.content-height;
+                    }
+                }
+                if root.page == 11: s11 := PageScroll {
+                    needs: p11.min-height;
+                    p11 := LatencyPage {
+                        width: s11.visible-width;
+                        height: s11.content-height;
                     }
                 }
             }
