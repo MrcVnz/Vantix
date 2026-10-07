@@ -1473,3 +1473,192 @@ msgstr "Arquivos movidos para a Lixeira: {}. Espaço liberado: {}."
 
 msgid "Files moved to the Recycle Bin: {}. Space freed: {}. Left alone because they changed or are open: {}."
 msgstr "Arquivos movidos para a Lixeira: {}. Espaço liberado: {}. Deixados como estavam porque mudaram ou estão abertos: {}."
+
+msgid "Services"
+msgstr "Serviços"
+
+msgid "New start type: {}"
+msgstr "Novo tipo de início: {}"
+
+msgid "Without it: {}"
+msgstr "Sem ele: {}"
+
+msgid "With the kernel"
+msgstr "Com o kernel"
+
+msgid "With the system"
+msgstr "Com o sistema"
+
+msgid "Automatic"
+msgstr "Automático"
+
+msgid "Automatic, delayed"
+msgstr "Automático, atrasado"
+
+msgid "Manual, on a trigger"
+msgstr "Manual, por gatilho"
+
+msgid "Manual"
+msgstr "Manual"
+
+msgid "Disabled"
+msgstr "Desativado"
+
+msgid "Not signed"
+msgstr "Sem assinatura"
+
+msgid "Changed by Vantix"
+msgstr "Alterado pelo Vantix"
+
+msgid "Running"
+msgstr "Em execução"
+
+msgid "Stopped"
+msgstr "Parado"
+
+msgid "shared with {}"
+msgstr "dividido com {}"
+
+msgid "Vantix doesn't know this service. What it says about itself, and what it costs right now, is all there is to go on."
+msgstr "O Vantix não conhece este serviço. O que ele diz de si mesmo, e o que custa agora, é tudo o que há."
+
+msgid "Starts"
+msgstr "Inicia"
+
+msgid "Account"
+msgstr "Conta"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "Windows needs this one to work, so Vantix leaves it alone."
+msgstr "O Windows precisa deste para funcionar, então o Vantix não mexe."
+
+msgid "Anti-cheat. Vantix never changes it: the game can refuse to start, or ban the account."
+msgstr "Anticheat. O Vantix nunca altera: o jogo pode se recusar a abrir, ou banir a conta."
+
+msgid "A driver. Turning one off can stop the PC from starting, so this tab only reads."
+msgstr "Um driver. Desligar um pode impedir o PC de iniciar, então esta aba só lê."
+
+msgid "Stop"
+msgstr "Parar"
+
+msgid "Start"
+msgstr "Iniciar"
+
+msgid "Everything that runs without a window. Vantix measures what each one costs right now and says what stops working without it."
+msgstr "Tudo que roda sem janela. O Vantix mede o que cada um custa agora e diz o que para de funcionar sem ele."
+
+msgid "Drivers, listed only. Turning one off can stop the PC from starting, so Vantix never changes them."
+msgstr "Drivers, apenas listados. Desligar um pode impedir o PC de iniciar, então o Vantix nunca os altera."
+
+msgid "Drivers"
+msgstr "Drivers"
+
+msgid "All"
+msgstr "Todos"
+
+msgid "Other people's"
+msgstr "De terceiros"
+
+msgid "With Windows"
+msgstr "Com o Windows"
+
+msgid "Search by name"
+msgstr "Pesquisar por nome"
+
+msgid "By name"
+msgstr "Por nome"
+
+msgid "By memory"
+msgstr "Por memória"
+
+msgid "Reading the services..."
+msgstr "Lendo os serviços..."
+
+msgid "{} of {} shown, {} running now"
+msgstr "{} de {} à vista, {} em execução agora"
+
+msgid "Windows"
+msgstr "Windows"
+
+msgid "Microsoft"
+msgstr "Microsoft"
+
+msgid "Set to automatic"
+msgstr "Deixar automático"
+
+msgid "Set to manual"
+msgstr "Deixar manual"
+
+msgid "Disable"
+msgstr "Desativar"
+
+msgid "Vantix doesn't know this service, so there is no gain or cost to show. What Windows says about it is on its row."
+msgstr "O Vantix não conhece este serviço, então não há ganho nem custo para mostrar. O que o Windows diz sobre ele está na linha dele."
+
+msgid "a device is plugged in"
+msgstr "um aparelho é ligado"
+
+msgid "the network changes"
+msgstr "a rede muda"
+
+msgid "the PC joins a domain"
+msgstr "o PC entra num domínio"
+
+msgid "a firewall port opens"
+msgstr "uma porta do firewall abre"
+
+msgid "a group policy changes"
+msgstr "uma política de grupo muda"
+
+msgid "something looks for it on a pipe or a port"
+msgstr "algo o procura num canal ou numa porta"
+
+msgid "a program asks for it"
+msgstr "um programa pede por ele"
+
+msgid "a system event happens"
+msgstr "acontece um evento do sistema"
+
+msgid "Windows says: {}"
+msgstr "O Windows diz: {}"
+
+msgid "Vantix has nothing of its own on this one, so what is above comes from Windows and what is below is measured here."
+msgstr "O Vantix não tem nada de próprio sobre este, então o que está acima vem do Windows e o que está abaixo é medido aqui."
+
+msgid "Also when"
+msgstr "Também quando"
+
+msgid "Process"
+msgstr "Processo"
+
+msgid "shares the {} host"
+msgstr "divide o host {}"
+
+msgid "with {} other services"
+msgstr "com outros {} serviços"
+
+msgid "Needs"
+msgstr "Precisa de"
+
+msgid "Needed by"
+msgstr "É preciso para"
+
+msgid "Stopping it stops the {} services that need it, too."
+msgstr "Pará-lo para também os {} serviços que precisam dele."
+
+msgid "Windows starts it again by itself if it stops, so stopping it rarely sticks. Changing how it starts does."
+msgstr "O Windows o inicia de novo sozinho se ele parar, então parar raramente dura. Mudar como ele inicia, sim."
+
+msgid "One copy runs per signed-in user. The change here is to the one Windows copies."
+msgstr "Roda uma cópia por usuário conectado. A alteração aqui é no modelo que o Windows copia."
+
+msgid "Stop {} services?"
+msgstr "Parar {} serviços?"
+
+msgid "Disabled, so Windows won't let it start."
+msgstr "Desativado, então o Windows não deixa iniciar."
+
+msgid "It is running again already: Windows starts this one back up by itself. Changing how it starts is what lasts."
+msgstr "Já está rodando de novo: o Windows reinicia este sozinho. Mudar como ele inicia é o que dura."

@@ -427,20 +427,20 @@ struct ProcessEntry {
 }
 
 /// One process, as the enumeration hands it over.
-struct Raw {
-    pid: u32,
+pub struct Raw {
+    pub pid: u32,
     /// Whoever created it. The id can already belong to someone else, so it's only worth
     /// anything together with a name that's still there.
     parent: u32,
-    name: String,
+    pub name: String,
     /// User plus kernel time, in 100 ns units.
-    cpu_time: u64,
+    pub cpu_time: u64,
     /// Private working set, what Task Manager calls Memory.
-    memory: u64,
+    pub memory: u64,
 }
 
 /// Every process but Vantix itself, in one call.
-fn process_list() -> Vec<Raw> {
+pub fn process_list() -> Vec<Raw> {
     const INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
     let mut buffer: Vec<u64> = vec![0; 256 * 1024];
     loop {
@@ -720,13 +720,14 @@ fn service_names() -> HashMap<u32, String> {
             for i in 0..count as usize {
                 let item = &*items.add(i);
                 let pid = item.ServiceStatusProcess.dwProcessId;
-                let name = item
-                    .lpDisplayName
-                    .to_string()
-                    .ok()
-                    .filter(|name| !name.is_empty())
-                    .or_else(|| item.lpServiceName.to_string().ok())
-                    .unwrap_or_default();
+                // Windows leaves a name empty rather than pointing at an empty string.
+                let text = |value: PWSTR| {
+                    if value.is_null() { String::new() } else { value.to_string().unwrap_or_default() }
+                };
+                let name = match text(item.lpDisplayName) {
+                    display if !display.is_empty() => display,
+                    _ => text(item.lpServiceName),
+                };
                 if pid != 0 && !name.is_empty() {
                     map.entry(pid).or_insert(name);
                 }

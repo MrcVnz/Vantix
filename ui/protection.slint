@@ -1,6 +1,7 @@
 import { Theme, Icons, Icon, Card, Button, Chip } from "theme.slint";
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 import { Tweaks, TweakText, LevelTag, RebootChip } from "tweaks.slint";
+import { Services } from "services.slint";
 
 export struct RestorePoint {
     sequence: int,
@@ -56,6 +57,17 @@ export global Job {
     in property <bool> protection-off;
     /// Something that stays on until turned off, unlike a one-off action such as a retrim.
     in property <bool> toggle;
+    /// A service change, which has its own wording and no tweak behind it.
+    in property <bool> service;
+    /// What the service is being set to, as an index into Services.start-names, or -1.
+    in property <int> start: -1;
+    /// What the catalog says stops working, already in the reader's language.
+    in property <string> note;
+    /// The catalog has something to say about this service. Without it there are no
+    /// gain and cost levels to show, and saying "none" would be a guess.
+    in property <bool> known;
+    /// A service that was stopped is running again: Windows started it back up.
+    in property <bool> came-back;
     /// Free space a finished change gave back.
     in property <string> freed;
 
@@ -124,14 +136,14 @@ export component JobSheet inherits Rectangle {
                         spacing: 2px;
                         Text {
                             text: Job.state == JobState.confirm
-                                    ? (Job.undo && Job.tweak < 0 ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?")
+                                    ? (Job.undo && Job.tweak < 0 && !Job.service ? @tr("Undo every change?") : Job.undo ? @tr("Undo this change?")
                                         : Job.reset ? @tr("Turn this tweak off?") : @tr("Apply this change?"))
                                 : Job.state == JobState.creating-point ? @tr("Creating a restore point")
                                 : Job.state == JobState.applying
                                     ? (Job.undo ? @tr("Undoing changes") : Job.reset ? @tr("Turning off") : @tr("Applying changes"))
                                 : Job.state == JobState.point-failed ? @tr("Couldn't create the restore point")
                                 : Job.state == JobState.done
-                                    ? (Job.undo && Job.tweak < 0 ? @tr("Every change undone") : Job.undo ? @tr("Change undone")
+                                    ? (Job.undo && Job.tweak < 0 && !Job.service ? @tr("Every change undone") : Job.undo ? @tr("Change undone")
                                         : Job.reset ? @tr("Turned off") : Job.toggle ? @tr("Applied") : @tr("Done"))
                                 : @tr("Something went wrong");
                             color: Theme.text;
@@ -154,7 +166,7 @@ export component JobSheet inherits Rectangle {
                         wrap: word-wrap;
                         width: root.text-width;
                     }
-                    if !Job.undo && !Job.reset: HorizontalLayout {
+                    if !Job.undo && !Job.reset && (!Job.service || Job.known): HorizontalLayout {
                         spacing: 18px;
                         alignment: start;
                         LevelTag { level: Job.gain; }
@@ -166,6 +178,23 @@ export component JobSheet inherits Rectangle {
                     }
                     if !Job.undo && !Job.reset && Job.tweak >= 0 && TweakText.notes[Job.tweak] != "": Text {
                         text: TweakText.notes[Job.tweak];
+                        color: Theme.warn;
+                        wrap: word-wrap;
+                        width: root.text-width;
+                    }
+                    if Job.service && Job.start >= 0: Text {
+                        text: @tr("New start type: {}", Services.start-names[Job.start]);
+                        color: Theme.text;
+                        font-weight: 600;
+                    }
+                    if Job.service && !Job.known && !Job.undo: Text {
+                        text: @tr("Vantix doesn't know this service, so there is no gain or cost to show. What Windows says about it is on its row.");
+                        color: Theme.warn;
+                        wrap: word-wrap;
+                        width: root.text-width;
+                    }
+                    if Job.service && Job.note != "": Text {
+                        text: @tr("Without it: {}", Job.note);
                         color: Theme.warn;
                         wrap: word-wrap;
                         width: root.text-width;
@@ -217,6 +246,13 @@ export component JobSheet inherits Rectangle {
                     text: @tr("Freed {}", Job.freed);
                     color: Theme.accent;
                     font-weight: 600;
+                }
+
+                if Job.state == JobState.done && Job.came-back: Text {
+                    text: @tr("It is running again already: Windows starts this one back up by itself. Changing how it starts is what lasts.");
+                    color: Theme.warn;
+                    wrap: word-wrap;
+                    width: root.text-width;
                 }
 
                 if Job.state == JobState.done && Job.reboot: Text {

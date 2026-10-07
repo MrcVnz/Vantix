@@ -39,6 +39,13 @@ pub fn get_dword(root: HKEY, path: &str, name: &str) -> Result<Option<u32>> {
 }
 
 /// `None` when the value doesn't exist.
+/// Everything up to the terminator. A value read as expandable comes back in a buffer
+/// sized for the text before expansion, and the size that comes back is that one too, so
+/// the tail of the unexpanded text is still sitting behind the terminator.
+fn cut(text: &str) -> String {
+    text.split(char::from(0)).next().unwrap_or_default().to_string()
+}
+
 pub fn get_string(root: HKEY, path: &str, name: &str) -> Result<Option<String>> {
     let (path, name) = (HSTRING::from(path), HSTRING::from(name));
     let mut size = 0u32;
@@ -60,7 +67,7 @@ pub fn get_string(root: HKEY, path: &str, name: &str) -> Result<Option<String>> 
         .ok()?;
     }
     let text = String::from_utf16_lossy(&buffer[..(size as usize / 2).min(buffer.len())]);
-    Ok(Some(text.trim_end_matches(char::from(0)).to_string()))
+    Ok(Some(cut(&text)))
 }
 
 /// Every string of a REG_MULTI_SZ value, empty when the value doesn't exist.
@@ -195,7 +202,7 @@ fn get_string_raw(key: HKEY, name: &str) -> Result<Option<String>> {
         RegGetValueW(key, None, &name, flags, None, Some(buffer.as_mut_ptr().cast()), Some(&mut size)).ok()?;
     }
     let text = String::from_utf16_lossy(&buffer[..(size as usize / 2).min(buffer.len())]);
-    Ok(Some(text.trim_end_matches(char::from(0)).to_string()))
+    Ok(Some(cut(&text)))
 }
 
 pub fn key_exists(root: HKEY, path: &str) -> bool {

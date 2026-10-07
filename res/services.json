@@ -1,0 +1,5744 @@
+{
+  "entries": [
+    {
+      "name": "DiagTrack",
+      "does": {
+        "en": "Sends Microsoft how Windows and its programs are used, and how they crash.",
+        "pt": "Envia à Microsoft como o Windows e seus programas são usados, e como travam."
+      },
+      "cost": {
+        "en": "Feedback Hub and the diagnostic reports stop working. Windows Update keeps working.",
+        "pt": "O Hub de Comentários e os relatórios de diagnóstico param. O Windows Update continua."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "dmwappushservice",
+      "does": {
+        "en": "Carries management messages for company devices, over the same channel as telemetry.",
+        "pt": "Leva mensagens de gerenciamento para aparelhos de empresa, pelo mesmo canal da telemetria."
+      },
+      "cost": {
+        "en": "Nothing on a home PC. On a work laptop, the company loses a way to manage it.",
+        "pt": "Nada num PC de casa. Num notebook de trabalho, a empresa perde um jeito de gerenciá-lo."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "diagnosticshub.standardcollector.service",
+      "does": {
+        "en": "Collects traces while Visual Studio or a performance tool is recording.",
+        "pt": "Coleta rastreamentos enquanto o Visual Studio ou uma ferramenta de desempenho grava."
+      },
+      "cost": {
+        "en": "Profiling in Visual Studio stops working. Nothing else uses it.",
+        "pt": "O profiling no Visual Studio para. Nada mais usa isso."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WerSvc",
+      "does": {
+        "en": "Reports crashes to Microsoft and keeps the dumps a program's support may ask for.",
+        "pt": "Relata travamentos à Microsoft e guarda os dumps que o suporte de um programa pode pedir."
+      },
+      "cost": {
+        "en": "No more crash dumps on this PC, so a crash you want to report leaves nothing behind.",
+        "pt": "Sem dumps de travamento no PC, então um travamento que você queira relatar não deixa nada."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "DPS",
+      "does": {
+        "en": "Runs the troubleshooters: the wizards that find and fix a problem with sound or network.",
+        "pt": "Executa as soluções de problemas: os assistentes que acham e corrigem som ou rede."
+      },
+      "cost": {
+        "en": "Windows troubleshooters stop running, and so do some automatic repairs.",
+        "pt": "As soluções de problemas do Windows param, e alguns reparos automáticos também."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "PcaSvc",
+      "does": {
+        "en": "Watches old programs for compatibility problems and offers to run them in an older mode.",
+        "pt": "Observa programas antigos em busca de problemas e oferece rodá-los em modo antigo."
+      },
+      "cost": {
+        "en": "Old installers stop getting the compatibility prompt. Games on Steam don't notice.",
+        "pt": "Instaladores antigos deixam de receber o aviso de compatibilidade. Jogos na Steam nem percebem."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WSearch",
+      "does": {
+        "en": "Builds the index behind the search box, so searching files is instant instead of a scan.",
+        "pt": "Monta o índice da caixa de pesquisa, para procurar arquivos ser instantâneo e não uma varredura."
+      },
+      "cost": {
+        "en": "Start menu and Explorer searches get slow, and Outlook's own search stops working.",
+        "pt": "As buscas do menu Iniciar e do Explorador ficam lentas, e a busca do Outlook para."
+      },
+      "gain": "high",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SysMain",
+      "does": {
+        "en": "Learns what you open and loads parts of it into spare RAM beforehand. On an SSD the gain is small.",
+        "pt": "Aprende o que você abre e carrega partes na RAM livre antes. Em SSD o ganho é pequeno."
+      },
+      "cost": {
+        "en": "Programs may take a moment longer to open the first time. On a hard drive the loss is real.",
+        "pt": "Programas podem demorar um instante a mais na primeira abertura. Em HD a perda é real."
+      },
+      "gain": "medium",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "Spooler",
+      "does": {
+        "en": "The print queue: everything that prints goes through it, including print to PDF.",
+        "pt": "A fila de impressão: tudo que imprime passa por ela, inclusive imprimir em PDF."
+      },
+      "cost": {
+        "en": "Nothing prints at all, and printers disappear from the settings.",
+        "pt": "Nada imprime, e as impressoras somem das configurações."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "PrintNotify",
+      "does": {
+        "en": "Shows the printer's own notifications and extra options while printing.",
+        "pt": "Mostra as notificações da impressora e opções extras durante a impressão."
+      },
+      "cost": {
+        "en": "Printing still works, without the pop-ups the printer's driver shows.",
+        "pt": "A impressão continua, sem os avisos que o driver da impressora mostra."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "Fax",
+      "does": {
+        "en": "Sends and receives faxes through a fax modem.",
+        "pt": "Envia e recebe fax por um modem de fax."
+      },
+      "cost": {
+        "en": "Nothing, unless this PC has a fax modem connected.",
+        "pt": "Nada, a menos que este PC tenha um modem de fax ligado."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "RemoteRegistry",
+      "does": {
+        "en": "Lets another PC on the network read and change this one's registry.",
+        "pt": "Deixa outro PC da rede ler e alterar o registro deste."
+      },
+      "cost": {
+        "en": "Nothing on a home PC, and one less way in from the network. Already disabled by default.",
+        "pt": "Nada num PC de casa, e um caminho a menos vindo da rede. Já vem desativado."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "disabled"
+      ]
+    },
+    {
+      "name": "TermService",
+      "does": {
+        "en": "Remote Desktop: lets you sign in to this PC from another one.",
+        "pt": "Área de Trabalho Remota: deixa você entrar neste PC a partir de outro."
+      },
+      "cost": {
+        "en": "You can't connect to this PC with Remote Desktop. Connecting out from it still works.",
+        "pt": "Você não consegue se conectar a este PC por Área de Trabalho Remota. Sair dele continua."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SessionEnv",
+      "does": {
+        "en": "Prepares the session a Remote Desktop connection runs in.",
+        "pt": "Prepara a sessão em que uma conexão de Área de Trabalho Remota roda."
+      },
+      "cost": {
+        "en": "Remote Desktop into this PC stops working properly.",
+        "pt": "A Área de Trabalho Remota para este PC para de funcionar direito."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "RasMan",
+      "does": {
+        "en": "Dials and holds VPN and dial-up connections.",
+        "pt": "Disca e mantém conexões de VPN e discadas."
+      },
+      "cost": {
+        "en": "VPN connections set up in Windows stop connecting. Most VPN apps use it too.",
+        "pt": "Conexões VPN criadas no Windows param de conectar. A maioria dos apps de VPN usa isso."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "SSDPSRV",
+      "does": {
+        "en": "Finds devices on the network that announce themselves: media players, some printers, UPnP boxes.",
+        "pt": "Acha aparelhos na rede que se anunciam: media players, algumas impressoras, caixas UPnP."
+      },
+      "cost": {
+        "en": "Casting to a TV and some network printers stop being found.",
+        "pt": "Transmitir para a TV e algumas impressoras de rede deixam de ser encontrados."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "upnphost",
+      "does": {
+        "en": "Lets this PC announce itself to the network the same way, and open ports on the router.",
+        "pt": "Deixa este PC se anunciar na rede do mesmo jeito, e abrir portas no roteador."
+      },
+      "cost": {
+        "en": "Media sharing stops, and some games can't open their ports by themselves.",
+        "pt": "O compartilhamento de mídia para, e alguns jogos não conseguem abrir suas portas sozinhos."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "LanmanServer",
+      "does": {
+        "en": "Shares this PC's files and printers with the rest of the network.",
+        "pt": "Compartilha os arquivos e impressoras deste PC com o resto da rede."
+      },
+      "cost": {
+        "en": "Nobody can reach shared folders on this PC. Reaching other PCs still works.",
+        "pt": "Ninguém alcança pastas compartilhadas deste PC. Alcançar outros PCs continua."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "LanmanWorkstation",
+      "does": {
+        "en": "Opens shared folders on other PCs and on NAS boxes.",
+        "pt": "Abre pastas compartilhadas em outros PCs e em NAS."
+      },
+      "cost": {
+        "en": "Network drives stop working, and so does anything stored on a NAS.",
+        "pt": "Unidades de rede param, e tudo que estiver num NAS também."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "fdPHost",
+      "does": {
+        "en": "Finds other PCs and devices on the network for the Network page in Explorer.",
+        "pt": "Acha outros PCs e aparelhos na rede para a página Rede do Explorador."
+      },
+      "cost": {
+        "en": "The Network page in Explorer comes up empty. Typing a name by hand still works.",
+        "pt": "A página Rede no Explorador fica vazia. Digitar o nome na mão continua funcionando."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "FDResPub",
+      "does": {
+        "en": "Announces this PC so other PCs can find it on the network.",
+        "pt": "Anuncia este PC para que outros o encontrem na rede."
+      },
+      "cost": {
+        "en": "This PC stops showing up in other people's Network page.",
+        "pt": "Este PC deixa de aparecer na página Rede dos outros."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "wuauserv",
+      "does": {
+        "en": "Windows Update: finds, downloads and installs updates, drivers included.",
+        "pt": "Windows Update: encontra, baixa e instala atualizações, inclusive drivers."
+      },
+      "cost": {
+        "en": "The PC stops getting security fixes. Windows turns it back on by itself anyway.",
+        "pt": "O PC deixa de receber correções de segurança. O Windows liga de volta sozinho, de qualquer forma."
+      },
+      "gain": "medium",
+      "risk": "high",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "UsoSvc",
+      "does": {
+        "en": "Schedules when updates download, install and restart the PC.",
+        "pt": "Agenda quando as atualizações baixam, instalam e reiniciam o PC."
+      },
+      "cost": {
+        "en": "Windows Update stops working on its own schedule and can get stuck.",
+        "pt": "O Windows Update para de seguir o próprio horário e pode travar."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WaaSMedicSvc",
+      "does": {
+        "en": "Repairs Windows Update when something breaks it, including attempts to turn it off.",
+        "pt": "Repara o Windows Update quando algo o quebra, inclusive tentativas de desligá-lo."
+      },
+      "cost": {
+        "en": "Windows protects this one: changing it is refused, and it puts itself back.",
+        "pt": "O Windows protege este: a alteração é recusada, e ele se restaura sozinho."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "DoSvc",
+      "does": {
+        "en": "Delivery Optimization: downloads updates from other PCs and shares yours with them.",
+        "pt": "Otimização de Entrega: baixa atualizações de outros PCs e compartilha as suas com eles."
+      },
+      "cost": {
+        "en": "Updates come only from Microsoft, which can be slower but uses no upload.",
+        "pt": "As atualizações vêm só da Microsoft, o que pode ser mais lento mas não usa upload."
+      },
+      "gain": "medium",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "BITS",
+      "does": {
+        "en": "Downloads in the background at whatever speed is left over: updates, Store apps, some installers.",
+        "pt": "Baixa em segundo plano com a banda que sobra: atualizações, apps da Loja, alguns instaladores."
+      },
+      "cost": {
+        "en": "Windows Update and several programs stop downloading anything.",
+        "pt": "O Windows Update e vários programas param de baixar qualquer coisa."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "InstallService",
+      "does": {
+        "en": "Installs and updates apps from the Microsoft Store.",
+        "pt": "Instala e atualiza apps da Microsoft Store."
+      },
+      "cost": {
+        "en": "The Store can't install or update anything.",
+        "pt": "A Loja não consegue instalar nem atualizar nada."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "ClipSVC",
+      "does": {
+        "en": "Checks the licences of Store apps, so they can run at all.",
+        "pt": "Verifica as licenças dos apps da Loja, para que eles possam rodar."
+      },
+      "cost": {
+        "en": "Apps from the Store stop opening, Xbox and Game Pass games included.",
+        "pt": "Apps da Loja param de abrir, inclusive Xbox e jogos do Game Pass."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "AppXSvc",
+      "does": {
+        "en": "Deploys Store apps, which is also how the Start menu and Settings get installed.",
+        "pt": "Implanta apps da Loja, que é como o menu Iniciar e as Configurações são instalados."
+      },
+      "cost": {
+        "en": "Windows itself stops working properly: Start menu, Settings and Search are Store apps.",
+        "pt": "O próprio Windows para de funcionar direito: Iniciar, Configurações e Pesquisa são apps da Loja."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "XblAuthManager",
+      "does": {
+        "en": "Signs you in to Xbox Live, for Game Pass and games that use an Xbox account.",
+        "pt": "Faz login no Xbox Live, para o Game Pass e jogos que usam conta Xbox."
+      },
+      "cost": {
+        "en": "Game Pass games and anything asking for an Xbox sign-in stop working.",
+        "pt": "Jogos do Game Pass e tudo que peça login Xbox param de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "XblGameSave",
+      "does": {
+        "en": "Saves games to the Xbox cloud, so a save follows the account.",
+        "pt": "Salva jogos na nuvem do Xbox, para o save seguir a conta."
+      },
+      "cost": {
+        "en": "Cloud saves stop syncing in games that use them.",
+        "pt": "Os saves na nuvem param de sincronizar nos jogos que os usam."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "XboxGipSvc",
+      "does": {
+        "en": "Talks to Xbox controllers plugged in or paired with this PC.",
+        "pt": "Conversa com controles Xbox ligados ou pareados neste PC."
+      },
+      "cost": {
+        "en": "An Xbox controller may stop working, or stop updating its firmware.",
+        "pt": "Um controle Xbox pode parar de funcionar, ou de atualizar o firmware."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "XboxNetApiSvc",
+      "does": {
+        "en": "Handles the network side of Xbox services, multiplayer included.",
+        "pt": "Cuida da parte de rede dos serviços Xbox, inclusive multijogador."
+      },
+      "cost": {
+        "en": "Multiplayer in Microsoft's own games can stop connecting.",
+        "pt": "O multijogador dos jogos da própria Microsoft pode parar de conectar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "MapsBroker",
+      "does": {
+        "en": "Downloads and updates offline maps for the Maps app.",
+        "pt": "Baixa e atualiza mapas offline para o app Mapas."
+      },
+      "cost": {
+        "en": "The Maps app loses offline maps. Nothing else uses it.",
+        "pt": "O app Mapas perde os mapas offline. Nada mais usa isso."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "lfsvc",
+      "does": {
+        "en": "Works out where the PC is, from Wi-Fi networks around it, for apps that ask.",
+        "pt": "Descobre onde o PC está, pelas redes Wi-Fi em volta, para os apps que pedem."
+      },
+      "cost": {
+        "en": "Weather, Maps and the night light schedule lose the location and ask for it by hand.",
+        "pt": "Clima, Mapas e o horário da luz noturna perdem a localização e passam a pedi-la na mão."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WbioSrvc",
+      "does": {
+        "en": "Reads fingerprint readers for Windows Hello.",
+        "pt": "Lê leitores de digital para o Windows Hello."
+      },
+      "cost": {
+        "en": "Signing in with a fingerprint stops working. A PIN or password still works.",
+        "pt": "Entrar com digital para de funcionar. PIN ou senha continuam."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "NgcSvc",
+      "does": {
+        "en": "Keeps the PIN and the keys behind Windows Hello.",
+        "pt": "Guarda o PIN e as chaves por trás do Windows Hello."
+      },
+      "cost": {
+        "en": "Signing in with a PIN or with your face stops working.",
+        "pt": "Entrar com PIN ou com o rosto para de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "SensorService",
+      "does": {
+        "en": "Reads the PC's sensors: light, rotation, position.",
+        "pt": "Lê os sensores do PC: luz, rotação, posição."
+      },
+      "cost": {
+        "en": "Automatic brightness and screen rotation stop, where the PC has those sensors.",
+        "pt": "O brilho automático e a rotação de tela param, nos PCs que têm esses sensores."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "TabletInputService",
+      "does": {
+        "en": "The touch keyboard and handwriting panel.",
+        "pt": "O teclado de toque e o painel de escrita à mão."
+      },
+      "cost": {
+        "en": "The on-screen keyboard stops coming up, which matters on a touchscreen.",
+        "pt": "O teclado na tela para de aparecer, o que importa numa tela de toque."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "TextInputManagementService",
+      "does": {
+        "en": "Newer name of the same thing on Windows 11: touch keyboard, emoji panel and voice typing.",
+        "pt": "Nome novo da mesma coisa no Windows 11: teclado de toque, painel de emoji e digitação por voz."
+      },
+      "cost": {
+        "en": "The emoji panel and the touch keyboard stop opening.",
+        "pt": "O painel de emoji e o teclado de toque param de abrir."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WpnService",
+      "does": {
+        "en": "Delivers push notifications to apps, and the toasts at the corner of the screen.",
+        "pt": "Entrega notificações push aos apps, e os avisos no canto da tela."
+      },
+      "cost": {
+        "en": "Notifications stop showing, Vantix's own included.",
+        "pt": "As notificações param de aparecer, inclusive as do próprio Vantix."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "CDPSvc",
+      "does": {
+        "en": "Connects this PC to your other devices: shared clipboard, Phone Link, pick up where you left off.",
+        "pt": "Liga este PC aos seus outros aparelhos: área de transferência compartilhada, Vincular ao Celular, continuar de onde parou."
+      },
+      "cost": {
+        "en": "Phone Link and the shared clipboard stop working.",
+        "pt": "O Vincular ao Celular e a área de transferência compartilhada param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "OneSyncSvc",
+      "does": {
+        "en": "Syncs mail, calendar and contacts for the built-in apps.",
+        "pt": "Sincroniza email, calendário e contatos dos apps embutidos."
+      },
+      "cost": {
+        "en": "The Mail and Calendar apps stop receiving anything.",
+        "pt": "Os apps Email e Calendário param de receber."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "wscsvc",
+      "does": {
+        "en": "Security Center: keeps track of the antivirus and firewall, and warns when one is off.",
+        "pt": "Central de Segurança: acompanha o antivírus e o firewall, e avisa quando um está desligado."
+      },
+      "cost": {
+        "en": "Windows stops knowing whether you are protected, and Defender can fall back to a half state.",
+        "pt": "O Windows deixa de saber se você está protegido, e o Defender pode cair num meio-termo."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "WdNisSvc",
+      "does": {
+        "en": "Defender's network inspection, which checks traffic for known attacks.",
+        "pt": "A inspeção de rede do Defender, que checa o tráfego em busca de ataques conhecidos."
+      },
+      "cost": {
+        "en": "Part of the antivirus stops. Defender protects itself: the change is refused anyway.",
+        "pt": "Parte do antivírus para. O Defender se protege: a alteração é recusada de qualquer jeito."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "WinDefend",
+      "does": {
+        "en": "Microsoft Defender itself.",
+        "pt": "O próprio Microsoft Defender."
+      },
+      "cost": {
+        "en": "The PC would be left without an antivirus. Defender refuses the change anyway.",
+        "pt": "O PC ficaria sem antivírus. O Defender recusa a alteração de qualquer forma."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "Sense",
+      "does": {
+        "en": "Defender for Endpoint, the part a company's security team watches.",
+        "pt": "Defender para Endpoint, a parte que a equipe de segurança da empresa acompanha."
+      },
+      "cost": {
+        "en": "On a work PC, security stops seeing this machine. Protected by Windows.",
+        "pt": "Num PC de trabalho, a segurança deixa de ver esta máquina. Protegido pelo Windows."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": []
+    },
+    {
+      "name": "SecurityHealthService",
+      "does": {
+        "en": "The Windows Security window and its icon in the tray.",
+        "pt": "A janela Segurança do Windows e seu ícone na bandeja."
+      },
+      "cost": {
+        "en": "You lose the window that shows whether protection is on.",
+        "pt": "Você perde a janela que mostra se a proteção está ligada."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": []
+    },
+    {
+      "name": "Themes",
+      "does": {
+        "en": "Draws the visual style: window frames, colours, dark mode.",
+        "pt": "Desenha o estilo visual: molduras de janela, cores, modo escuro."
+      },
+      "cost": {
+        "en": "Windows falls back to a grey basic look and some apps misdraw.",
+        "pt": "O Windows cai num visual básico cinza e alguns apps desenham errado."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": []
+    },
+    {
+      "name": "AudioSrv",
+      "does": {
+        "en": "Sound, all of it.",
+        "pt": "O som, todo ele."
+      },
+      "cost": {
+        "en": "The PC goes silent and the volume icon turns into a red cross.",
+        "pt": "O PC fica mudo e o ícone de volume vira um X vermelho."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "AudioEndpointBuilder",
+      "does": {
+        "en": "Finds the speakers, headsets and microphones for the sound service.",
+        "pt": "Encontra caixas, fones e microfones para o serviço de som."
+      },
+      "cost": {
+        "en": "No audio devices at all, so no sound.",
+        "pt": "Nenhum dispositivo de áudio, logo nenhum som."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "stisvc",
+      "does": {
+        "en": "Scanners and cameras that work the old Windows Image Acquisition way.",
+        "pt": "Scanners e câmeras que funcionam pelo modo antigo de aquisição de imagem do Windows."
+      },
+      "cost": {
+        "en": "A scanner may stop being found by its own software.",
+        "pt": "Um scanner pode deixar de ser encontrado pelo próprio software."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "FrameServer",
+      "does": {
+        "en": "Shares the webcam between programs, so two can use it at once.",
+        "pt": "Compartilha a webcam entre programas, para dois poderem usá-la ao mesmo tempo."
+      },
+      "cost": {
+        "en": "The camera stops working in apps from the Store and in some meeting apps.",
+        "pt": "A câmera para de funcionar em apps da Loja e em alguns apps de reunião."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "bthserv",
+      "does": {
+        "en": "Bluetooth: pairing and keeping devices connected.",
+        "pt": "Bluetooth: parear e manter aparelhos conectados."
+      },
+      "cost": {
+        "en": "Bluetooth headsets, mice and controllers stop connecting.",
+        "pt": "Fones, mouses e controles Bluetooth param de conectar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "BthAvctpSvc",
+      "does": {
+        "en": "The channel Bluetooth audio and remote buttons use.",
+        "pt": "O canal que o áudio Bluetooth e os botões remotos usam."
+      },
+      "cost": {
+        "en": "Bluetooth headphones lose their play and volume buttons, or stop playing.",
+        "pt": "Fones Bluetooth perdem os botões de play e volume, ou param de tocar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WlanSvc",
+      "does": {
+        "en": "Wi-Fi: finding networks and connecting to them.",
+        "pt": "Wi-Fi: achar redes e conectar nelas."
+      },
+      "cost": {
+        "en": "Wi-Fi stops working completely. A cable still works.",
+        "pt": "O Wi-Fi para completamente. O cabo continua."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "icssvc",
+      "does": {
+        "en": "Mobile hotspot: shares this PC's connection over Wi-Fi.",
+        "pt": "Ponto de acesso móvel: compartilha a conexão deste PC por Wi-Fi."
+      },
+      "cost": {
+        "en": "You can't turn this PC into a hotspot.",
+        "pt": "Você não consegue transformar este PC num ponto de acesso."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SharedAccess",
+      "does": {
+        "en": "Internet Connection Sharing, also used by Hyper-V's default network and some emulators.",
+        "pt": "Compartilhamento de Conexão, usado também pela rede padrão do Hyper-V e por alguns emuladores."
+      },
+      "cost": {
+        "en": "Hotspot and some virtual machine networks stop working.",
+        "pt": "O ponto de acesso e algumas redes de máquina virtual param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WwanSvc",
+      "does": {
+        "en": "Mobile broadband: a SIM card or a 4G modem in the PC.",
+        "pt": "Banda larga móvel: um chip ou modem 4G no PC."
+      },
+      "cost": {
+        "en": "Nothing, unless this PC has mobile broadband.",
+        "pt": "Nada, a menos que este PC tenha banda larga móvel."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WpcMonSvc",
+      "does": {
+        "en": "Parental controls: time limits and site filtering for a child's account.",
+        "pt": "Controle dos pais: limites de tempo e filtro de sites numa conta de criança."
+      },
+      "cost": {
+        "en": "Family Safety limits stop being enforced on this PC.",
+        "pt": "Os limites do Family Safety deixam de valer neste PC."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "RetailDemo",
+      "does": {
+        "en": "The demo mode shop PCs run on display.",
+        "pt": "O modo demonstração que PCs de loja rodam na vitrine."
+      },
+      "cost": {
+        "en": "Nothing at all on a PC that isn't a shop display.",
+        "pt": "Nada, num PC que não é vitrine de loja."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "disabled"
+      ]
+    },
+    {
+      "name": "wisvc",
+      "does": {
+        "en": "Windows Insider: preview builds before everyone else.",
+        "pt": "Windows Insider: versões de teste antes de todo mundo."
+      },
+      "cost": {
+        "en": "You can't join the Insider programme. Nothing else notices.",
+        "pt": "Você não consegue entrar no programa Insider. Nada mais percebe."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SCardSvr",
+      "does": {
+        "en": "Smart card readers, the kind a company or a bank gives out.",
+        "pt": "Leitores de cartão inteligente, do tipo que empresa ou banco fornece."
+      },
+      "cost": {
+        "en": "Nothing, unless you sign in or sign documents with a smart card.",
+        "pt": "Nada, a menos que você entre ou assine documentos com cartão inteligente."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SEMgrSvc",
+      "does": {
+        "en": "Payments and NFC on phones and tablets with that hardware.",
+        "pt": "Pagamentos e NFC em celulares e tablets com esse hardware."
+      },
+      "cost": {
+        "en": "Nothing on a desktop PC.",
+        "pt": "Nada num PC de mesa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PhoneSvc",
+      "does": {
+        "en": "Phone calls through the PC, where the hardware supports it.",
+        "pt": "Chamadas de telefone pelo PC, onde o hardware suporta."
+      },
+      "cost": {
+        "en": "Nothing on a desktop PC.",
+        "pt": "Nada num PC de mesa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "TapiSrv",
+      "does": {
+        "en": "The old telephony interface, used by modems and some fax and call software.",
+        "pt": "A interface antiga de telefonia, usada por modems e alguns softwares de fax e chamadas."
+      },
+      "cost": {
+        "en": "Dial-up and fax programs stop working.",
+        "pt": "Programas de discagem e fax param de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "VSS",
+      "does": {
+        "en": "Volume Shadow Copy: the snapshots restore points and backups are made from.",
+        "pt": "Cópia de Sombra de Volume: os instantâneos de que pontos de restauração e backups são feitos."
+      },
+      "cost": {
+        "en": "Restore points and most backup software stop working, Vantix's own point included.",
+        "pt": "Pontos de restauração e a maioria dos backups param, inclusive o ponto do próprio Vantix."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "swprv",
+      "does": {
+        "en": "The part of the snapshot machinery that Microsoft's own writers use.",
+        "pt": "A parte dos instantâneos que os gravadores da própria Microsoft usam."
+      },
+      "cost": {
+        "en": "Shadow copies and the backups built on them stop working.",
+        "pt": "As cópias de sombra e os backups feitos sobre elas param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "wbengine",
+      "does": {
+        "en": "Windows' own Backup and Restore.",
+        "pt": "O Backup e Restauração do próprio Windows."
+      },
+      "cost": {
+        "en": "Windows Backup stops running. Other backup programs don't care.",
+        "pt": "O Backup do Windows para. Outros programas de backup não se importam."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "defragsvc",
+      "does": {
+        "en": "Optimise Drives: defragments hard drives and sends TRIM to SSDs on a schedule.",
+        "pt": "Otimizar Unidades: desfragmenta HDs e manda TRIM para SSDs num horário."
+      },
+      "cost": {
+        "en": "Scheduled optimisation stops. An SSD slowly gets slower without TRIM.",
+        "pt": "A otimização agendada para. Um SSD vai ficando mais lento sem o TRIM."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "TieringEngineService",
+      "does": {
+        "en": "Moves files between fast and slow disks in a Storage Spaces pool.",
+        "pt": "Move arquivos entre discos rápidos e lentos num pool de Espaços de Armazenamento."
+      },
+      "cost": {
+        "en": "Nothing, unless this PC uses Storage Spaces with tiers.",
+        "pt": "Nada, a menos que este PC use Espaços de Armazenamento com camadas."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DeviceAssociationService",
+      "does": {
+        "en": "Pairs devices with the PC and keeps what was paired.",
+        "pt": "Pareia aparelhos com o PC e guarda o que foi pareado."
+      },
+      "cost": {
+        "en": "New Bluetooth and wireless devices stop pairing.",
+        "pt": "Novos aparelhos Bluetooth e sem fio param de parear."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "DeviceInstall",
+      "does": {
+        "en": "Installs drivers when hardware is plugged in.",
+        "pt": "Instala drivers quando um hardware é ligado."
+      },
+      "cost": {
+        "en": "New hardware stops getting its driver by itself.",
+        "pt": "Hardware novo deixa de receber o driver sozinho."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WpdBusEnum",
+      "does": {
+        "en": "Phones, cameras and media players that show up as portable devices.",
+        "pt": "Celulares, câmeras e media players que aparecem como aparelhos portáteis."
+      },
+      "cost": {
+        "en": "A phone plugged in by cable may not show its files.",
+        "pt": "Um celular ligado por cabo pode não mostrar os arquivos."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "AJRouter",
+      "does": {
+        "en": "AllJoyn, an abandoned standard for smart home devices.",
+        "pt": "AllJoyn, um padrão abandonado para aparelhos de casa inteligente."
+      },
+      "cost": {
+        "en": "Nothing: no shipping product uses it.",
+        "pt": "Nada: nenhum produto atual usa isso."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WalletService",
+      "does": {
+        "en": "The old Wallet app, which Microsoft dropped.",
+        "pt": "O antigo app Carteira, que a Microsoft abandonou."
+      },
+      "cost": {
+        "en": "Nothing.",
+        "pt": "Nada."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PNRPsvc",
+      "does": {
+        "en": "Peer Name Resolution, the naming side of Windows' old peer-to-peer stack.",
+        "pt": "Resolução de Nomes de Par, o lado de nomes da antiga pilha ponto a ponto do Windows."
+      },
+      "cost": {
+        "en": "Remote Assistance over the internet stops working. Little else uses it.",
+        "pt": "A Assistência Remota pela internet para. Pouca coisa mais usa isso."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "p2pimsvc",
+      "does": {
+        "en": "The identity side of the same peer-to-peer stack.",
+        "pt": "O lado de identidade da mesma pilha ponto a ponto."
+      },
+      "cost": {
+        "en": "Remote Assistance and old peer-to-peer apps stop working.",
+        "pt": "A Assistência Remota e apps ponto a ponto antigos param."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "QWAVE",
+      "does": {
+        "en": "Gives priority on the network to audio and video streams that ask for it.",
+        "pt": "Dá prioridade na rede a fluxos de áudio e vídeo que pedem."
+      },
+      "cost": {
+        "en": "Streaming inside the home network loses its priority. Few programs ask for it.",
+        "pt": "O streaming dentro da rede de casa perde a prioridade. Poucos programas pedem."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NetTcpPortSharing",
+      "does": {
+        "en": "Lets several .NET programs share one TCP port. Already off by default.",
+        "pt": "Deixa vários programas .NET dividirem uma porta TCP. Já vem desligado."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "disabled"
+      ]
+    },
+    {
+      "name": "ALG",
+      "does": {
+        "en": "Helps old protocols like FTP through Internet Connection Sharing.",
+        "pt": "Ajuda protocolos antigos como FTP a passar pelo Compartilhamento de Conexão."
+      },
+      "cost": {
+        "en": "Only matters where connection sharing is on.",
+        "pt": "Só importa onde o compartilhamento de conexão está ligado."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "MSDTC",
+      "does": {
+        "en": "Coordinates transactions across databases.",
+        "pt": "Coordena transações entre bancos de dados."
+      },
+      "cost": {
+        "en": "Nothing, unless a database or a business application asks for it.",
+        "pt": "Nada, a menos que um banco de dados ou um sistema empresarial peça."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "HvHost",
+      "does": {
+        "en": "Talks to the Hyper-V hypervisor from inside Windows.",
+        "pt": "Conversa com o hipervisor Hyper-V de dentro do Windows."
+      },
+      "cost": {
+        "en": "Virtual machines, WSL2 and the Android subsystem stop working.",
+        "pt": "Máquinas virtuais, WSL2 e o subsistema Android param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmms",
+      "does": {
+        "en": "Runs and manages Hyper-V virtual machines.",
+        "pt": "Executa e gerencia máquinas virtuais do Hyper-V."
+      },
+      "cost": {
+        "en": "Hyper-V machines stop starting. WSL2 uses a different part.",
+        "pt": "Máquinas do Hyper-V param de iniciar. O WSL2 usa outra parte."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "LxssManager",
+      "does": {
+        "en": "Runs the Windows Subsystem for Linux.",
+        "pt": "Executa o Subsistema do Windows para Linux."
+      },
+      "cost": {
+        "en": "WSL stops starting.",
+        "pt": "O WSL para de iniciar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "EFS",
+      "does": {
+        "en": "Encrypting File System: per-file encryption in NTFS.",
+        "pt": "Sistema de Arquivos com Criptografia: criptografia por arquivo no NTFS."
+      },
+      "cost": {
+        "en": "Files already encrypted this way stop opening.",
+        "pt": "Arquivos já criptografados assim param de abrir."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "AppIDSvc",
+      "does": {
+        "en": "Checks which programs are allowed to run, for AppLocker and Smart App Control.",
+        "pt": "Verifica quais programas podem rodar, para o AppLocker e o Smart App Control."
+      },
+      "cost": {
+        "en": "On a work PC the allow-list stops being enforced.",
+        "pt": "Num PC de trabalho a lista de permitidos deixa de valer."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "CertPropSvc",
+      "does": {
+        "en": "Copies certificates from a smart card into the user's store.",
+        "pt": "Copia certificados de um cartão inteligente para o armazenamento do usuário."
+      },
+      "cost": {
+        "en": "Nothing without a smart card.",
+        "pt": "Nada sem cartão inteligente."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "Netlogon",
+      "does": {
+        "en": "Keeps the PC's channel to a company domain controller.",
+        "pt": "Mantém o canal do PC com um controlador de domínio da empresa."
+      },
+      "cost": {
+        "en": "On a domain PC, signing in and group policy break. At home it does nothing.",
+        "pt": "Num PC de domínio, o login e as políticas quebram. Em casa não faz nada."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "NlaSvc",
+      "does": {
+        "en": "Works out which network the PC is on, which decides the firewall profile.",
+        "pt": "Descobre em que rede o PC está, o que decide o perfil do firewall."
+      },
+      "cost": {
+        "en": "The firewall can land on the wrong profile and network-aware apps get confused.",
+        "pt": "O firewall pode cair no perfil errado e apps que dependem da rede se confundem."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": []
+    },
+    {
+      "name": "Wecsvc",
+      "does": {
+        "en": "Collects event logs forwarded from other PCs.",
+        "pt": "Coleta logs de eventos encaminhados de outros PCs."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WMPNetworkSvc",
+      "does": {
+        "en": "Shares a Windows Media Player library over the network.",
+        "pt": "Compartilha uma biblioteca do Windows Media Player pela rede."
+      },
+      "cost": {
+        "en": "Nothing unless you stream from Media Player to another device.",
+        "pt": "Nada, a menos que você transmita do Media Player para outro aparelho."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "UserDataSvc",
+      "does": {
+        "en": "Gives apps the contacts, calendar and messages kept for your account.",
+        "pt": "Dá aos apps os contatos, o calendário e as mensagens guardados na sua conta."
+      },
+      "cost": {
+        "en": "The Mail, Calendar and People apps lose their data.",
+        "pt": "Os apps Email, Calendário e Pessoas perdem os dados."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "UnistoreSvc",
+      "does": {
+        "en": "The store those contacts, calendar entries and messages are kept in.",
+        "pt": "O armazenamento onde esses contatos, compromissos e mensagens ficam."
+      },
+      "cost": {
+        "en": "The same apps stop reading and writing their data.",
+        "pt": "Os mesmos apps param de ler e gravar os dados."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PimIndexMaintenanceSvc",
+      "does": {
+        "en": "Indexes those contacts so searching for a person is instant.",
+        "pt": "Indexa esses contatos para procurar uma pessoa ser instantâneo."
+      },
+      "cost": {
+        "en": "Searching for a contact gets slower in the built-in apps.",
+        "pt": "Procurar um contato fica mais lento nos apps embutidos."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "MessagingService",
+      "does": {
+        "en": "Text messages synced from a phone.",
+        "pt": "Mensagens de texto sincronizadas de um celular."
+      },
+      "cost": {
+        "en": "SMS messages stop showing on the PC.",
+        "pt": "As mensagens SMS param de aparecer no PC."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "CDPUserSvc",
+      "does": {
+        "en": "Your side of the connection to your other devices: shared clipboard and Phone Link.",
+        "pt": "O seu lado da ligação com seus outros aparelhos: área de transferência compartilhada e Vincular ao Celular."
+      },
+      "cost": {
+        "en": "Phone Link and the shared clipboard stop working.",
+        "pt": "O Vincular ao Celular e a área de transferência compartilhada param."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WpnUserService",
+      "does": {
+        "en": "Delivers notifications for the signed-in user.",
+        "pt": "Entrega as notificações do usuário conectado."
+      },
+      "cost": {
+        "en": "Notifications stop showing, Vantix's own included.",
+        "pt": "As notificações param de aparecer, inclusive as do próprio Vantix."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "BluetoothUserService",
+      "does": {
+        "en": "The per-user half of Bluetooth: paired devices and their files.",
+        "pt": "A parte por usuário do Bluetooth: aparelhos pareados e seus arquivos."
+      },
+      "cost": {
+        "en": "Bluetooth file transfer and some paired devices stop working.",
+        "pt": "A transferência de arquivos por Bluetooth e alguns aparelhos pareados param."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PrintWorkflowUserSvc",
+      "does": {
+        "en": "Extra steps a printer app adds while printing.",
+        "pt": "Passos extras que um app de impressora acrescenta ao imprimir."
+      },
+      "cost": {
+        "en": "Printing still works, without those extra options.",
+        "pt": "A impressão continua, sem essas opções extras."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DevicePickerUserSvc",
+      "does": {
+        "en": "The window that lists devices to cast or connect to.",
+        "pt": "A janela que lista aparelhos para transmitir ou conectar."
+      },
+      "cost": {
+        "en": "Casting to a TV loses its picker.",
+        "pt": "Transmitir para a TV perde a janela de escolha."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DevicesFlowUserSvc",
+      "does": {
+        "en": "The wizard that pairs a new device.",
+        "pt": "O assistente que pareia um aparelho novo."
+      },
+      "cost": {
+        "en": "Pairing a new device stops offering its steps.",
+        "pt": "Parear um aparelho novo deixa de oferecer os passos."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NPSMSvc",
+      "does": {
+        "en": "The media panel: what is playing, with its play and skip buttons.",
+        "pt": "O painel de mídia: o que está tocando, com os botões de play e pular."
+      },
+      "cost": {
+        "en": "The media controls on the volume flyout and the lock screen go away.",
+        "pt": "Os controles de mídia no volume e na tela de bloqueio somem."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "CaptureService",
+      "does": {
+        "en": "Screen capture for apps that record or share the screen.",
+        "pt": "Captura de tela para apps que gravam ou compartilham a tela."
+      },
+      "cost": {
+        "en": "Screen sharing in Store apps can stop working.",
+        "pt": "O compartilhamento de tela em apps da Loja pode parar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "ConsentUxUserSvc",
+      "does": {
+        "en": "The prompt that asks whether an app may use the camera, microphone or location.",
+        "pt": "O aviso que pergunta se um app pode usar câmera, microfone ou localização."
+      },
+      "cost": {
+        "en": "Those permission prompts stop appearing, and the app is refused instead.",
+        "pt": "Esses avisos de permissão param de aparecer, e o app é recusado no lugar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DsSvc",
+      "does": {
+        "en": "Data Sharing: lets apps hand data to one another.",
+        "pt": "Compartilhamento de Dados: deixa apps passarem dados entre si."
+      },
+      "cost": {
+        "en": "Some Store apps stop working together.",
+        "pt": "Alguns apps da Loja param de funcionar em conjunto."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "TokenBroker",
+      "does": {
+        "en": "Holds the sign-in tokens for your Microsoft account.",
+        "pt": "Guarda os tokens de login da sua conta Microsoft."
+      },
+      "cost": {
+        "en": "Store apps and Office may ask you to sign in again and again.",
+        "pt": "Apps da Loja e o Office podem pedir login repetidamente."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "EventSystem",
+      "does": {
+        "en": "The COM+ event system, which a long list of Windows services talks through.",
+        "pt": "O sistema de eventos COM+, por onde uma longa lista de serviços do Windows conversa."
+      },
+      "cost": {
+        "en": "Network, audio and several other services stop working properly.",
+        "pt": "Rede, áudio e vários outros serviços param de funcionar direito."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "RpcSs",
+      "does": {
+        "en": "Remote Procedure Call: how nearly every part of Windows talks to every other part.",
+        "pt": "Chamada de Procedimento Remoto: como quase toda parte do Windows fala com as outras."
+      },
+      "cost": {
+        "en": "The PC stops working and won't start again. Vantix never changes it.",
+        "pt": "O PC para de funcionar e não inicia mais. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "DcomLaunch",
+      "does": {
+        "en": "Starts the COM and DCOM components the rest of Windows is built on.",
+        "pt": "Inicia os componentes COM e DCOM sobre os quais o resto do Windows é construído."
+      },
+      "cost": {
+        "en": "The PC stops working and won't start again. Vantix never changes it.",
+        "pt": "O PC para de funcionar e não inicia mais. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "RpcEptMapper",
+      "does": {
+        "en": "The directory that tells each program where to find the service it is calling.",
+        "pt": "O diretório que diz a cada programa onde achar o serviço que ele está chamando."
+      },
+      "cost": {
+        "en": "The PC stops working and won't start again. Vantix never changes it.",
+        "pt": "O PC para de funcionar e não inicia mais. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "EventLog",
+      "does": {
+        "en": "The event log: what Windows writes down about itself, and what Vantix reads to check a change.",
+        "pt": "O log de eventos: o que o Windows anota sobre si mesmo, e o que o Vantix lê para conferir uma alteração."
+      },
+      "cost": {
+        "en": "Windows loses its own record of problems, and several services refuse to start.",
+        "pt": "O Windows perde o próprio registro de problemas, e vários serviços se recusam a iniciar."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "Schedule",
+      "does": {
+        "en": "The Task Scheduler: scheduled tasks, maintenance, and Vantix's own start with Windows.",
+        "pt": "O Agendador de Tarefas: tarefas agendadas, manutenção, e o início do próprio Vantix com o Windows."
+      },
+      "cost": {
+        "en": "Scheduled tasks stop, Windows maintenance stops, and Vantix can't start with Windows.",
+        "pt": "Tarefas agendadas param, a manutenção do Windows para, e o Vantix não inicia com o Windows."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "PlugPlay",
+      "does": {
+        "en": "Notices hardware being plugged in and hands it to the right driver.",
+        "pt": "Percebe hardware sendo ligado e o entrega ao driver certo."
+      },
+      "cost": {
+        "en": "New hardware stops working and the PC may not start. Vantix never changes it.",
+        "pt": "Hardware novo para de funcionar e o PC pode não iniciar. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "Power",
+      "does": {
+        "en": "Power policy: sleep, the power plan and what the power button does.",
+        "pt": "Política de energia: suspensão, plano de energia e o que o botão de ligar faz."
+      },
+      "cost": {
+        "en": "Sleep, the power plans and the battery settings stop working.",
+        "pt": "Suspensão, planos de energia e configurações de bateria param de funcionar."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "BFE",
+      "does": {
+        "en": "The Base Filtering Engine, which the firewall and every VPN filter sit on.",
+        "pt": "O Mecanismo de Filtragem Básica, base do firewall e de toda VPN."
+      },
+      "cost": {
+        "en": "The firewall stops protecting the PC and VPNs stop connecting.",
+        "pt": "O firewall deixa de proteger o PC e as VPNs param de conectar."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "mpssvc",
+      "does": {
+        "en": "Windows Defender Firewall itself.",
+        "pt": "O próprio Firewall do Windows Defender."
+      },
+      "cost": {
+        "en": "The PC is left open on the network. Windows refuses the change anyway.",
+        "pt": "O PC fica aberto na rede. O Windows recusa a alteração de qualquer forma."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "LSM",
+      "does": {
+        "en": "The Local Session Manager, which runs the sign-in sessions.",
+        "pt": "O Gerenciador de Sessão Local, que mantém as sessões de login."
+      },
+      "cost": {
+        "en": "Signing in stops working. Vantix never changes it.",
+        "pt": "Entrar no Windows para de funcionar. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "Winmgmt",
+      "does": {
+        "en": "WMI: where Windows answers questions about itself, restore points included.",
+        "pt": "WMI: onde o Windows responde perguntas sobre si mesmo, inclusive pontos de restauração."
+      },
+      "cost": {
+        "en": "Much of Windows, and Vantix's restore points, stop working.",
+        "pt": "Boa parte do Windows, e os pontos de restauração do Vantix, param de funcionar."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "ProfSvc",
+      "does": {
+        "en": "Loads and saves the user profile when you sign in and out.",
+        "pt": "Carrega e salva o perfil do usuário ao entrar e sair."
+      },
+      "cost": {
+        "en": "Signing in gives a temporary profile, or fails. Vantix never changes it.",
+        "pt": "Entrar dá um perfil temporário, ou falha. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "gpsvc",
+      "does": {
+        "en": "Applies group policy, which Windows uses for its own settings as well.",
+        "pt": "Aplica políticas de grupo, que o Windows usa também para configurações próprias."
+      },
+      "cost": {
+        "en": "Policies stop applying and signing in can hang. Vantix never changes it.",
+        "pt": "As políticas deixam de valer e o login pode travar. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "SamSs",
+      "does": {
+        "en": "The account database: users, groups and their passwords.",
+        "pt": "O banco de contas: usuários, grupos e suas senhas."
+      },
+      "cost": {
+        "en": "Signing in stops working. Vantix never changes it.",
+        "pt": "Entrar no Windows para de funcionar. O Vantix nunca altera."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "CryptSvc",
+      "does": {
+        "en": "Checks signatures and keeps the certificates Windows trusts.",
+        "pt": "Verifica assinaturas e guarda os certificados em que o Windows confia."
+      },
+      "cost": {
+        "en": "Updates, HTTPS and signed drivers stop being trusted.",
+        "pt": "Atualizações, HTTPS e drivers assinados deixam de ser confiáveis."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "Dhcp",
+      "does": {
+        "en": "Asks the router for this PC's address on the network.",
+        "pt": "Pede ao roteador o endereço deste PC na rede."
+      },
+      "cost": {
+        "en": "The PC loses its address and the network stops working.",
+        "pt": "O PC perde o endereço e a rede para de funcionar."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "Dnscache",
+      "does": {
+        "en": "Turns names into addresses and remembers the answers.",
+        "pt": "Transforma nomes em endereços e guarda as respostas."
+      },
+      "cost": {
+        "en": "Browsing stops working: nothing resolves a name any more.",
+        "pt": "Navegar para de funcionar: nada resolve um nome."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "nsi",
+      "does": {
+        "en": "The store where Windows keeps the state of every network interface.",
+        "pt": "O repositório onde o Windows guarda o estado de cada interface de rede."
+      },
+      "cost": {
+        "en": "The network stops working and can't be set up again.",
+        "pt": "A rede para de funcionar e não dá para configurar de novo."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "SystemEventsBroker",
+      "does": {
+        "en": "Hands system events to the programs waiting for them.",
+        "pt": "Entrega eventos do sistema aos programas que os esperam."
+      },
+      "cost": {
+        "en": "Background tasks, alarms and several services stop running.",
+        "pt": "Tarefas em segundo plano, alarmes e vários serviços param."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "CoreMessagingRegistrar",
+      "does": {
+        "en": "The channel the newer parts of Windows talk over.",
+        "pt": "O canal por onde as partes mais novas do Windows conversam."
+      },
+      "cost": {
+        "en": "The Start menu, Settings and the taskbar stop working.",
+        "pt": "O menu Iniciar, as Configurações e a barra de tarefas param."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "UserManager",
+      "does": {
+        "en": "Keeps each signed-in user's session together.",
+        "pt": "Mantém a sessão de cada usuário conectado."
+      },
+      "cost": {
+        "en": "Signing in and the Start menu stop working.",
+        "pt": "Entrar e o menu Iniciar param de funcionar."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "StateRepository",
+      "does": {
+        "en": "The database of installed apps and their settings.",
+        "pt": "O banco de dados dos apps instalados e suas configurações."
+      },
+      "cost": {
+        "en": "Store apps, the Start menu and Settings stop working.",
+        "pt": "Apps da Loja, o menu Iniciar e as Configurações param."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "BrokerInfrastructure",
+      "does": {
+        "en": "Runs the background tasks of Store apps.",
+        "pt": "Executa as tarefas em segundo plano dos apps da Loja."
+      },
+      "cost": {
+        "en": "Store apps stop working and Windows can fail to sign in.",
+        "pt": "Apps da Loja param e o Windows pode falhar ao entrar."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "Appinfo",
+      "does": {
+        "en": "Runs programs as administrator: the permission prompt goes through it.",
+        "pt": "Executa programas como administrador: o aviso de permissão passa por ele."
+      },
+      "cost": {
+        "en": "Nothing can be run as administrator any more, Vantix included.",
+        "pt": "Nada mais roda como administrador, inclusive o Vantix."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "KeyIso",
+      "does": {
+        "en": "Keeps private keys apart from the programs using them.",
+        "pt": "Mantém as chaves privadas separadas dos programas que as usam."
+      },
+      "cost": {
+        "en": "Signing in, certificates and encryption stop working.",
+        "pt": "Login, certificados e criptografia param de funcionar."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "TrustedInstaller",
+      "does": {
+        "en": "Installs and repairs Windows components and updates.",
+        "pt": "Instala e repara componentes e atualizações do Windows."
+      },
+      "cost": {
+        "en": "Updates and component repairs stop working.",
+        "pt": "Atualizações e reparos de componentes param de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "msiserver",
+      "does": {
+        "en": "Windows Installer: how .msi programs install and uninstall.",
+        "pt": "Windows Installer: como programas .msi instalam e desinstalam."
+      },
+      "cost": {
+        "en": "Many programs stop installing or uninstalling.",
+        "pt": "Muitos programas param de instalar ou desinstalar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "sppsvc",
+      "does": {
+        "en": "Checks that Windows and Office are activated.",
+        "pt": "Verifica se o Windows e o Office estão ativados."
+      },
+      "cost": {
+        "en": "Windows can start saying it isn't activated.",
+        "pt": "O Windows pode passar a dizer que não está ativado."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "LicenseManager",
+      "does": {
+        "en": "Licences for Store apps and some Microsoft subscriptions.",
+        "pt": "Licenças dos apps da Loja e de algumas assinaturas da Microsoft."
+      },
+      "cost": {
+        "en": "Store apps can refuse to open.",
+        "pt": "Apps da Loja podem se recusar a abrir."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "wlidsvc",
+      "does": {
+        "en": "Signs the PC in to a Microsoft account.",
+        "pt": "Faz o login do PC numa conta Microsoft."
+      },
+      "cost": {
+        "en": "The Store, OneDrive and anything on a Microsoft account stop signing in.",
+        "pt": "A Loja, o OneDrive e tudo que use conta Microsoft param de entrar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "VaultSvc",
+      "does": {
+        "en": "Credential Manager: the passwords Windows keeps for you.",
+        "pt": "Gerenciador de Credenciais: as senhas que o Windows guarda por você."
+      },
+      "cost": {
+        "en": "Saved passwords and network credentials stop being offered.",
+        "pt": "Senhas salvas e credenciais de rede deixam de ser oferecidas."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "SENS",
+      "does": {
+        "en": "Tells programs about logon, network and power events.",
+        "pt": "Avisa os programas sobre eventos de login, rede e energia."
+      },
+      "cost": {
+        "en": "Several services misbehave, and signing in can be slow.",
+        "pt": "Vários serviços se comportam mal, e o login pode ficar lento."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": []
+    },
+    {
+      "name": "netprofm",
+      "does": {
+        "en": "Keeps the list of networks the PC knows and which one it is on.",
+        "pt": "Mantém a lista de redes que o PC conhece e em qual ele está."
+      },
+      "cost": {
+        "en": "The network shows as unidentified and the firewall uses the wrong profile.",
+        "pt": "A rede aparece como não identificada e o firewall usa o perfil errado."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": []
+    },
+    {
+      "name": "Wcmsvc",
+      "does": {
+        "en": "Decides which connection to use and holds it, Wi-Fi and mobile included.",
+        "pt": "Decide qual conexão usar e a mantém, inclusive Wi-Fi e móvel."
+      },
+      "cost": {
+        "en": "Connecting automatically stops working.",
+        "pt": "Conectar automaticamente para de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": []
+    },
+    {
+      "name": "Netman",
+      "does": {
+        "en": "The network connections folder and the adapters in it.",
+        "pt": "A pasta de conexões de rede e os adaptadores nela."
+      },
+      "cost": {
+        "en": "Changing adapter settings stops working.",
+        "pt": "Alterar configurações de adaptador para de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "iphlpsvc",
+      "does": {
+        "en": "IPv6 tunnels and parts of the IP stack other components ask for.",
+        "pt": "Túneis IPv6 e partes da pilha IP que outros componentes pedem."
+      },
+      "cost": {
+        "en": "IPv6 over IPv4 and some VPN and container networks stop working.",
+        "pt": "IPv6 sobre IPv4 e algumas redes de VPN e de contêiner param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WinHttpAutoProxySvc",
+      "does": {
+        "en": "Finds the proxy a company network publishes.",
+        "pt": "Encontra o proxy que uma rede de empresa publica."
+      },
+      "cost": {
+        "en": "On a network that needs a proxy, nothing reaches the internet.",
+        "pt": "Numa rede que exige proxy, nada alcança a internet."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "EapHost",
+      "does": {
+        "en": "The sign-in part of corporate Wi-Fi and wired 802.1X networks.",
+        "pt": "A parte de autenticação do Wi-Fi corporativo e de redes 802.1X com fio."
+      },
+      "cost": {
+        "en": "Networks that ask for a user and password stop connecting.",
+        "pt": "Redes que pedem usuário e senha param de conectar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "dot3svc",
+      "does": {
+        "en": "The same sign-in, for a network cable.",
+        "pt": "A mesma autenticação, para o cabo de rede."
+      },
+      "cost": {
+        "en": "Nothing at home. On a corporate wired network, it stops connecting.",
+        "pt": "Nada em casa. Numa rede corporativa com fio, para de conectar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "IKEEXT",
+      "does": {
+        "en": "Builds the keys IPsec VPNs use.",
+        "pt": "Monta as chaves que VPNs IPsec usam."
+      },
+      "cost": {
+        "en": "IPsec and L2TP VPNs stop connecting.",
+        "pt": "VPNs IPsec e L2TP param de conectar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "SstpSvc",
+      "does": {
+        "en": "The SSTP kind of VPN connection.",
+        "pt": "O tipo de conexão VPN SSTP."
+      },
+      "cost": {
+        "en": "SSTP VPNs stop connecting. Other kinds carry on.",
+        "pt": "VPNs SSTP param de conectar. Os outros tipos continuam."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PolicyAgent",
+      "does": {
+        "en": "Applies IPsec rules to the traffic.",
+        "pt": "Aplica regras IPsec ao tráfego."
+      },
+      "cost": {
+        "en": "IPsec rules and the VPNs built on them stop working.",
+        "pt": "Regras IPsec e as VPNs feitas sobre elas param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "RasAuto",
+      "does": {
+        "en": "Dials a VPN or dial-up connection by itself when a program needs it.",
+        "pt": "Disca uma VPN ou conexão discada sozinho quando um programa precisa."
+      },
+      "cost": {
+        "en": "Those connections have to be started by hand.",
+        "pt": "Essas conexões passam a ser iniciadas na mão."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "RemoteAccess",
+      "does": {
+        "en": "Turns this PC into a router for other machines. Off by default.",
+        "pt": "Transforma este PC num roteador para outras máquinas. Vem desligado."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "disabled"
+      ]
+    },
+    {
+      "name": "lmhosts",
+      "does": {
+        "en": "The old NetBIOS way of finding PCs by name on the local network.",
+        "pt": "O jeito antigo, NetBIOS, de achar PCs pelo nome na rede local."
+      },
+      "cost": {
+        "en": "Very old network shares may stop being found by name.",
+        "pt": "Compartilhamentos de rede muito antigos podem deixar de ser achados pelo nome."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WebClient",
+      "does": {
+        "en": "Opens folders published over HTTP, the WebDAV kind.",
+        "pt": "Abre pastas publicadas por HTTP, do tipo WebDAV."
+      },
+      "cost": {
+        "en": "WebDAV drives stop working. It is also a known way in, so off is safer.",
+        "pt": "Unidades WebDAV param. Também é um caminho de entrada conhecido, então desligado é mais seguro."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "TrkWks",
+      "does": {
+        "en": "Keeps shortcuts pointing at files that were moved or renamed.",
+        "pt": "Mantém atalhos apontando para arquivos movidos ou renomeados."
+      },
+      "cost": {
+        "en": "A shortcut to a file that moved stops finding it by itself.",
+        "pt": "Um atalho para um arquivo que mudou de lugar deixa de achá-lo sozinho."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "ShellHWDetection",
+      "does": {
+        "en": "Notices a disk or a phone being plugged in and offers AutoPlay.",
+        "pt": "Percebe um disco ou celular sendo ligado e oferece a Reprodução Automática."
+      },
+      "cost": {
+        "en": "AutoPlay stops appearing and some drives aren't noticed.",
+        "pt": "A Reprodução Automática para de aparecer e alguns discos não são percebidos."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "StorSvc",
+      "does": {
+        "en": "Storage settings: free space, where new apps install, and drive state.",
+        "pt": "Configurações de armazenamento: espaço livre, onde novos apps instalam, e o estado das unidades."
+      },
+      "cost": {
+        "en": "Storage settings and some Store installs stop working.",
+        "pt": "As configurações de armazenamento e algumas instalações da Loja param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": []
+    },
+    {
+      "name": "vds",
+      "does": {
+        "en": "Virtual Disk: what Disk Management and partitioning tools talk to.",
+        "pt": "Disco Virtual: com o que o Gerenciamento de Disco e ferramentas de partição falam."
+      },
+      "cost": {
+        "en": "Creating, resizing and formatting partitions stops working.",
+        "pt": "Criar, redimensionar e formatar partições para de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "smphost",
+      "does": {
+        "en": "Storage Spaces, where several disks act as one pool.",
+        "pt": "Espaços de Armazenamento, onde vários discos agem como um só."
+      },
+      "cost": {
+        "en": "Nothing, unless this PC uses Storage Spaces.",
+        "pt": "Nada, a menos que este PC use Espaços de Armazenamento."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "svsvc",
+      "does": {
+        "en": "Checks a drive for errors in the background, the quiet half of chkdsk.",
+        "pt": "Verifica erros numa unidade em segundo plano, a parte silenciosa do chkdsk."
+      },
+      "cost": {
+        "en": "Windows stops finding and fixing file system problems by itself.",
+        "pt": "O Windows deixa de achar e corrigir problemas de sistema de arquivos sozinho."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "refsdedupsvc",
+      "does": {
+        "en": "Deduplication on ReFS volumes.",
+        "pt": "Deduplicação em volumes ReFS."
+      },
+      "cost": {
+        "en": "Nothing on an NTFS PC.",
+        "pt": "Nada num PC com NTFS."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "BDESVC",
+      "does": {
+        "en": "BitLocker: unlocking and managing encrypted drives.",
+        "pt": "BitLocker: desbloquear e gerenciar unidades criptografadas."
+      },
+      "cost": {
+        "en": "An encrypted drive may stop unlocking. Leave it alone if BitLocker is on.",
+        "pt": "Uma unidade criptografada pode parar de desbloquear. Não mexa se o BitLocker está ligado."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "fhsvc",
+      "does": {
+        "en": "File History, which copies your files to another drive on a schedule.",
+        "pt": "Histórico de Arquivos, que copia seus arquivos para outra unidade num horário."
+      },
+      "cost": {
+        "en": "Nothing unless File History is set up; then the backups stop.",
+        "pt": "Nada, a menos que o Histórico de Arquivos esteja configurado; aí os backups param."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SDRSVC",
+      "does": {
+        "en": "The old Windows Backup.",
+        "pt": "O antigo Backup do Windows."
+      },
+      "cost": {
+        "en": "Scheduled backups of that kind stop running.",
+        "pt": "Backups agendados desse tipo param de rodar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "CloudBackupRestoreSvc",
+      "does": {
+        "en": "Backs settings and app lists up to your Microsoft account.",
+        "pt": "Faz backup de configurações e listas de apps na sua conta Microsoft."
+      },
+      "cost": {
+        "en": "Settings stop following your account to a new PC.",
+        "pt": "As configurações deixam de seguir sua conta para um PC novo."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "wercplsupport",
+      "does": {
+        "en": "The Control Panel page that lists problem reports.",
+        "pt": "A página do Painel de Controle que lista relatórios de problemas."
+      },
+      "cost": {
+        "en": "That page stops listing anything.",
+        "pt": "Essa página deixa de listar qualquer coisa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PerfHost",
+      "does": {
+        "en": "Lets 32-bit performance counters be read on a 64-bit Windows.",
+        "pt": "Deixa ler contadores de desempenho de 32 bits num Windows de 64 bits."
+      },
+      "cost": {
+        "en": "Some old monitoring tools lose their counters.",
+        "pt": "Algumas ferramentas antigas de monitoramento perdem os contadores."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "pla",
+      "does": {
+        "en": "Performance logs and alerts, collected on a schedule.",
+        "pt": "Logs e alertas de desempenho, coletados num horário."
+      },
+      "cost": {
+        "en": "Scheduled performance collections stop. Vantix doesn't use it.",
+        "pt": "Coletas agendadas de desempenho param. O Vantix não usa isso."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WdiServiceHost",
+      "does": {
+        "en": "Runs the diagnostic scripts the troubleshooters use.",
+        "pt": "Executa os scripts de diagnóstico que as soluções de problemas usam."
+      },
+      "cost": {
+        "en": "Windows troubleshooters stop finding anything.",
+        "pt": "As soluções de problemas do Windows deixam de achar algo."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WdiSystemHost",
+      "does": {
+        "en": "The system half of the same diagnostics.",
+        "pt": "A parte de sistema desses mesmos diagnósticos."
+      },
+      "cost": {
+        "en": "Windows troubleshooters stop working properly.",
+        "pt": "As soluções de problemas do Windows param de funcionar direito."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "diagsvc",
+      "does": {
+        "en": "Runs the diagnostic packages Microsoft ships for support cases.",
+        "pt": "Executa os pacotes de diagnóstico que a Microsoft envia para casos de suporte."
+      },
+      "cost": {
+        "en": "Those support packages stop running.",
+        "pt": "Esses pacotes de suporte param de rodar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "TroubleshootingSvc",
+      "does": {
+        "en": "Runs recommended troubleshooters by itself.",
+        "pt": "Executa soluções de problemas recomendadas sozinho."
+      },
+      "cost": {
+        "en": "Windows stops fixing small problems on its own.",
+        "pt": "O Windows deixa de corrigir pequenos problemas sozinho."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "InventorySvc",
+      "does": {
+        "en": "Lists what is installed and sends compatibility data to Microsoft.",
+        "pt": "Lista o que está instalado e envia dados de compatibilidade à Microsoft."
+      },
+      "cost": {
+        "en": "Nothing you can see. Feature updates lose some compatibility checks.",
+        "pt": "Nada que você veja. Atualizações de recurso perdem algumas checagens de compatibilidade."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "wuqisvc",
+      "does": {
+        "en": "Sends Microsoft how well Windows Update is working on this PC.",
+        "pt": "Envia à Microsoft como o Windows Update está indo neste PC."
+      },
+      "cost": {
+        "en": "Nothing you can see.",
+        "pt": "Nada que você veja."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "whesvc",
+      "does": {
+        "en": "Collects how the PC behaves for Microsoft's optimised experiences.",
+        "pt": "Coleta como o PC se comporta para as experiências otimizadas da Microsoft."
+      },
+      "cost": {
+        "en": "Nothing you can see.",
+        "pt": "Nada que você veja."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "ADPSvc",
+      "does": {
+        "en": "Gathers usage data for Microsoft's aggregated platform.",
+        "pt": "Reúne dados de uso para a plataforma agregada da Microsoft."
+      },
+      "cost": {
+        "en": "Nothing you can see.",
+        "pt": "Nada que você veja."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "McpManagementService",
+      "does": {
+        "en": "Management plane for Windows features a company turns on remotely.",
+        "pt": "Plano de gerenciamento de recursos do Windows que uma empresa liga remotamente."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DmEnrollmentSvc",
+      "does": {
+        "en": "Enrols the PC with a company's device management.",
+        "pt": "Inscreve o PC no gerenciamento de dispositivos de uma empresa."
+      },
+      "cost": {
+        "en": "Nothing at home. On a work PC, management stops working.",
+        "pt": "Nada em casa. Num PC de trabalho, o gerenciamento para."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WManSvc",
+      "does": {
+        "en": "Carries out what that management asks for.",
+        "pt": "Executa o que esse gerenciamento pede."
+      },
+      "cost": {
+        "en": "Nothing at home. On a work PC, policies stop arriving.",
+        "pt": "Nada em casa. Num PC de trabalho, as políticas param de chegar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "dcsvc",
+      "does": {
+        "en": "Applies declared configuration, another management channel.",
+        "pt": "Aplica configuração declarada, outro canal de gerenciamento."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "EntAppSvc",
+      "does": {
+        "en": "Manages apps a company pushes to the PC.",
+        "pt": "Gerencia apps que uma empresa envia ao PC."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "UevAgentService",
+      "does": {
+        "en": "Roams app settings between PCs in a company.",
+        "pt": "Leva configurações de apps entre PCs de uma empresa."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "AppVClient",
+      "does": {
+        "en": "Runs App-V virtualised applications, a corporate packaging format.",
+        "pt": "Executa aplicativos virtualizados App-V, um formato corporativo de empacotamento."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "AssignedAccessManagerSvc",
+      "does": {
+        "en": "Kiosk mode, where the PC runs one app and nothing else.",
+        "pt": "Modo quiosque, onde o PC roda um app e nada mais."
+      },
+      "cost": {
+        "en": "Nothing unless kiosk mode is set up.",
+        "pt": "Nada, a menos que o modo quiosque esteja configurado."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "shpamsvc",
+      "does": {
+        "en": "Shared PC mode, for machines several people sign in to.",
+        "pt": "Modo de PC compartilhado, para máquinas em que várias pessoas entram."
+      },
+      "cost": {
+        "en": "Nothing unless shared PC mode is on.",
+        "pt": "Nada, a menos que o modo compartilhado esteja ligado."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "AppReadiness",
+      "does": {
+        "en": "Gets Store apps ready the first time a user signs in.",
+        "pt": "Prepara os apps da Loja na primeira vez que um usuário entra."
+      },
+      "cost": {
+        "en": "The first sign-in can hang on the Getting things ready screen.",
+        "pt": "O primeiro login pode travar na tela Preparando as coisas."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "AppMgmt",
+      "does": {
+        "en": "Installs software published by group policy.",
+        "pt": "Instala softwares publicados por política de grupo."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "AxInstSV",
+      "does": {
+        "en": "Installs ActiveX controls from web pages, an Internet Explorer leftover.",
+        "pt": "Instala controles ActiveX de páginas, uma herança do Internet Explorer."
+      },
+      "cost": {
+        "en": "Nothing: no current browser uses ActiveX.",
+        "pt": "Nada: nenhum navegador atual usa ActiveX."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PushToInstall",
+      "does": {
+        "en": "Installs a Store app that was bought on another device.",
+        "pt": "Instala um app da Loja comprado em outro aparelho."
+      },
+      "cost": {
+        "en": "Remote installs from the Store stop arriving.",
+        "pt": "Instalações remotas da Loja param de chegar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "camsvc",
+      "does": {
+        "en": "Decides which apps may use the camera, microphone, files and location.",
+        "pt": "Decide quais apps podem usar câmera, microfone, arquivos e localização."
+      },
+      "cost": {
+        "en": "App permissions stop being enforced, and some apps stop working.",
+        "pt": "As permissões de apps deixam de valer, e alguns apps param."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WSAIFabricSvc",
+      "does": {
+        "en": "Runs the on-device AI features newer Windows builds ship with.",
+        "pt": "Executa os recursos de IA no próprio PC que versões novas do Windows trazem."
+      },
+      "cost": {
+        "en": "Those AI features stop working. Nothing else notices.",
+        "pt": "Esses recursos de IA param. Nada mais percebe."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "MDCoreSvc",
+      "does": {
+        "en": "The core of Microsoft Defender's protection.",
+        "pt": "O núcleo da proteção do Microsoft Defender."
+      },
+      "cost": {
+        "en": "The antivirus stops protecting the PC. Windows refuses the change anyway.",
+        "pt": "O antivírus deixa de proteger o PC. O Windows recusa a alteração de qualquer forma."
+      },
+      "gain": "low",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "webthreatdefsvc",
+      "does": {
+        "en": "Warns when a site or a download looks like a phishing attempt.",
+        "pt": "Avisa quando um site ou download parece tentativa de phishing."
+      },
+      "cost": {
+        "en": "Those warnings stop appearing.",
+        "pt": "Esses avisos param de aparecer."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "webthreatdefusersvc",
+      "does": {
+        "en": "The per-user half of the same protection.",
+        "pt": "A parte por usuário dessa mesma proteção."
+      },
+      "cost": {
+        "en": "Those warnings stop appearing.",
+        "pt": "Esses avisos param de aparecer."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WEPHOSTSVC",
+      "does": {
+        "en": "Hosts encryption providers a program brings with it.",
+        "pt": "Hospeda provedores de criptografia que um programa traz consigo."
+      },
+      "cost": {
+        "en": "Programs that rely on their own provider can stop working.",
+        "pt": "Programas que dependem do próprio provedor podem parar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "cloudidsvc",
+      "does": {
+        "en": "Signs the PC in to Microsoft's cloud identity, for work accounts.",
+        "pt": "Faz o login do PC na identidade em nuvem da Microsoft, para contas de trabalho."
+      },
+      "cost": {
+        "en": "Work accounts stop signing in.",
+        "pt": "Contas de trabalho param de entrar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "LocalKdc",
+      "does": {
+        "en": "The local Kerberos key centre newer Windows builds use for sign-in.",
+        "pt": "O centro de chaves Kerberos local que versões novas do Windows usam no login."
+      },
+      "cost": {
+        "en": "Signing in can stop working on builds that use it.",
+        "pt": "O login pode parar de funcionar nas versões que o usam."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NgcCtnrSvc",
+      "does": {
+        "en": "The container that holds the Windows Hello keys.",
+        "pt": "O contêiner que guarda as chaves do Windows Hello."
+      },
+      "cost": {
+        "en": "Signing in with a PIN or your face stops working.",
+        "pt": "Entrar com PIN ou com o rosto para de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "CredentialEnrollmentManagerUserSvc",
+      "does": {
+        "en": "Sets up fingerprints and face for Windows Hello.",
+        "pt": "Configura digitais e rosto para o Windows Hello."
+      },
+      "cost": {
+        "en": "Adding a new fingerprint or face stops working.",
+        "pt": "Adicionar uma digital ou rosto novo para de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "seclogon",
+      "does": {
+        "en": "Run as a different user, from the right-click menu.",
+        "pt": "Executar como outro usuário, no menu do botão direito."
+      },
+      "cost": {
+        "en": "That option stops working. It is also a step attackers use.",
+        "pt": "Essa opção para de funcionar. Também é um passo usado em ataques."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SCPolicySvc",
+      "does": {
+        "en": "Locks the PC when a smart card is removed.",
+        "pt": "Bloqueia o PC quando um cartão inteligente é removido."
+      },
+      "cost": {
+        "en": "Nothing without a smart card.",
+        "pt": "Nada sem cartão inteligente."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "ScDeviceEnum",
+      "does": {
+        "en": "Lists smart card readers for the apps that use them.",
+        "pt": "Lista leitores de cartão inteligente para os apps que os usam."
+      },
+      "cost": {
+        "en": "Nothing without a smart card.",
+        "pt": "Nada sem cartão inteligente."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NaturalAuthentication",
+      "does": {
+        "en": "Locks or unlocks the PC from a trusted phone being near.",
+        "pt": "Bloqueia ou desbloqueia o PC pela proximidade de um celular confiável."
+      },
+      "cost": {
+        "en": "Dynamic lock stops working.",
+        "pt": "O bloqueio dinâmico para de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "wlpasvc",
+      "does": {
+        "en": "The local profile assistant, used by mobile broadband sign-in.",
+        "pt": "O assistente de perfil local, usado no login de banda larga móvel."
+      },
+      "cost": {
+        "en": "Nothing without mobile broadband.",
+        "pt": "Nada sem banda larga móvel."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "McmSvc",
+      "does": {
+        "en": "Manages mobile connectivity: eSIM profiles and operator settings.",
+        "pt": "Gerencia a conectividade móvel: perfis eSIM e configurações da operadora."
+      },
+      "cost": {
+        "en": "Nothing without mobile broadband.",
+        "pt": "Nada sem banda larga móvel."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SmsRouter",
+      "does": {
+        "en": "Routes text messages from a mobile modem to the apps.",
+        "pt": "Roteia mensagens de texto de um modem móvel para os apps."
+      },
+      "cost": {
+        "en": "Nothing without mobile broadband.",
+        "pt": "Nada sem banda larga móvel."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "autotimesvc",
+      "does": {
+        "en": "Sets the clock from the mobile network.",
+        "pt": "Acerta o relógio pela rede móvel."
+      },
+      "cost": {
+        "en": "Nothing on a PC without a SIM.",
+        "pt": "Nada num PC sem chip."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "tzautoupdate",
+      "does": {
+        "en": "Changes the time zone by itself from the location.",
+        "pt": "Muda o fuso horário sozinho, pela localização."
+      },
+      "cost": {
+        "en": "The time zone has to be set by hand when you travel.",
+        "pt": "O fuso horário passa a ser ajustado na mão quando você viaja."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "W32Time",
+      "does": {
+        "en": "Keeps the clock right by asking a time server.",
+        "pt": "Mantém o relógio certo perguntando a um servidor de horário."
+      },
+      "cost": {
+        "en": "The clock drifts, and a wrong clock breaks HTTPS and sign-ins.",
+        "pt": "O relógio desregula, e um relógio errado quebra HTTPS e logins."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "DusmSvc",
+      "does": {
+        "en": "Counts how much data each app uses, for the data usage page.",
+        "pt": "Conta quantos dados cada app usa, para a página de uso de dados."
+      },
+      "cost": {
+        "en": "The data usage page stops counting. Metered limits stop working.",
+        "pt": "A página de uso de dados para de contar. Os limites de rede limitada param."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NcaSvc",
+      "does": {
+        "en": "Checks whether a DirectAccess corporate network is reachable.",
+        "pt": "Verifica se uma rede corporativa DirectAccess está acessível."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NcbService",
+      "does": {
+        "en": "Tells apps when the network changes, so they reconnect.",
+        "pt": "Avisa os apps quando a rede muda, para eles reconectarem."
+      },
+      "cost": {
+        "en": "Store apps can stay offline after the network comes back.",
+        "pt": "Apps da Loja podem ficar offline depois que a rede volta."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "NcdAutoSetup",
+      "does": {
+        "en": "Sets up network devices that announce themselves, like a printer or a NAS.",
+        "pt": "Configura aparelhos de rede que se anunciam, como impressora ou NAS."
+      },
+      "cost": {
+        "en": "Those devices have to be added by hand.",
+        "pt": "Esses aparelhos passam a ser adicionados na mão."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "lltdsvc",
+      "does": {
+        "en": "Draws the network map by asking who else is on it.",
+        "pt": "Desenha o mapa da rede perguntando quem mais está nela."
+      },
+      "cost": {
+        "en": "The network map stops working. Nothing else uses it.",
+        "pt": "O mapa da rede para de funcionar. Nada mais usa isso."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "wcncsvc",
+      "does": {
+        "en": "Windows Connect Now, the old way of setting up Wi-Fi with a PIN.",
+        "pt": "Windows Connect Now, o jeito antigo de configurar Wi-Fi com PIN."
+      },
+      "cost": {
+        "en": "Nothing: current routers use other ways.",
+        "pt": "Nada: roteadores atuais usam outros jeitos."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WFDSConMgrSvc",
+      "does": {
+        "en": "Wi-Fi Direct, used for wireless displays and direct device links.",
+        "pt": "Wi-Fi Direct, usado para telas sem fio e ligações diretas entre aparelhos."
+      },
+      "cost": {
+        "en": "Connecting to a wireless display stops working.",
+        "pt": "Conectar numa tela sem fio para de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "IpxlatCfgSvc",
+      "does": {
+        "en": "Translates IPv4 to IPv6 on mobile networks that only speak IPv6.",
+        "pt": "Traduz IPv4 para IPv6 em redes móveis que só falam IPv6."
+      },
+      "cost": {
+        "en": "Nothing on a wired or Wi-Fi PC.",
+        "pt": "Nada num PC com cabo ou Wi-Fi."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "hns",
+      "does": {
+        "en": "The network for containers: Docker, WSL2 and Windows Sandbox use it.",
+        "pt": "A rede dos contêineres: Docker, WSL2 e Sandbox do Windows usam."
+      },
+      "cost": {
+        "en": "Containers and WSL2 lose their network.",
+        "pt": "Contêineres e WSL2 perdem a rede."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "nvagent",
+      "does": {
+        "en": "The virtual network behind the same containers.",
+        "pt": "A rede virtual por trás desses mesmos contêineres."
+      },
+      "cost": {
+        "en": "Containers and WSL2 lose their network.",
+        "pt": "Contêineres e WSL2 perdem a rede."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "vmcompute",
+      "does": {
+        "en": "Runs the lightweight virtual machines WSL2, Sandbox and Docker sit in.",
+        "pt": "Executa as máquinas virtuais leves em que WSL2, Sandbox e Docker ficam."
+      },
+      "cost": {
+        "en": "WSL2, Windows Sandbox and Docker stop starting.",
+        "pt": "WSL2, Sandbox do Windows e Docker param de iniciar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "P9RdrService",
+      "does": {
+        "en": "Shares files between Windows and WSL.",
+        "pt": "Compartilha arquivos entre o Windows e o WSL."
+      },
+      "cost": {
+        "en": "Reaching Linux files from Explorer stops working.",
+        "pt": "Alcançar arquivos do Linux pelo Explorador para de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "IsolationSession",
+      "does": {
+        "en": "The isolated session Windows Sandbox and protected apps run in.",
+        "pt": "A sessão isolada em que o Sandbox do Windows e apps protegidos rodam."
+      },
+      "cost": {
+        "en": "Windows Sandbox stops starting.",
+        "pt": "O Sandbox do Windows para de iniciar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "IsoEnvBroker",
+      "does": {
+        "en": "Sets up that isolated environment.",
+        "pt": "Prepara esse ambiente isolado."
+      },
+      "cost": {
+        "en": "Windows Sandbox and isolated apps stop starting.",
+        "pt": "O Sandbox do Windows e apps isolados param de iniciar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmicguestinterface",
+      "does": {
+        "en": "Lets a Hyper-V host talk to this machine as a guest.",
+        "pt": "Deixa um host Hyper-V falar com esta máquina como convidado."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmicshutdown",
+      "does": {
+        "en": "Lets the host shut this machine down cleanly.",
+        "pt": "Deixa o host desligar esta máquina de forma limpa."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmicheartbeat",
+      "does": {
+        "en": "Tells the host this machine is alive.",
+        "pt": "Diz ao host que esta máquina está viva."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmictimesync",
+      "does": {
+        "en": "Keeps the clock in step with the host.",
+        "pt": "Mantém o relógio em sintonia com o host."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmickvpexchange",
+      "does": {
+        "en": "Exchanges small bits of data with the host.",
+        "pt": "Troca pequenos dados com o host."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmicvss",
+      "does": {
+        "en": "Lets the host take a backup snapshot of this machine.",
+        "pt": "Deixa o host tirar um instantâneo de backup desta máquina."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmicrdv",
+      "does": {
+        "en": "Enhanced session mode for a Hyper-V guest.",
+        "pt": "Modo de sessão aprimorada para um convidado Hyper-V."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "vmicvmsession",
+      "does": {
+        "en": "Lets the host run PowerShell inside this machine.",
+        "pt": "Deixa o host rodar PowerShell dentro desta máquina."
+      },
+      "cost": {
+        "en": "Nothing unless Windows is running inside Hyper-V.",
+        "pt": "Nada, a menos que o Windows esteja rodando dentro do Hyper-V."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "wmiApSrv",
+      "does": {
+        "en": "Lets performance counters be read through WMI.",
+        "pt": "Deixa os contadores de desempenho serem lidos pelo WMI."
+      },
+      "cost": {
+        "en": "Monitoring tools that read counters over WMI lose them.",
+        "pt": "Ferramentas de monitoramento que leem contadores por WMI os perdem."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "COMSysApp",
+      "does": {
+        "en": "Hosts COM+ components, which some older business software uses.",
+        "pt": "Hospeda componentes COM+, que alguns softwares corporativos antigos usam."
+      },
+      "cost": {
+        "en": "Programs built on COM+ stop working.",
+        "pt": "Programas feitos sobre COM+ param de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "KtmRm",
+      "does": {
+        "en": "Coordinates transactions between the file system and MSDTC.",
+        "pt": "Coordena transações entre o sistema de arquivos e o MSDTC."
+      },
+      "cost": {
+        "en": "Nothing unless a program uses transactional NTFS.",
+        "pt": "Nada, a menos que um programa use NTFS transacional."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "RpcLocator",
+      "does": {
+        "en": "The name service of very old RPC programs. Off by default.",
+        "pt": "O serviço de nomes de programas RPC bem antigos. Vem desligado."
+      },
+      "cost": {
+        "en": "Nothing on a current PC.",
+        "pt": "Nada num PC atual."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DevQueryBroker",
+      "does": {
+        "en": "Finds devices for the apps that ask about them.",
+        "pt": "Encontra aparelhos para os apps que perguntam por eles."
+      },
+      "cost": {
+        "en": "Apps that list devices, like Bluetooth or casting, come up empty.",
+        "pt": "Apps que listam aparelhos, como Bluetooth ou transmissão, ficam vazios."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DeviceAssociationBrokerSvc",
+      "does": {
+        "en": "Pairs a device on behalf of an app.",
+        "pt": "Pareia um aparelho em nome de um app."
+      },
+      "cost": {
+        "en": "Pairing from inside an app stops working.",
+        "pt": "Parear de dentro de um app para de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DsmSvc",
+      "does": {
+        "en": "Installs and sets up a device when it is plugged in.",
+        "pt": "Instala e configura um aparelho quando ele é ligado."
+      },
+      "cost": {
+        "en": "New hardware stops being set up by itself.",
+        "pt": "Hardware novo deixa de ser configurado sozinho."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "hidserv",
+      "does": {
+        "en": "The special keys on keyboards, mice and remote controls.",
+        "pt": "As teclas especiais de teclados, mouses e controles remotos."
+      },
+      "cost": {
+        "en": "Volume and media keys stop working.",
+        "pt": "As teclas de volume e mídia param de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "GameInputSvc",
+      "does": {
+        "en": "Microsoft's newer input layer for controllers.",
+        "pt": "A camada nova de entrada da Microsoft para controles."
+      },
+      "cost": {
+        "en": "A controller can stop working in the games built on it.",
+        "pt": "Um controle pode parar de funcionar nos jogos feitos sobre ela."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "MsKeyboardFilter",
+      "does": {
+        "en": "Blocks key combinations on locked-down PCs, like kiosks.",
+        "pt": "Bloqueia combinações de teclas em PCs restritos, como quiosques."
+      },
+      "cost": {
+        "en": "Nothing on a normal PC.",
+        "pt": "Nada num PC normal."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PenService",
+      "does": {
+        "en": "Pen and stylus input.",
+        "pt": "Entrada de caneta e stylus."
+      },
+      "cost": {
+        "en": "Nothing without a pen. With one, writing and pen buttons stop.",
+        "pt": "Nada sem caneta. Com uma, a escrita e os botões da caneta param."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WiaRpc",
+      "does": {
+        "en": "Tells apps that a scan or a picture import finished.",
+        "pt": "Avisa os apps que uma digitalização ou importação de fotos terminou."
+      },
+      "cost": {
+        "en": "Scanning apps can stop noticing when a job is done.",
+        "pt": "Apps de digitalização podem deixar de perceber quando um trabalho termina."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PrintScanBrokerService",
+      "does": {
+        "en": "Lets Store apps print and scan.",
+        "pt": "Deixa apps da Loja imprimir e digitalizar."
+      },
+      "cost": {
+        "en": "Printing and scanning from Store apps stops.",
+        "pt": "Imprimir e digitalizar de apps da Loja para."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PrintDeviceConfigurationService",
+      "does": {
+        "en": "Fetches a printer's own settings and capabilities.",
+        "pt": "Busca as configurações e capacidades da própria impressora."
+      },
+      "cost": {
+        "en": "Advanced printer options can disappear.",
+        "pt": "Opções avançadas da impressora podem sumir."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "FontCache",
+      "does": {
+        "en": "Keeps fonts ready so programs draw text faster.",
+        "pt": "Mantém as fontes prontas para os programas desenharem texto mais rápido."
+      },
+      "cost": {
+        "en": "Programs start slower and text can take a moment to appear.",
+        "pt": "Programas abrem mais devagar e o texto pode demorar a aparecer."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "FontCache3.0.0.0",
+      "does": {
+        "en": "The same, for the older WPF programs.",
+        "pt": "O mesmo, para os programas WPF mais antigos."
+      },
+      "cost": {
+        "en": "WPF programs draw text a little slower the first time.",
+        "pt": "Programas WPF desenham texto um pouco mais devagar na primeira vez."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "GraphicsPerfSvc",
+      "does": {
+        "en": "Collects how the graphics card performs for the Settings page.",
+        "pt": "Coleta como a placa de vídeo se comporta para a página de Configurações."
+      },
+      "cost": {
+        "en": "The graphics settings page loses some readings.",
+        "pt": "A página de configurações gráficas perde algumas leituras."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DisplayEnhancementService",
+      "does": {
+        "en": "Brightness, night light and colour settings for the screen.",
+        "pt": "Brilho, luz noturna e ajustes de cor da tela."
+      },
+      "cost": {
+        "en": "Brightness and night light controls stop working.",
+        "pt": "Os controles de brilho e luz noturna param de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DispBrokerDesktopSvc",
+      "does": {
+        "en": "Keeps the display setup: which screen is where, and at what refresh rate.",
+        "pt": "Mantém a configuração de telas: qual está onde, e a que taxa de atualização."
+      },
+      "cost": {
+        "en": "Multiple screens can stop being arranged correctly.",
+        "pt": "Várias telas podem parar de ser organizadas corretamente."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "FrameServerMonitor",
+      "does": {
+        "en": "Watches the camera sharing service and restarts it if needed.",
+        "pt": "Observa o serviço de compartilhamento de câmera e o reinicia se preciso."
+      },
+      "cost": {
+        "en": "The camera may stay broken after a glitch.",
+        "pt": "A câmera pode ficar quebrada depois de uma falha."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "ApxSvc",
+      "does": {
+        "en": "The virtual audio device newer Windows builds use for app audio.",
+        "pt": "O dispositivo de áudio virtual que versões novas do Windows usam para áudio de apps."
+      },
+      "cost": {
+        "en": "Some apps can lose their audio device.",
+        "pt": "Alguns apps podem perder o dispositivo de áudio."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "midisrv",
+      "does": {
+        "en": "MIDI devices, for music keyboards and controllers.",
+        "pt": "Dispositivos MIDI, para teclados e controladores musicais."
+      },
+      "cost": {
+        "en": "Nothing without MIDI hardware.",
+        "pt": "Nada sem hardware MIDI."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "BTAGService",
+      "does": {
+        "en": "The gateway Bluetooth audio goes through.",
+        "pt": "O gateway por onde o áudio Bluetooth passa."
+      },
+      "cost": {
+        "en": "Bluetooth headphones and speakers stop playing.",
+        "pt": "Fones e caixas Bluetooth param de tocar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "SensrSvc",
+      "does": {
+        "en": "Watches the sensors and tells apps when a reading changes.",
+        "pt": "Observa os sensores e avisa os apps quando uma leitura muda."
+      },
+      "cost": {
+        "en": "Automatic brightness and rotation stop, on PCs that have those sensors.",
+        "pt": "Brilho automático e rotação param, nos PCs que têm esses sensores."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SensorDataService",
+      "does": {
+        "en": "Collects the data those sensors produce.",
+        "pt": "Coleta os dados que esses sensores produzem."
+      },
+      "cost": {
+        "en": "The same features stop working.",
+        "pt": "Os mesmos recursos param de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "perceptionsimulation",
+      "does": {
+        "en": "Simulates mixed reality hardware for developers.",
+        "pt": "Simula hardware de realidade mista para desenvolvedores."
+      },
+      "cost": {
+        "en": "Nothing on a normal PC.",
+        "pt": "Nada num PC normal."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "cbdhsvc",
+      "does": {
+        "en": "Clipboard history and syncing the clipboard between devices.",
+        "pt": "Histórico da área de transferência e sincronização entre aparelhos."
+      },
+      "cost": {
+        "en": "Windows + V stops showing anything.",
+        "pt": "O Windows + V deixa de mostrar qualquer coisa."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "BcastDVRUserService",
+      "does": {
+        "en": "The Game Bar's recording and broadcasting.",
+        "pt": "A gravação e transmissão da Barra de Jogos."
+      },
+      "cost": {
+        "en": "Game Bar recording stops. Games themselves don't notice.",
+        "pt": "A gravação da Barra de Jogos para. Os jogos em si não percebem."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "UdkUserSvc",
+      "does": {
+        "en": "The per-user half of the newer Windows shell components.",
+        "pt": "A parte por usuário dos componentes mais novos do shell do Windows."
+      },
+      "cost": {
+        "en": "Parts of the taskbar and the shell can stop working.",
+        "pt": "Partes da barra de tarefas e do shell podem parar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "LxpSvc",
+      "does": {
+        "en": "Installs and updates language packs.",
+        "pt": "Instala e atualiza pacotes de idioma."
+      },
+      "cost": {
+        "en": "Adding a language stops working.",
+        "pt": "Adicionar um idioma para de funcionar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "TimeBrokerSvc",
+      "does": {
+        "en": "Runs background tasks at the time they asked for.",
+        "pt": "Executa tarefas em segundo plano na hora que pediram."
+      },
+      "cost": {
+        "en": "Store apps stop updating and alarms stop firing.",
+        "pt": "Apps da Loja param de atualizar e alarmes param de tocar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "AarSvc",
+      "does": {
+        "en": "Starts agents, like voice assistants, when they are called.",
+        "pt": "Inicia agentes, como assistentes de voz, quando são chamados."
+      },
+      "cost": {
+        "en": "Those assistants stop answering.",
+        "pt": "Esses assistentes param de responder."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "CscService",
+      "does": {
+        "en": "Offline Files: keeps a copy of network folders for when the network is gone.",
+        "pt": "Arquivos Offline: guarda uma cópia de pastas de rede para quando a rede cai."
+      },
+      "cost": {
+        "en": "Nothing at home. On a company network, offline copies stop syncing.",
+        "pt": "Nada em casa. Numa rede de empresa, as cópias offline param de sincronizar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "workfolderssvc",
+      "does": {
+        "en": "Work Folders, a company's own file sync.",
+        "pt": "Pastas de Trabalho, a sincronização de arquivos de uma empresa."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "PeerDistSvc",
+      "does": {
+        "en": "BranchCache, which shares downloads between PCs in an office.",
+        "pt": "BranchCache, que compartilha downloads entre PCs de um escritório."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "MSiSCSI",
+      "does": {
+        "en": "Connects disks that live on the network, the iSCSI kind.",
+        "pt": "Conecta discos que ficam na rede, do tipo iSCSI."
+      },
+      "cost": {
+        "en": "Nothing unless this PC uses an iSCSI disk.",
+        "pt": "Nada, a menos que este PC use um disco iSCSI."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "SNMPTrap",
+      "does": {
+        "en": "Receives SNMP alerts from network equipment.",
+        "pt": "Recebe alertas SNMP de equipamentos de rede."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WinRM",
+      "does": {
+        "en": "Remote management: lets another PC run commands on this one.",
+        "pt": "Gerenciamento remoto: deixa outro PC rodar comandos neste."
+      },
+      "cost": {
+        "en": "Remote PowerShell stops working, and that is one way in fewer.",
+        "pt": "O PowerShell remoto para, e isso é um caminho de entrada a menos."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "UmRdpService",
+      "does": {
+        "en": "Shares printers and drives into a Remote Desktop session.",
+        "pt": "Compartilha impressoras e unidades numa sessão de Área de Trabalho Remota."
+      },
+      "cost": {
+        "en": "A remote session loses your local printers and drives.",
+        "pt": "Uma sessão remota perde suas impressoras e unidades locais."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "ssh-agent",
+      "does": {
+        "en": "Holds unlocked SSH keys so you don't retype the passphrase.",
+        "pt": "Guarda chaves SSH destravadas para você não redigitar a senha."
+      },
+      "cost": {
+        "en": "Nothing unless you use SSH keys with a passphrase.",
+        "pt": "Nada, a menos que você use chaves SSH com senha."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "embeddedmode",
+      "does": {
+        "en": "Background apps for embedded and IoT devices.",
+        "pt": "Apps em segundo plano para dispositivos embarcados e IoT."
+      },
+      "cost": {
+        "en": "Nothing on a normal PC.",
+        "pt": "Nada num PC normal."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "WarpJITSvc",
+      "does": {
+        "en": "Compiles shaders for the software renderer when there is no usable GPU.",
+        "pt": "Compila shaders para o renderizador por software quando não há GPU utilizável."
+      },
+      "cost": {
+        "en": "Nothing on a PC with working graphics drivers.",
+        "pt": "Nada num PC com drivers de vídeo funcionando."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "hpatchmon",
+      "does": {
+        "en": "Watches hotpatch updates, the kind that install without a restart.",
+        "pt": "Observa as atualizações hotpatch, as que instalam sem reiniciar."
+      },
+      "cost": {
+        "en": "Hotpatch updates fall back to needing a restart.",
+        "pt": "Atualizações hotpatch voltam a exigir reinício."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "DialogBlockingService",
+      "does": {
+        "en": "Blocks dialogs on managed PCs, a Microsoft internal piece.",
+        "pt": "Bloqueia caixas de diálogo em PCs gerenciados, uma peça interna da Microsoft."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "ZTHELPER",
+      "does": {
+        "en": "Helper for Zero Trust DNS, a corporate security feature.",
+        "pt": "Auxiliar do DNS Zero Trust, um recurso de segurança corporativa."
+      },
+      "cost": {
+        "en": "Nothing on a home PC.",
+        "pt": "Nada num PC de casa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NetSetupSvc",
+      "does": {
+        "en": "Sets up a network adapter when it is installed or changed.",
+        "pt": "Configura um adaptador de rede quando ele é instalado ou alterado."
+      },
+      "cost": {
+        "en": "A new network card may not be set up by itself.",
+        "pt": "Uma placa de rede nova pode não ser configurada sozinha."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "RmSvc",
+      "does": {
+        "en": "Radio management: the airplane mode switch and the radios it turns off.",
+        "pt": "Gerenciamento de rádio: o botão de modo avião e os rádios que ele desliga."
+      },
+      "cost": {
+        "en": "Airplane mode stops switching Wi-Fi and Bluetooth off.",
+        "pt": "O modo avião para de desligar o Wi-Fi e o Bluetooth."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "starts_with": "googleupdat",
+      "does": {
+        "en": "Keeps Chrome and other Google programs up to date in the background.",
+        "pt": "Mantém o Chrome e outros programas Google atualizados em segundo plano."
+      },
+      "cost": {
+        "en": "Chrome updates only while it is open, which is usually enough.",
+        "pt": "O Chrome atualiza só enquanto está aberto, o que costuma bastar."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "starts_with": "gupdate",
+      "does": {
+        "en": "The older Google updater, same job.",
+        "pt": "O atualizador antigo do Google, mesma função."
+      },
+      "cost": {
+        "en": "Chrome updates only while it is open.",
+        "pt": "O Chrome atualiza só enquanto está aberto."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "starts_with": "edgeupdate",
+      "does": {
+        "en": "Keeps Microsoft Edge up to date in the background.",
+        "pt": "Mantém o Microsoft Edge atualizado em segundo plano."
+      },
+      "cost": {
+        "en": "Edge updates when it is opened. Windows Update also brings it along.",
+        "pt": "O Edge atualiza ao ser aberto. O Windows Update também o traz."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "Brave Software",
+      "does": {
+        "en": "Keeps the Brave browser up to date in the background.",
+        "pt": "Mantém o navegador Brave atualizado em segundo plano."
+      },
+      "cost": {
+        "en": "Brave updates when it is opened.",
+        "pt": "O Brave atualiza ao ser aberto."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "MozillaMaintenance",
+      "does": {
+        "en": "Installs Firefox updates without asking for administrator rights each time.",
+        "pt": "Instala atualizações do Firefox sem pedir permissão de administrador toda vez."
+      },
+      "cost": {
+        "en": "Firefox still updates, with a prompt for permission.",
+        "pt": "O Firefox continua atualizando, com um pedido de permissão."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "starts_with": "adobearm",
+      "does": {
+        "en": "Adobe's updater, which checks for new versions of Acrobat and Reader.",
+        "pt": "O atualizador da Adobe, que procura versões novas do Acrobat e do Reader."
+      },
+      "cost": {
+        "en": "Acrobat updates when you open it and ask.",
+        "pt": "O Acrobat atualiza quando você abre e pede."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "Adobe",
+      "does": {
+        "en": "An Adobe background service, usually licensing or updates.",
+        "pt": "Um serviço de fundo da Adobe, normalmente licença ou atualizações."
+      },
+      "cost": {
+        "en": "Adobe apps may ask you to sign in again or update by hand.",
+        "pt": "Apps da Adobe podem pedir login de novo ou atualização manual."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "file": "nvcontainer",
+      "does": {
+        "en": "NVIDIA's container: the overlay, driver settings and GeForce Experience run inside it.",
+        "pt": "O contêiner da NVIDIA: o overlay, as configurações do driver e o GeForce Experience rodam dentro."
+      },
+      "cost": {
+        "en": "The NVIDIA overlay, ShadowPlay and driver updates stop working. Games still run.",
+        "pt": "O overlay da NVIDIA, o ShadowPlay e as atualizações de driver param. Os jogos continuam."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "NvTelemetryContainer",
+      "does": {
+        "en": "Sends NVIDIA usage data back to NVIDIA.",
+        "pt": "Envia dados de uso da NVIDIA de volta para a NVIDIA."
+      },
+      "cost": {
+        "en": "Nothing you can see. Driver updates and the overlay carry on.",
+        "pt": "Nada que você veja. As atualizações de driver e o overlay continuam."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "NVDisplay.ContainerLocalSystem",
+      "does": {
+        "en": "Runs the NVIDIA display driver's own settings and its control panel.",
+        "pt": "Roda as configurações do driver de vídeo NVIDIA e o painel de controle dele."
+      },
+      "cost": {
+        "en": "The NVIDIA control panel stops opening and per-game settings stop applying.",
+        "pt": "O painel de controle NVIDIA para de abrir e as configurações por jogo deixam de valer."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "starts_with": "amd external events",
+      "does": {
+        "en": "AMD's driver helper: FreeSync, the overlay and hotkeys go through it.",
+        "pt": "O auxiliar do driver AMD: FreeSync, overlay e atalhos passam por ele."
+      },
+      "cost": {
+        "en": "FreeSync and the AMD overlay can stop working.",
+        "pt": "O FreeSync e o overlay da AMD podem parar de funcionar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Advanced Micro Devices",
+      "does": {
+        "en": "An AMD background service, usually settings or updates.",
+        "pt": "Um serviço de fundo da AMD, normalmente configurações ou atualizações."
+      },
+      "cost": {
+        "en": "The AMD software may lose a feature or stop updating.",
+        "pt": "O software da AMD pode perder um recurso ou parar de atualizar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Intel",
+      "does": {
+        "en": "An Intel background service: graphics settings, driver updates or management.",
+        "pt": "Um serviço de fundo da Intel: configurações de vídeo, atualizações de driver ou gerenciamento."
+      },
+      "cost": {
+        "en": "Intel's own panel may lose features or stop updating drivers.",
+        "pt": "O painel da Intel pode perder recursos ou parar de atualizar drivers."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Rivet Networks",
+      "does": {
+        "en": "Killer network software, which prioritises game traffic on its own adapters.",
+        "pt": "O software de rede Killer, que prioriza o tráfego de jogos nos adaptadores dele."
+      },
+      "cost": {
+        "en": "The prioritising stops. The network card keeps working as a normal one.",
+        "pt": "A priorização para. A placa de rede continua funcionando como uma comum."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Logitech",
+      "does": {
+        "en": "Logitech G HUB: lighting, profiles and firmware for Logitech gear.",
+        "pt": "Logitech G HUB: iluminação, perfis e firmware dos periféricos Logitech."
+      },
+      "cost": {
+        "en": "Lighting and macros stop until G HUB is opened. The mouse keeps its saved settings.",
+        "pt": "Iluminação e macros param até abrir o G HUB. O mouse mantém o que já estava salvo."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "Razer",
+      "does": {
+        "en": "Razer Synapse: lighting, profiles and macros for Razer gear.",
+        "pt": "Razer Synapse: iluminação, perfis e macros dos periféricos Razer."
+      },
+      "cost": {
+        "en": "Lighting and macros stop until Synapse is opened.",
+        "pt": "Iluminação e macros param até abrir o Synapse."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "Corsair",
+      "does": {
+        "en": "Corsair iCUE: lighting, fan curves and profiles.",
+        "pt": "Corsair iCUE: iluminação, curvas de ventoinha e perfis."
+      },
+      "cost": {
+        "en": "Lighting and fan curves fall back to what the hardware has saved.",
+        "pt": "Iluminação e curvas de ventoinha voltam ao que está salvo no hardware."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "starts_with": "armoury",
+      "does": {
+        "en": "ASUS Armoury Crate: lighting, fan profiles and updates.",
+        "pt": "ASUS Armoury Crate: iluminação, perfis de ventoinha e atualizações."
+      },
+      "cost": {
+        "en": "Lighting and profiles stop until Armoury Crate is opened.",
+        "pt": "Iluminação e perfis param até abrir o Armoury Crate."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "ASUSTeK",
+      "does": {
+        "en": "An ASUS background service: updates, lighting or system tools.",
+        "pt": "Um serviço de fundo da ASUS: atualizações, iluminação ou ferramentas de sistema."
+      },
+      "cost": {
+        "en": "The matching ASUS tool loses a feature or stops updating.",
+        "pt": "A ferramenta ASUS correspondente perde um recurso ou para de atualizar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "Micro-Star",
+      "does": {
+        "en": "MSI Center and friends: lighting, fan control and updates.",
+        "pt": "MSI Center e afins: iluminação, controle de ventoinha e atualizações."
+      },
+      "cost": {
+        "en": "Lighting and fan profiles fall back to the hardware's own.",
+        "pt": "Iluminação e perfis de ventoinha voltam aos do próprio hardware."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "SteelSeries",
+      "does": {
+        "en": "SteelSeries GG: lighting, profiles and audio features.",
+        "pt": "SteelSeries GG: iluminação, perfis e recursos de áudio."
+      },
+      "cost": {
+        "en": "Lighting and the Sonar audio features stop until GG is opened.",
+        "pt": "Iluminação e os recursos de áudio Sonar param até abrir o GG."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "name": "Steam Client Service",
+      "does": {
+        "en": "Steam's helper for installs that need administrator rights.",
+        "pt": "O auxiliar da Steam para instalações que precisam de administrador."
+      },
+      "cost": {
+        "en": "Steam asks for permission itself when it needs it.",
+        "pt": "A Steam pede permissão sozinha quando precisa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Epic Games",
+      "does": {
+        "en": "Epic Games helper for installs and online services.",
+        "pt": "Auxiliar da Epic Games para instalações e serviços online."
+      },
+      "cost": {
+        "en": "The Epic launcher asks for permission itself.",
+        "pt": "O launcher da Epic pede permissão sozinho."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Blizzard",
+      "does": {
+        "en": "Battle.net's update agent, which patches games in the background.",
+        "pt": "O agente de atualização da Battle.net, que corrige jogos em segundo plano."
+      },
+      "cost": {
+        "en": "Games update when the launcher is open.",
+        "pt": "Os jogos atualizam com o launcher aberto."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Electronic Arts",
+      "does": {
+        "en": "An EA background service for the EA app and its games.",
+        "pt": "Um serviço de fundo da EA para o app EA e seus jogos."
+      },
+      "cost": {
+        "en": "EA games may ask you to open the launcher first.",
+        "pt": "Jogos da EA podem pedir que você abra o launcher antes."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Ubisoft",
+      "does": {
+        "en": "Ubisoft Connect's helper service.",
+        "pt": "O serviço auxiliar do Ubisoft Connect."
+      },
+      "cost": {
+        "en": "Ubisoft games may ask for the launcher to be open.",
+        "pt": "Jogos da Ubisoft podem pedir o launcher aberto."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Rockstar",
+      "does": {
+        "en": "The Rockstar launcher's helper service.",
+        "pt": "O serviço auxiliar do launcher da Rockstar."
+      },
+      "cost": {
+        "en": "Rockstar games may ask for the launcher to be open.",
+        "pt": "Jogos da Rockstar podem pedir o launcher aberto."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "vgc",
+      "does": {
+        "en": "Riot Vanguard, the anti-cheat for Valorant and League of Legends.",
+        "pt": "Riot Vanguard, o anticheat de Valorant e League of Legends."
+      },
+      "cost": {
+        "en": "The game refuses to start, and a changed anti-cheat can get the account banned. Vantix never touches it.",
+        "pt": "O jogo se recusa a abrir, e um anticheat alterado pode levar a banimento. O Vantix nunca mexe."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "starts_with": "easyanticheat",
+      "does": {
+        "en": "Easy Anti-Cheat, used by many online games.",
+        "pt": "Easy Anti-Cheat, usado por muitos jogos online."
+      },
+      "cost": {
+        "en": "The games that use it refuse to start. Vantix never touches it.",
+        "pt": "Os jogos que o usam se recusam a abrir. O Vantix nunca mexe."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "starts_with": "beservice",
+      "does": {
+        "en": "BattlEye, the anti-cheat of games like Rust and PUBG.",
+        "pt": "BattlEye, o anticheat de jogos como Rust e PUBG."
+      },
+      "cost": {
+        "en": "The games that use it refuse to start. Vantix never touches it.",
+        "pt": "Os jogos que o usam se recusam a abrir. O Vantix nunca mexe."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "starts_with": "faceit",
+      "does": {
+        "en": "FACEIT's anti-cheat.",
+        "pt": "O anticheat da FACEIT."
+      },
+      "cost": {
+        "en": "FACEIT matches refuse to start. Vantix never touches it.",
+        "pt": "As partidas da FACEIT se recusam a abrir. O Vantix nunca mexe."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "warp-svc",
+      "does": {
+        "en": "Cloudflare WARP, which carries this PC's traffic through Cloudflare.",
+        "pt": "Cloudflare WARP, que leva o tráfego deste PC pela Cloudflare."
+      },
+      "cost": {
+        "en": "WARP stops connecting, and the app starts it again by itself.",
+        "pt": "O WARP para de conectar, e o app o inicia de novo sozinho."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "nord security",
+      "does": {
+        "en": "NordVPN's background service, which holds the tunnel.",
+        "pt": "O serviço de fundo da NordVPN, que mantém o túnel."
+      },
+      "cost": {
+        "en": "The VPN stops connecting until the app starts it again.",
+        "pt": "A VPN para de conectar até o app iniciá-la de novo."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "ExpressVPN",
+      "does": {
+        "en": "ExpressVPN's background service.",
+        "pt": "O serviço de fundo da ExpressVPN."
+      },
+      "cost": {
+        "en": "The VPN stops connecting until the app starts it again.",
+        "pt": "A VPN para de conectar até o app iniciá-la de novo."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Surfshark",
+      "does": {
+        "en": "Surfshark's background service.",
+        "pt": "O serviço de fundo da Surfshark."
+      },
+      "cost": {
+        "en": "The VPN stops connecting until the app starts it again.",
+        "pt": "A VPN para de conectar até o app iniciá-la de novo."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Proton AG",
+      "does": {
+        "en": "Proton VPN's background service.",
+        "pt": "O serviço de fundo da Proton VPN."
+      },
+      "cost": {
+        "en": "The VPN stops connecting until the app starts it again.",
+        "pt": "A VPN para de conectar até o app iniciá-la de novo."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "OpenVPN",
+      "does": {
+        "en": "OpenVPN's service, which brings tunnels up.",
+        "pt": "O serviço do OpenVPN, que levanta os túneis."
+      },
+      "cost": {
+        "en": "OpenVPN connections stop starting on their own.",
+        "pt": "As conexões OpenVPN param de subir sozinhas."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "WireGuard",
+      "does": {
+        "en": "WireGuard's tunnel service.",
+        "pt": "O serviço de túnel do WireGuard."
+      },
+      "cost": {
+        "en": "The tunnel stops coming up by itself.",
+        "pt": "O túnel para de subir sozinho."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "TeamViewer",
+      "does": {
+        "en": "TeamViewer, which lets someone connect to this PC from anywhere.",
+        "pt": "TeamViewer, que deixa alguém conectar neste PC de qualquer lugar."
+      },
+      "cost": {
+        "en": "Nobody can reach this PC unless you open TeamViewer first. That is also one way in fewer.",
+        "pt": "Ninguém alcança este PC sem você abrir o TeamViewer antes. Isso também é um caminho a menos."
+      },
+      "gain": "medium",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "AnyDesk",
+      "does": {
+        "en": "AnyDesk, remote access to this PC.",
+        "pt": "AnyDesk, acesso remoto a este PC."
+      },
+      "cost": {
+        "en": "Unattended access stops working until AnyDesk is opened.",
+        "pt": "O acesso sem supervisão para até abrir o AnyDesk."
+      },
+      "gain": "medium",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "starts_with": "chromoting",
+      "does": {
+        "en": "Chrome Remote Desktop, remote access through a Google account.",
+        "pt": "Área de Trabalho Remota do Chrome, acesso remoto por conta Google."
+      },
+      "cost": {
+        "en": "Remote access to this PC stops.",
+        "pt": "O acesso remoto a este PC para."
+      },
+      "gain": "medium",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "starts_with": "supportassist",
+      "does": {
+        "en": "Dell SupportAssist: checks hardware and offers driver updates.",
+        "pt": "Dell SupportAssist: checa o hardware e oferece atualizações de driver."
+      },
+      "cost": {
+        "en": "Dell stops suggesting drivers by itself. You can still get them from Dell's site.",
+        "pt": "A Dell para de sugerir drivers sozinha. Você ainda pode pegá-los no site da Dell."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "starts_with": "delldatavault",
+      "does": {
+        "en": "Dell's data collection about how the PC is used.",
+        "pt": "A coleta de dados da Dell sobre como o PC é usado."
+      },
+      "cost": {
+        "en": "Nothing you can see.",
+        "pt": "Nada que você veja."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "Lenovo",
+      "does": {
+        "en": "A Lenovo Vantage service: updates, battery settings and system tools.",
+        "pt": "Um serviço do Lenovo Vantage: atualizações, bateria e ferramentas de sistema."
+      },
+      "cost": {
+        "en": "Vantage loses features: battery limits and automatic driver updates.",
+        "pt": "O Vantage perde recursos: limite de bateria e atualização automática de drivers."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "starts_with": "imcontroller",
+      "does": {
+        "en": "Lenovo's hardware controller, used by Vantage for keyboard, battery and fans.",
+        "pt": "O controlador de hardware da Lenovo, usado pelo Vantage para teclado, bateria e ventoinhas."
+      },
+      "cost": {
+        "en": "Vantage loses control of fans, battery limits and keyboard features.",
+        "pt": "O Vantage perde o controle de ventoinhas, limite de bateria e recursos de teclado."
+      },
+      "gain": "medium",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "HP Inc",
+      "does": {
+        "en": "An HP background service: printer helpers, support tools or updates.",
+        "pt": "Um serviço de fundo da HP: auxiliares de impressora, suporte ou atualizações."
+      },
+      "cost": {
+        "en": "HP's own tools lose features. Printing itself usually carries on.",
+        "pt": "As ferramentas da HP perdem recursos. A impressão em si costuma continuar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "SEIKO EPSON",
+      "does": {
+        "en": "An Epson printer or scanner service.",
+        "pt": "Um serviço de impressora ou scanner Epson."
+      },
+      "cost": {
+        "en": "Scanning or ink monitoring may stop. Printing usually carries on.",
+        "pt": "A digitalização ou o monitor de tinta podem parar. A impressão costuma continuar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "CANON",
+      "does": {
+        "en": "A Canon printer or scanner service.",
+        "pt": "Um serviço de impressora ou scanner Canon."
+      },
+      "cost": {
+        "en": "Scanning and status tools may stop. Printing usually carries on.",
+        "pt": "A digitalização e as ferramentas de status podem parar. A impressão costuma continuar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Brother",
+      "does": {
+        "en": "A Brother printer or scanner service.",
+        "pt": "Um serviço de impressora ou scanner Brother."
+      },
+      "cost": {
+        "en": "Scanning and status tools may stop. Printing usually carries on.",
+        "pt": "A digitalização e as ferramentas de status podem parar. A impressão costuma continuar."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "starts_with": "clicktorun",
+      "does": {
+        "en": "Office Click-to-Run: updates and streams the Office apps.",
+        "pt": "Office Click-to-Run: atualiza e transmite os apps do Office."
+      },
+      "cost": {
+        "en": "Office stops updating, and its apps can be slow to open or refuse to start.",
+        "pt": "O Office para de atualizar, e seus apps podem demorar a abrir ou se recusar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "starts_with": "onedrive",
+      "does": {
+        "en": "OneDrive's updater, not OneDrive itself.",
+        "pt": "O atualizador do OneDrive, não o OneDrive em si."
+      },
+      "cost": {
+        "en": "OneDrive updates less often. Syncing carries on.",
+        "pt": "O OneDrive atualiza com menos frequência. A sincronização continua."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "VMware",
+      "does": {
+        "en": "A VMware service for running and reaching virtual machines.",
+        "pt": "Um serviço da VMware para rodar e alcançar máquinas virtuais."
+      },
+      "cost": {
+        "en": "VMware machines stop starting, or lose USB and shared folders.",
+        "pt": "Máquinas da VMware param de iniciar, ou perdem USB e pastas compartilhadas."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Oracle",
+      "does": {
+        "en": "VirtualBox's helper service.",
+        "pt": "O serviço auxiliar do VirtualBox."
+      },
+      "cost": {
+        "en": "VirtualBox machines can refuse to start.",
+        "pt": "Máquinas do VirtualBox podem se recusar a iniciar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Docker",
+      "does": {
+        "en": "Docker Desktop's privileged helper.",
+        "pt": "O auxiliar privilegiado do Docker Desktop."
+      },
+      "cost": {
+        "en": "Docker Desktop stops starting containers.",
+        "pt": "O Docker Desktop para de iniciar contêineres."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Malwarebytes",
+      "does": {
+        "en": "Malwarebytes' protection service.",
+        "pt": "O serviço de proteção do Malwarebytes."
+      },
+      "cost": {
+        "en": "The PC loses that protection, and the program puts the service back anyway.",
+        "pt": "O PC perde essa proteção, e o programa restaura o serviço de qualquer forma."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "signer": "Avast",
+      "does": {
+        "en": "Avast's protection service.",
+        "pt": "O serviço de proteção da Avast."
+      },
+      "cost": {
+        "en": "The PC loses that protection, and the program puts the service back anyway.",
+        "pt": "O PC perde essa proteção, e o programa restaura o serviço de qualquer forma."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "signer": "AVG",
+      "does": {
+        "en": "AVG's protection service.",
+        "pt": "O serviço de proteção da AVG."
+      },
+      "cost": {
+        "en": "The PC loses that protection, and the program puts the service back anyway.",
+        "pt": "O PC perde essa proteção, e o programa restaura o serviço de qualquer forma."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "signer": "Kaspersky",
+      "does": {
+        "en": "Kaspersky's protection service.",
+        "pt": "O serviço de proteção da Kaspersky."
+      },
+      "cost": {
+        "en": "The PC loses that protection, and the program puts the service back anyway.",
+        "pt": "O PC perde essa proteção, e o programa restaura o serviço de qualquer forma."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "signer": "Bitdefender",
+      "does": {
+        "en": "Bitdefender's protection service.",
+        "pt": "O serviço de proteção da Bitdefender."
+      },
+      "cost": {
+        "en": "The PC loses that protection, and the program puts the service back anyway.",
+        "pt": "O PC perde essa proteção, e o programa restaura o serviço de qualquer forma."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "signer": "ESET",
+      "does": {
+        "en": "ESET's protection service.",
+        "pt": "O serviço de proteção da ESET."
+      },
+      "cost": {
+        "en": "The PC loses that protection, and the program puts the service back anyway.",
+        "pt": "O PC perde essa proteção, e o programa restaura o serviço de qualquer forma."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "name": "GoogleChromeElevationService",
+      "does": {
+        "en": "Lets Chrome install its updates without asking for permission every time.",
+        "pt": "Deixa o Chrome instalar atualizações sem pedir permissão toda vez."
+      },
+      "cost": {
+        "en": "Chrome asks for permission when it updates.",
+        "pt": "O Chrome pede permissão quando atualiza."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "MicrosoftEdgeElevationService",
+      "does": {
+        "en": "Lets Edge install its updates without asking for permission every time.",
+        "pt": "Deixa o Edge instalar atualizações sem pedir permissão toda vez."
+      },
+      "cost": {
+        "en": "Edge asks for permission when it updates.",
+        "pt": "O Edge pede permissão quando atualiza."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "BraveElevationService",
+      "does": {
+        "en": "Lets Brave install its updates without asking for permission every time.",
+        "pt": "Deixa o Brave instalar atualizações sem pedir permissão toda vez."
+      },
+      "cost": {
+        "en": "Brave asks for permission when it updates.",
+        "pt": "O Brave pede permissão quando atualiza."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "starts_with": "cloudflarewarp",
+      "does": {
+        "en": "Cloudflare WARP: carries this PC's traffic through Cloudflare, and keeps itself updated.",
+        "pt": "Cloudflare WARP: leva o tráfego deste PC pela Cloudflare, e se mantém atualizado."
+      },
+      "cost": {
+        "en": "WARP stops connecting on its own. The app starts it again when you open it.",
+        "pt": "O WARP para de conectar sozinho. O app o inicia de novo quando você abre."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Discord",
+      "does": {
+        "en": "Discord's helper for installing its own updates.",
+        "pt": "O auxiliar do Discord para instalar as próprias atualizações."
+      },
+      "cost": {
+        "en": "Discord asks for permission when it updates.",
+        "pt": "O Discord pede permissão quando atualiza."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "display": "GIGABYTE",
+      "does": {
+        "en": "A GIGABYTE motherboard tool: fan curves, monitoring or updates.",
+        "pt": "Uma ferramenta de placa-mãe GIGABYTE: curvas de ventoinha, monitoramento ou atualizações."
+      },
+      "cost": {
+        "en": "The matching GIGABYTE app loses its readings or its control of the fans.",
+        "pt": "O app GIGABYTE correspondente perde as leituras ou o controle das ventoinhas."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "GamingServices",
+      "does": {
+        "en": "Installs and runs games from the Xbox app and Game Pass.",
+        "pt": "Instala e roda jogos do app Xbox e do Game Pass."
+      },
+      "cost": {
+        "en": "Game Pass games stop installing and starting.",
+        "pt": "Jogos do Game Pass param de instalar e de abrir."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "GamingServicesNet",
+      "does": {
+        "en": "The network half of the same thing.",
+        "pt": "A parte de rede da mesma coisa."
+      },
+      "cost": {
+        "en": "Game Pass games can stop installing.",
+        "pt": "Jogos do Game Pass podem parar de instalar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "GameInputRedistService",
+      "does": {
+        "en": "Microsoft's newer input layer for controllers in games that ask for it.",
+        "pt": "A camada nova de entrada da Microsoft para controles, nos jogos que a pedem."
+      },
+      "cost": {
+        "en": "A controller can stop working in the games built on it.",
+        "pt": "Um controle pode parar de funcionar nos jogos feitos sobre ela."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Valve",
+      "does": {
+        "en": "A Steam background service, usually for installs that need permission.",
+        "pt": "Um serviço de fundo da Steam, normalmente para instalações que pedem permissão."
+      },
+      "cost": {
+        "en": "Steam asks for permission itself when it needs it.",
+        "pt": "A Steam pede permissão sozinha quando precisa."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Mozilla",
+      "does": {
+        "en": "A Mozilla background service, usually the Firefox updater.",
+        "pt": "Um serviço de fundo da Mozilla, normalmente o atualizador do Firefox."
+      },
+      "cost": {
+        "en": "Firefox updates with a prompt for permission.",
+        "pt": "O Firefox atualiza com um pedido de permissão."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual",
+        "disabled"
+      ]
+    },
+    {
+      "signer": "NVIDIA",
+      "does": {
+        "en": "An NVIDIA background service: driver tools, measurement or updates.",
+        "pt": "Um serviço de fundo da NVIDIA: ferramentas do driver, medição ou atualizações."
+      },
+      "cost": {
+        "en": "The matching NVIDIA tool loses a feature. Games still run.",
+        "pt": "A ferramenta NVIDIA correspondente perde um recurso. Os jogos continuam."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "signer": "Realtek",
+      "does": {
+        "en": "Realtek's audio service, which the sound panel and its effects run on.",
+        "pt": "O serviço de áudio da Realtek, em que o painel de som e seus efeitos rodam."
+      },
+      "cost": {
+        "en": "The Realtek panel and its effects stop. Windows keeps basic sound.",
+        "pt": "O painel Realtek e seus efeitos param. O Windows mantém o som básico."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "WSLService",
+      "does": {
+        "en": "Runs the Windows Subsystem for Linux on Windows 11.",
+        "pt": "Executa o Subsistema do Windows para Linux no Windows 11."
+      },
+      "cost": {
+        "en": "WSL stops starting.",
+        "pt": "O WSL para de iniciar."
+      },
+      "gain": "low",
+      "risk": "medium",
+      "allow": [
+        "manual"
+      ]
+    },
+    {
+      "name": "zksvc",
+      "does": {
+        "en": "KRAFTON's anti-cheat, used by PUBG.",
+        "pt": "O anticheat da KRAFTON, usado pelo PUBG."
+      },
+      "cost": {
+        "en": "The game refuses to start, and a changed anti-cheat can get the account banned. Vantix never touches it.",
+        "pt": "O jogo se recusa a abrir, e um anticheat alterado pode levar a banimento. O Vantix nunca mexe."
+      },
+      "gain": "none",
+      "risk": "high",
+      "allow": []
+    },
+    {
+      "signer": "GIGA-BYTE",
+      "does": {
+        "en": "A GIGABYTE motherboard tool: fan curves, monitoring or updates.",
+        "pt": "Uma ferramenta de placa-mãe GIGABYTE: curvas de ventoinha, monitoramento ou atualizações."
+      },
+      "cost": {
+        "en": "The matching GIGABYTE app loses its readings or its control of the fans.",
+        "pt": "O app GIGABYTE correspondente perde as leituras ou o controle das ventoinhas."
+      },
+      "gain": "low",
+      "risk": "low",
+      "allow": [
+        "manual"
+      ]
+    }
+  ]
+}

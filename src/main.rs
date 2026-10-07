@@ -10,6 +10,7 @@ mod monitor;
 mod net;
 mod reg;
 mod restore;
+mod services;
 mod settings;
 mod space;
 mod startup;
@@ -94,6 +95,15 @@ struct State {
     /// What the last End came to, for the row it was pressed on to say so for a few
     /// seconds: the program, the outcome and when it arrived. `None` while it runs.
     ended: Option<(String, Option<monitor::EndOutcome>, Instant)>,
+    /// The Services page: everything read last time, which rows are on screen after the
+    /// filters, and the change waiting for a yes.
+    services: Vec<services::Service>,
+    service_rows: Vec<usize>,
+    services_loaded: bool,
+    services_reading: bool,
+    /// A read was asked for while one was running, so another follows it.
+    services_again: bool,
+    service_edit: Option<(usize, services::Start)>,
     /// The Disk space page: drives on offer, the last scan with the paths of its largest
     /// files, the folder shown and the records of its rows. The scan goes when the
     /// window closes, since it holds about 25 bytes per file.
@@ -130,6 +140,10 @@ enum Ask {
     Reset(usize),
     Undo(usize),
     UndoAll,
+    /// Set how a service starts. The row and what it goes to are in `service_edit`.
+    Service,
+    /// Put a service back to what the journal kept, by its row.
+    ServiceUndo(usize),
 }
 
 /// What actually runs for one tweak.
@@ -188,6 +202,12 @@ fn main() -> Result<(), slint::PlatformError> {
             opened_without_tray: false,
             programs: Vec::new(),
             ended: None,
+            services: Vec::new(),
+            service_rows: Vec::new(),
+            services_loaded: false,
+            services_reading: false,
+            services_again: false,
+            service_edit: None,
             space_drives: Vec::new(),
             space: None,
             space_dir: space::ROOT,
@@ -703,6 +723,19 @@ impl App {
                 monitor::trim(&p.name, &p.pids);
             })
         }));
+        let page = ui.global::<Services>();
+        page.on_refresh(bind(self, |app| app.refresh_services()));
+        page.on_toggled(bind(self, |app| {
+            app.with_ui(|ui| ui.set_repaint(!ui.get_repaint()));
+        }));
+        page.on_refilter(bind(self, |app| {
+            let mut state = app.state.borrow_mut();
+            app.with_ui(|ui| show_services(ui, &mut state));
+        }));
+        page.on_set_start(bind_with2(self, |app, row: i32, start: i32| app.edit_service(row, start)));
+        page.on_run(bind_with2(self, |app, row: i32, on: bool| app.run_service(row, on)));
+        page.on_undo(bind_with(self, |app, row: i32| app.ask(Ask::ServiceUndo(row as usize))));
+
         self.show_bloat(&ui);
         self.show_dns(&ui);
 
@@ -1322,6 +1355,10 @@ impl App {
             job.set_baseline(false);
             job.set_protection_off(false);
             job.set_toggle(false);
+            job.set_service(false);
+            job.set_start(-1);
+            job.set_note("".into());
+            job.set_came_back(false);
             job.set_elapsed(0);
             job.set_state(state);
         });
@@ -1434,6 +1471,192 @@ impl App {
                     }
                 }
                 app.with_ui(|ui| app.show_tweaks(ui));
+            },
+        );
+    }
+
+    /// Reads every service off the UI thread. It opens each one for its configuration
+    /// and checks the signature of its file, so it takes a second or two.
+    fn refresh_services(self: &Rc<Self>) {
+        if self.state.borrow().services_reading {
+            self.state.borrow_mut().services_again = true;
+            return;
+        }
+        let drivers = self.with_ui_value(|ui| ui.global::<Services>().get_tab() == 1).unwrap_or(false);
+        self.state.borrow_mut().services_reading = true;
+        self.with_ui(|ui| {
+            let page = ui.global::<Services>();
+            page.set_loaded(false);
+            // The open row belonged to the list being replaced.
+            page.set_open_row(-1);
+        });
+        self.run_job(
+            move || services::list(drivers),
+            |app, list| {
+                let again = {
+                    let mut state = app.state.borrow_mut();
+                    state.services_reading = false;
+                    state.services = list.unwrap_or_default();
+                    state.services_loaded = true;
+                    app.with_ui(|ui| show_services(ui, &mut state));
+                    std::mem::take(&mut state.services_again)
+                };
+                // The tab changed while this was being read, so read the other one.
+                if again {
+                    app.refresh_services();
+                }
+            },
+        );
+    }
+
+    /// The row's service is about to change how it starts: 2 automatic, 5 manual,
+    /// 6 disabled, the same numbers the page uses.
+    fn edit_service(self: &Rc<Self>, row: i32, start: i32) {
+        let start = match start {
+            2 => services::Start::Auto,
+            6 => services::Start::Disabled,
+            _ => services::Start::Manual,
+        };
+        let row = row as usize;
+        let offered = {
+            let state = self.state.borrow();
+            state
+                .service_rows
+                .get(row)
+                .and_then(|&i| state.services.get(i))
+                .is_some_and(|service| service.block.is_none() && service.choices().contains(&start))
+        };
+        if !offered {
+            return;
+        }
+        self.state.borrow_mut().service_edit = Some((row, start));
+        self.ask(Ask::Service);
+    }
+
+    /// Starts or stops a service now. Nothing is written down: it starts again the next
+    /// time Windows or a program asks for it, and how it starts hasn't changed.
+    fn run_service(self: &Rc<Self>, row: i32, on: bool) {
+        let Some((_, name, display)) = self.service_at(row as usize) else { return };
+        self.show_job(JobState::Applying, &display, false);
+        self.with_ui(|ui| ui.global::<Job>().set_service(true));
+        let work = name.clone();
+        self.run_job(
+            move || services::run(&work, on),
+            move |app, result| {
+                match result {
+                    Some(Ok(ended)) => {
+                        {
+                            let mut state = app.state.borrow_mut();
+                            if let Some(service) = state.services.iter_mut().find(|s| s.name == name) {
+                                service.running = ended;
+                            }
+                        }
+                        app.set_job(JobState::Done, "");
+                        // It was stopped and it is running again: Windows put it back.
+                        app.with_ui(|ui| {
+                            ui.global::<Job>().set_came_back(ended != on);
+                            let mut state = app.state.borrow_mut();
+                            show_services(ui, &mut state);
+                        });
+                    }
+                    Some(Err(error)) => app.set_job(JobState::Failed, &error.message()),
+                    None => app.set_job(JobState::Failed, ""),
+                }
+            },
+        );
+    }
+
+    /// Where a row sits in the full list, with its names.
+    fn service_at(&self, row: usize) -> Option<(usize, String, String)> {
+        let state = self.state.borrow();
+        let index = *state.service_rows.get(row)?;
+        let service = state.services.get(index)?;
+        Some((index, service.name.clone(), service.display.clone()))
+    }
+
+    /// Sets how a service starts, and writes it down so Undo can put it back.
+    fn apply_service(self: &Rc<Self>, ask: Ask) {
+        self.state.borrow_mut().asked = None;
+        let undo = matches!(ask, Ask::ServiceUndo(_));
+        let row = match ask {
+            Ask::ServiceUndo(row) => row,
+            _ => match self.state.borrow().service_edit {
+                Some((row, _)) => row,
+                None => return,
+            },
+        };
+        let Some((_, name, display)) = self.service_at(row) else { return };
+        let id = format!("service:{name}");
+        let start = if undo {
+            let state = self.state.borrow();
+            let previous = state
+                .changes
+                .iter()
+                .find(|change| change.id == id)
+                .and_then(|change| change.previous.as_deref())
+                .and_then(services::Start::from_id);
+            match previous {
+                Some(start) => start,
+                None => return,
+            }
+        } else {
+            match self.state.borrow().service_edit {
+                Some((_, start)) => start,
+                None => return,
+            }
+        };
+
+        self.show_job(JobState::Applying, &display, true);
+        self.with_ui(|ui| {
+            let job = ui.global::<Job>();
+            job.set_service(true);
+            job.set_undo(undo);
+            job.set_toggle(true);
+        });
+        let work = name.clone();
+        self.run_job(
+            move || services::set_start(&work, start),
+            move |app, result| {
+                match result {
+                    Some(Ok(before)) => {
+                        {
+                            let mut state = app.state.borrow_mut();
+                            // By name: a refresh in the meantime would have moved the row.
+                            if let Some(service) = state.services.iter_mut().find(|s| s.name == name) {
+                                service.start = start;
+                            }
+                            state.journal_version += 1;
+                            if undo {
+                                state.changes.retain(|change| change.id != id);
+                            } else if let Some(change) = state.changes.iter_mut().find(|change| change.id == id) {
+                                // A second change keeps the first record: what it was
+                                // before Vantix is what Undo has to put back.
+                                change.time = Local::now();
+                            } else {
+                                let change = Change {
+                                    id,
+                                    time: Local::now(),
+                                    previous: Some(before.id().to_string()),
+                                    boot: tweaks::boot_time(),
+                                    reboot: false,
+                                    freed: None,
+                                    reset: false,
+                                    plan: None,
+                                };
+                                state.changes.push(change);
+                            }
+                            let _ = settings::save_changes(&state.changes);
+                        }
+                        app.set_job(JobState::Done, "");
+                        app.with_ui(|ui| {
+                            let mut state = app.state.borrow_mut();
+                            show_services(ui, &mut state);
+                        });
+                        app.refresh_tweaks();
+                    }
+                    Some(Err(error)) => app.set_job(JobState::Failed, &error.message()),
+                    None => app.set_job(JobState::Failed, ""),
+                }
             },
         );
     }
@@ -1574,12 +1797,76 @@ impl App {
         .unwrap_or_default()
     }
 
+    /// Puts up the confirmation sheet for a service: what it is, where it is going and
+    /// what the catalog says stops working.
+    fn ask_service(self: &Rc<Self>, ask: Ask) {
+        let undo = matches!(ask, Ask::ServiceUndo(_));
+        let row = match ask {
+            Ask::ServiceUndo(row) => row,
+            _ => match self.state.borrow().service_edit {
+                Some((row, _)) => row,
+                None => return,
+            },
+        };
+        let portuguese = portuguese(self.state.borrow().settings.language);
+        let Some((subject, gain, risk, note, start)) = ({
+            let state = self.state.borrow();
+            state.service_rows.get(row).and_then(|&i| state.services.get(i)).map(|service| {
+                let known = service.known();
+                (
+                    service.display.clone(),
+                    known.map_or(0, |entry| entry.gain as i32),
+                    known.map_or(0, |entry| entry.risk as i32),
+                    known.map(|entry| entry.cost.get(portuguese).to_string()).unwrap_or_default(),
+                    if undo {
+                        // Where Undo puts it back to, from the journal.
+                        state
+                            .changes
+                            .iter()
+                            .find(|change| change.id == format!("service:{}", service.name))
+                            .and_then(|change| change.previous.as_deref())
+                            .and_then(services::Start::from_id)
+                            .map_or(-1, |start| start as i32)
+                    } else {
+                        state.service_edit.map_or(-1, |(_, start)| start as i32)
+                    },
+                )
+            })
+        }) else {
+            return;
+        };
+        // A change to a service stays until it is undone, so it belongs under the same
+        // restore point as the tweaks.
+        let protection = !undo && restore::protection_enabled();
+        let baseline = self.state.borrow().baseline_alive;
+        self.state.borrow_mut().asked = Some(ask);
+        self.show_job(JobState::Confirm, &subject, true);
+        self.with_ui(|ui| {
+            let job = ui.global::<Job>();
+            job.set_service(true);
+            job.set_undo(undo);
+            job.set_gain(gain);
+            job.set_cost(risk);
+            job.set_start(start);
+            job.set_note(note.as_str().into());
+            job.set_known(gain > 0 || risk > 0 || !note.is_empty());
+            job.set_toggle(true);
+            job.set_with_point(protection && !baseline);
+            job.set_baseline(protection && baseline);
+            job.set_protection_off(!undo && !protection);
+        });
+    }
+
     /// Puts up the confirmation sheet with what the change gives, costs and needs.
     fn ask(self: &Rc<Self>, ask: Ask) {
+        if matches!(ask, Ask::Service | Ask::ServiceUndo(_)) {
+            return self.ask_service(ask);
+        }
         let (index, undo) = match ask {
             Ask::Apply(i) | Ask::Reset(i) => (Some(i), false),
             Ask::Undo(i) => (Some(i), true),
             Ask::UndoAll => (None, true),
+            Ask::Service | Ask::ServiceUndo(_) => return,
         };
         let reset = matches!(ask, Ask::Reset(_));
         let mut subject = index.map(|i| self.tweak_title(i)).unwrap_or_default();
@@ -1624,16 +1911,15 @@ impl App {
         let Some(ask) = self.state.borrow().asked else { return };
         let with_point =
             use_point && self.with_ui_value(|ui| ui.global::<Job>().get_with_point()).unwrap_or(false);
-        let (Ask::Apply(i) | Ask::Reset(i)) = ask else {
-            self.apply(ask);
-            return;
+        let title = match ask {
+            Ask::Apply(i) | Ask::Reset(i) => self.tweak_title(i),
+            Ask::Service => self.with_ui_value(|ui| ui.global::<Job>().get_subject().to_string()).unwrap_or_default(),
+            _ => String::new(),
         };
-        if !with_point {
+        if !with_point || title.is_empty() {
             self.apply(ask);
             return;
         }
-
-        let title = self.tweak_title(i);
         self.show_job(JobState::CreatingPoint, &title, true);
         self.run_job(
             move || restore::create(&format!("Vantix: {title}")),
@@ -1656,6 +1942,9 @@ impl App {
     }
 
     fn apply(self: &Rc<Self>, ask: Ask) {
+        if matches!(ask, Ask::Service | Ask::ServiceUndo(_)) {
+            return self.apply_service(ask);
+        }
         let work: Vec<(usize, Op)> = {
             let mut state = self.state.borrow_mut();
             state.asked = None;
@@ -1667,6 +1956,8 @@ impl App {
                 }
             };
             let work = match ask {
+                // Services never reach here; apply sends them to apply_service.
+                Ask::Service | Ask::ServiceUndo(_) => Vec::new(),
                 Ask::Apply(i) => vec![(i, Op::Apply)],
                 Ask::Reset(i) => vec![(i, Op::Reset)],
                 Ask::Undo(i) => {
@@ -1683,8 +1974,24 @@ impl App {
             work
         };
         let subject = match ask {
-            Ask::UndoAll => String::new(),
+            Ask::UndoAll | Ask::Service | Ask::ServiceUndo(_) => String::new(),
             Ask::Apply(i) | Ask::Reset(i) | Ask::Undo(i) => self.tweak_title(i),
+        };
+        // Undo all covers the services too: they sit in the same journal, under ids the
+        // catalog has no entry for.
+        let services: Vec<(String, services::Start)> = match ask {
+            Ask::UndoAll => self
+                .state
+                .borrow()
+                .changes
+                .iter()
+                .filter_map(|change| {
+                    let name = change.id.strip_prefix("service:")?;
+                    let previous = services::Start::from_id(change.previous.as_deref()?)?;
+                    Some((name.to_string(), previous))
+                })
+                .collect(),
+            _ => Vec::new(),
         };
         self.show_job(JobState::Applying, &subject, true);
         let slow = work.iter().any(|(i, _)| CATALOG[*i].slow);
@@ -1693,7 +2000,7 @@ impl App {
             let job = ui.global::<Job>();
             let index = match ask {
                 Ask::Apply(i) | Ask::Reset(i) | Ask::Undo(i) => Some(i),
-                Ask::UndoAll => None,
+                Ask::UndoAll | Ask::Service | Ask::ServiceUndo(_) => None,
             };
             job.set_tweak(index.map_or(-1, |i| i as i32));
             job.set_undo(matches!(ask, Ask::Undo(_) | Ask::UndoAll));
@@ -1732,11 +2039,21 @@ impl App {
                         break;
                     }
                 }
+                // The ones that went back, and to what, for the journal and the page.
+                let undone: Vec<(String, services::Start)> = services
+                    .into_iter()
+                    .filter_map(|(name, previous)| {
+                        services::set_start(&name, previous)
+                            .inspect_err(|error| system::log_error(&name, error))
+                            .ok()
+                            .map(|_| (name, previous))
+                    })
+                    .collect();
                 let (free_after, _) = disk::system_drive_space();
-                (outcomes, free_after.saturating_sub(free_before), active)
+                (outcomes, free_after.saturating_sub(free_before), active, undone)
             },
             |app, result| {
-                let Some((outcomes, gained, active)) = result else {
+                let Some((outcomes, gained, active, undone)) = result else {
                     app.state.borrow_mut().working = None;
                     app.set_job(JobState::Failed, "");
                     app.with_ui(|ui| app.show_tweaks(ui));
@@ -1751,6 +2068,12 @@ impl App {
                     let mut state = app.state.borrow_mut();
                     state.working = None;
                     state.journal_version += 1;
+                    for (name, previous) in &undone {
+                        state.changes.retain(|change| change.id != format!("service:{name}"));
+                        if let Some(service) = state.services.iter_mut().find(|service| service.name == *name) {
+                            service.start = *previous;
+                        }
+                    }
                     for (i, op, plan, result) in outcomes {
                         let tweak = &CATALOG[i];
                         match result {
@@ -2305,6 +2628,107 @@ fn show_sparkline(ui: &AppWindow, loads: &VecDeque<u32>) {
     mem.set_spark_fill(area.into());
 }
 
+/// Fills the Services page: the filters, the search and the sorting decide which of the
+/// services that were read end up on screen, and in what order.
+fn show_services(ui: &AppWindow, state: &mut State) {
+    use services::{Block, Origin, Start};
+
+    let page = ui.global::<Services>();
+    let search = page.get_search().to_lowercase();
+    let filter = page.get_filter();
+    let portuguese = portuguese(state.settings.language);
+    let mut shown: Vec<usize> = state
+        .services
+        .iter()
+        .enumerate()
+        .filter(|(_, service)| {
+            let kept = match filter {
+                1 => service.origin == Origin::Windows,
+                2 => service.origin != Origin::Windows,
+                3 => service.running,
+                4 => service.start.with_windows(),
+                _ => true,
+            };
+            let searched = search.is_empty()
+                || service.display.to_lowercase().contains(&search)
+                || service.name.to_lowercase().contains(&search);
+            kept && searched
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if page.get_sort() == 1 {
+        shown.sort_by_key(|&i| std::cmp::Reverse(state.services[i].memory));
+    }
+
+    let rows: Vec<ServiceRow> = shown
+        .iter()
+        .map(|&i| {
+            let service = &state.services[i];
+            let known = service.known();
+            let choices = service.choices();
+            let changed = state.changes.iter().any(|change| change.id == format!("service:{}", service.name));
+            ServiceRow {
+                display: service.display.as_str().into(),
+                name: service.name.as_str().into(),
+                description: service.description.as_str().into(),
+                origin: match service.origin {
+                    Origin::Windows => 0,
+                    Origin::Microsoft => 1,
+                    Origin::Third => 2,
+                    Origin::Unsigned => 3,
+                },
+                signer: service.signer.as_str().into(),
+                start: service.start as i32,
+                running: service.running,
+                memory: format_bytes(service.memory).into(),
+                cpu: format_percent(service.cpu).into(),
+                shared: service.shared as i32,
+                does: known.map(|entry| entry.does.get(portuguese)).unwrap_or_default().into(),
+                cost: known.map(|entry| entry.cost.get(portuguese)).unwrap_or_default().into(),
+                gain: known.map_or(0, |entry| entry.gain as i32),
+                risk: known.map_or(0, |entry| entry.risk as i32),
+                can_auto: choices.contains(&Start::Auto),
+                can_manual: choices.contains(&Start::Manual),
+                can_disabled: choices.contains(&Start::Disabled),
+                blocked: match service.block {
+                    None => 0,
+                    Some(Block::Essential) => 1,
+                    Some(Block::AntiCheat) => 2,
+                    Some(Block::Driver) => 3,
+                },
+                changed,
+                account: service.account.as_str().into(),
+                path: service.path.as_str().into(),
+                triggers: ModelRc::new(VecModel::from(
+                    service.triggers.iter().map(|trigger| *trigger as i32).collect::<Vec<_>>(),
+                )),
+                needs: service.needs.join(", ").as_str().into(),
+                needed_by: service.needed_by.join(", ").as_str().into(),
+                needed_by_count: service.needed_by.len() as i32,
+                restarts: service.restarts,
+                group: service.group.as_str().into(),
+                per_user: service.per_user,
+                pid: service.pid as i32,
+            }
+        })
+        .collect();
+
+    page.set_total(state.services.len() as i32);
+    page.set_running(state.services.iter().filter(|service| service.running).count() as i32);
+    page.set_loaded(state.services_loaded);
+    let model = page.get_rows();
+    match model.as_any().downcast_ref::<VecModel<ServiceRow>>() {
+        // The same rows with new numbers: keeping the model keeps the scroll position.
+        Some(current) if current.row_count() == rows.len() => {
+            for (i, row) in rows.into_iter().enumerate() {
+                current.set_row_data(i, row);
+            }
+        }
+        _ => page.set_rows(ModelRc::new(VecModel::from(rows))),
+    }
+    state.service_rows = shown;
+}
+
 fn show_settings(ui: &AppWindow, settings: &Settings) {
     let mem = ui.global::<Memory>();
     mem.set_level(settings.clean_level as i32);
@@ -2798,14 +3222,18 @@ fn justify_terms(ui: &AppWindow) {
     terms.set_justified(ModelRc::new(VecModel::from(paragraphs.unwrap_or_default())));
 }
 
+/// Whether the UI is in Portuguese right now, which is also which half of the service
+/// catalog to read.
+fn portuguese(language: Language) -> bool {
+    const LANG_PORTUGUESE: u16 = 0x16;
+    match language {
+        Language::En => false,
+        Language::PtBr => true,
+        Language::System => (unsafe { GetUserDefaultUILanguage() }) & 0x3ff == LANG_PORTUGUESE,
+    }
+}
+
 /// Needs at least one component to exist, Slint only loads the bundled catalogs then.
 fn apply_language(language: Language) {
-    const LANG_PORTUGUESE: u16 = 0x16;
-    let code = match language {
-        Language::En => "",
-        Language::PtBr => "pt_BR",
-        Language::System if unsafe { GetUserDefaultUILanguage() } & 0x3ff == LANG_PORTUGUESE => "pt_BR",
-        Language::System => "",
-    };
-    let _ = slint::select_bundled_translation(code);
+    let _ = slint::select_bundled_translation(if portuguese(language) { "pt_BR" } else { "" });
 }

@@ -1,0 +1,512 @@
+import { Theme, Icons, Icon, Card, Button, Chip, Segmented } from "theme.slint";
+import { LineEdit, ListView } from "std-widgets.slint";
+import { LevelTag } from "tweaks.slint";
+
+/// One service, as the page shows it.
+export struct ServiceRow {
+    /// The name Windows shows, and the short name underneath it.
+    display: string,
+    name: string,
+    /// Windows' own description of it.
+    description: string,
+    /// 0 Windows, 1 Microsoft, 2 someone else, 3 nothing signed it.
+    origin: int,
+    /// Who signed the file, for the services that aren't Windows.
+    signer: string,
+    /// Boot, System, Automatic, Automatic delayed, Triggered, Manual, Disabled.
+    start: int,
+    running: bool,
+    memory: string,
+    cpu: string,
+    /// How many services share its process.
+    shared: int,
+    /// What Vantix knows about it, empty when it knows nothing.
+    does: string,
+    cost: string,
+    gain: int,
+    risk: int,
+    can-auto: bool,
+    can-manual: bool,
+    can-disabled: bool,
+    /// 0 free to change, 1 Windows needs it, 2 anti-cheat, 3 a driver.
+    blocked: int,
+    /// Vantix changed it and the journal can put it back.
+    changed: bool,
+    /// Account it runs as, and the file behind it.
+    account: string,
+    path: string,
+    /// What Windows watches for to start it by itself, as indexes into trigger-names.
+    triggers: [int],
+    /// Services it needs, and the ones that need it, already joined.
+    needs: string,
+    needed-by: string,
+    needed-by-count: int,
+    /// Windows starts it again by itself after it stops unexpectedly.
+    restarts: bool,
+    /// The svchost group it shares, empty when it has a process of its own.
+    group: string,
+    /// One copy per signed-in user.
+    per-user: bool,
+    pid: int,
+}
+
+export global Services {
+    in property <[ServiceRow]> rows;
+    in property <bool> loaded;
+    in property <int> total;
+    in property <int> running;
+    /// 0 services, 1 drivers.
+    in-out property <int> tab;
+    /// 0 all, 1 Windows, 2 other people's, 3 running now, 4 starts with Windows.
+    in-out property <int> filter;
+    in-out property <string> search;
+    /// 0 by name, 1 by memory.
+    in-out property <int> sort;
+    /// The row whose details are open, -1 for none.
+    in-out property <int> open-row: -1;
+
+    callback refresh();
+    /// The filters, the search or the sorting changed, so the rows are built again.
+    callback refilter();
+    /// A row opened or closed, so its neighbours move: the software renderer needs the
+    /// whole window marked dirty or what was drawn over them stays.
+    callback toggled();
+    /// Row and start type: 2 automatic, 5 manual, 6 disabled, as in start-names.
+    callback set-start(int, int);
+    callback run(int, bool);
+    callback undo(int);
+
+    /// In the order of the Trigger enum in services.rs.
+    out property <[string]> trigger-names: [
+        @tr("a device is plugged in"),
+        @tr("the network changes"),
+        @tr("the PC joins a domain"),
+        @tr("a firewall port opens"),
+        @tr("a group policy changes"),
+        @tr("something looks for it on a pipe or a port"),
+        @tr("a program asks for it"),
+        @tr("a system event happens"),
+    ];
+
+    out property <[string]> start-names: [
+        @tr("With the kernel"),
+        @tr("With the system"),
+        @tr("Automatic"),
+        @tr("Automatic, delayed"),
+        @tr("Manual, on a trigger"),
+        @tr("Manual"),
+        @tr("Disabled"),
+    ];
+}
+
+component OriginChip inherits Chip {
+    in property <ServiceRow> item;
+    text: root.item.origin == 0 ? @tr("Windows")
+        : root.item.origin == 1 ? @tr("Microsoft")
+        : root.item.origin == 3 ? @tr("Not signed")
+        : root.item.signer;
+    tint: root.item.origin == 0 ? Theme.muted
+        : root.item.origin == 3 ? Theme.warn
+        : Theme.info;
+}
+
+component Fact inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+
+    spacing: 8px;
+    Text {
+        width: 96px;
+        text: root.label;
+        color: Theme.faint;
+        font-size: 12px;
+    }
+    Text {
+        text: root.value;
+        color: Theme.muted;
+        font-size: 12px;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+}
+
+component ServiceLine inherits Rectangle {
+    in property <ServiceRow> item;
+    in property <int> index;
+    property <bool> open: Services.open-row == root.index;
+    /// The second click on Stop, which can break something while it's off.
+    property <bool> armed;
+    /// The row's width minus its padding, for the texts that wrap.
+    property <length> text-width: max(240px, root.width - 24px);
+
+    height: layout.preferred-height;
+    background: root.open ? Theme.raised : touch.has-hover ? Theme.hover.with-alpha(0.5) : transparent;
+    border-radius: Theme.radius-small;
+    animate background { duration: 120ms; }
+
+    layout := VerticalLayout {
+        padding: 10px;
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                horizontal-stretch: 1;
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Text {
+                        text: root.item.display;
+                        color: Theme.text;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    if root.item.changed: Chip {
+                        text: @tr("Changed by Vantix");
+                        tint: Theme.accent;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Text {
+                        text: root.item.name;
+                        color: Theme.faint;
+                        font-size: 11.5px;
+                    }
+                    Text {
+                        text: "·";
+                        color: Theme.faint;
+                        font-size: 11.5px;
+                    }
+                    Text {
+                        text: Services.start-names[root.item.start];
+                        color: Theme.muted;
+                        font-size: 11.5px;
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: end;
+                    OriginChip { item: root.item; }
+                    Chip {
+                        text: root.item.running ? @tr("Running") : @tr("Stopped");
+                        tint: root.item.running ? Theme.accent : Theme.faint;
+                    }
+                }
+            }
+
+            VerticalLayout {
+                width: 76px;
+                alignment: center;
+                Text {
+                    text: root.item.running ? root.item.memory : "-";
+                    color: Theme.text;
+                    font-size: 12.5px;
+                    horizontal-alignment: right;
+                }
+                if root.item.shared > 1: Text {
+                    text: @tr("shared with {}", root.item.shared - 1);
+                    color: Theme.faint;
+                    font-size: 10.5px;
+                    horizontal-alignment: right;
+                }
+            }
+
+            VerticalLayout {
+                width: 52px;
+                alignment: center;
+                Text {
+                    text: root.item.running ? root.item.cpu : "-";
+                    color: Theme.text;
+                    font-size: 12.5px;
+                    horizontal-alignment: right;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    data: root.open ? Icons.up : Icons.down;
+                    size: 16px;
+                    tint: Theme.faint;
+                }
+            }
+        }
+
+        if root.open: VerticalLayout {
+            spacing: 10px;
+            padding-bottom: 4px;
+
+            VerticalLayout {
+                spacing: 4px;
+                if root.item.does != "": Text {
+                    text: root.item.does;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+                if root.item.does != "": Text {
+                    text: @tr("Without it: {}", root.item.cost);
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+                // Windows' own words, which say more about an odd service than anyone else can.
+                if root.item.description != "": Text {
+                    text: root.item.does == ""
+                        ? root.item.description
+                        : @tr("Windows says: {}", root.item.description);
+                    color: root.item.does == "" ? Theme.text : Theme.faint;
+                    font-size: root.item.does == "" ? 13px : 12px;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+                if root.item.does == "": Text {
+                    text: @tr("Vantix has nothing of its own on this one, so what is above comes from Windows and what is below is measured here.");
+                    color: Theme.faint;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+            }
+
+            if root.item.does != "": HorizontalLayout {
+                spacing: 18px;
+                alignment: start;
+                LevelTag { level: root.item.gain; }
+                LevelTag {
+                    is-cost: true;
+                    level: root.item.risk;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 3px;
+                Fact { label: @tr("Starts"); value: Services.start-names[root.item.start]; }
+                if root.item.triggers.length > 0: Fact {
+                    label: @tr("Also when");
+                    value: Services.trigger-names[root.item.triggers[0]]
+                        + (root.item.triggers.length > 1 ? ", " + Services.trigger-names[root.item.triggers[1]] : "")
+                        + (root.item.triggers.length > 2 ? ", " + Services.trigger-names[root.item.triggers[2]] : "");
+                }
+                Fact { label: @tr("Account"); value: root.item.account; }
+                if root.item.running: Fact {
+                    label: @tr("Process");
+                    value: root.item.pid
+                        + (root.item.group != "" ? "  ·  " + @tr("shares the {} host", root.item.group) : "")
+                        + (root.item.shared > 1 ? "  ·  " + @tr("with {} other services", root.item.shared - 1) : "");
+                }
+                if root.item.needs != "": Fact { label: @tr("Needs"); value: root.item.needs; }
+                if root.item.needed-by != "": Fact { label: @tr("Needed by"); value: root.item.needed-by; }
+                Fact { label: @tr("File"); value: root.item.path; }
+            }
+
+            if root.item.needed-by-count > 0 || root.item.restarts || root.item.per-user: VerticalLayout {
+                spacing: 3px;
+                if root.item.needed-by-count > 0: Text {
+                    text: @tr("Stopping it stops the {} services that need it, too.", root.item.needed-by-count);
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+                if root.item.restarts: Text {
+                    text: @tr("Windows starts it again by itself if it stops, so stopping it rarely sticks. Changing how it starts does.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+                if root.item.per-user: Text {
+                    text: @tr("One copy runs per signed-in user. The change here is to the one Windows copies.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+            }
+
+            if root.item.blocked > 0: Text {
+                text: root.item.blocked == 1 ? @tr("Windows needs this one to work, so Vantix leaves it alone.")
+                    : root.item.blocked == 2 ? @tr("Anti-cheat. Vantix never changes it: the game can refuse to start, or ban the account.")
+                    : @tr("A driver. Turning one off can stop the PC from starting, so this tab only reads.");
+                color: Theme.warn;
+                wrap: word-wrap;
+                width: root.text-width;
+            }
+
+            if root.item.blocked == 0: HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                if root.item.can-auto && root.item.start != 2 && root.item.start != 3: Button {
+                    text: @tr("Set to automatic");
+                    tall: 32px;
+                    clicked => { Services.set-start(root.index, 2); }
+                }
+                if root.item.can-manual && root.item.start != 4 && root.item.start != 5: Button {
+                    text: @tr("Set to manual");
+                    tall: 32px;
+                    clicked => { Services.set-start(root.index, 5); }
+                }
+                if root.item.can-disabled && root.item.start != 6: Button {
+                    text: @tr("Disable");
+                    tall: 32px;
+                    danger: true;
+                    clicked => { Services.set-start(root.index, 6); }
+                }
+                Rectangle { width: 12px; }
+                if root.item.running || root.item.start != 6: Button {
+                    text: root.item.running
+                        ? (root.armed
+                            ? (root.item.needed-by-count > 0 ? @tr("Stop {} services?", root.item.needed-by-count + 1) : @tr("Sure?"))
+                            : @tr("Stop"))
+                        : @tr("Start");
+                    tall: 32px;
+                    danger: root.item.running;
+                    clicked => {
+                        if !root.item.running {
+                            Services.run(root.index, true);
+                        } else if root.armed {
+                            root.armed = false;
+                            Services.run(root.index, false);
+                        } else {
+                            root.armed = true;
+                        }
+                    }
+                }
+                if !root.item.running && root.item.start == 6: Text {
+                    text: @tr("Disabled, so Windows won't let it start.");
+                    color: Theme.faint;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                if root.item.changed: Button {
+                    text: @tr("Undo");
+                    tall: 32px;
+                    icon: Icons.history;
+                    clicked => { Services.undo(root.index); }
+                }
+            }
+
+            Timer {
+                interval: 4s;
+                running: root.armed;
+                triggered => { root.armed = false; }
+            }
+        }
+    }
+
+    touch := TouchArea {
+        height: 56px;
+        mouse-cursor: pointer;
+        clicked => {
+            Services.open-row = root.open ? -1 : root.index;
+            root.armed = false;
+            Services.toggled();
+        }
+    }
+}
+
+export component ServicesPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    // Read again on every visit, so the state and the memory are current.
+    init => { Services.refresh(); }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: @tr("Services");
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 28px;
+                font-weight: 700;
+            }
+            Text {
+                text: Services.tab == 0
+                    ? @tr("Everything that runs without a window. Vantix measures what each one costs right now and says what stops working without it.")
+                    : @tr("Drivers, listed only. Turning one off can stop the PC from starting, so Vantix never changes them.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Segmented {
+                width: 230px;
+                options: [@tr("Services"), @tr("Drivers")];
+                selected <=> Services.tab;
+                changed(i) => { Services.open-row = -1; Services.refresh(); }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        Segmented {
+            width: 490px;
+            options: [@tr("All"), @tr("Windows"), @tr("Other people's"), @tr("Running"), @tr("With Windows")];
+            selected <=> Services.filter;
+            changed(i) => {
+                Services.open-row = -1;
+                Services.refilter();
+            }
+        }
+        LineEdit {
+            horizontal-stretch: 1;
+            min-width: 180px;
+            placeholder-text: @tr("Search by name");
+            text <=> Services.search;
+            edited => {
+                Services.open-row = -1;
+                Services.refilter();
+            }
+        }
+        Segmented {
+            width: 176px;
+            options: [@tr("By name"), @tr("By memory")];
+            selected <=> Services.sort;
+            changed(i) => {
+                Services.open-row = -1;
+                Services.refilter();
+            }
+        }
+    }
+
+    Card {
+        vertical-stretch: 1;
+        pad: 14px;
+
+        Text {
+            x: 6px;
+            text: !Services.loaded ? @tr("Reading the services...")
+                : @tr("{} of {} shown, {} running now", Services.rows.length, Services.total, Services.running);
+            color: Theme.text;
+            font-weight: 600;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for row[i] in Services.rows: ServiceLine {
+                item: row;
+                index: i;
+            }
+        }
+    }
+}
