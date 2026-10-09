@@ -48,6 +48,16 @@ export struct DnsRow {
     vantix: bool,
 }
 
+export struct DiagRow {
+    /// 0 queued, 1 running, 2 ok, 3 failed, 4 skipped.
+    state: int,
+    name: string,
+    /// Empty until the layer had something to say.
+    detail: string,
+    /// Catalog index of the repair, -1 when the layer has none.
+    fix: int,
+}
+
 export struct UsageRow {
     name: string,
     /// The exe name, as upload limits match it.
@@ -108,6 +118,20 @@ export global Net {
     in property <bool> upload-known;
     callback limit-upload(string);
     callback remove-limit(string);
+
+    /// Layers of the connection test: what each one came back as, live while it walks.
+    in property <[DiagRow]> diagnose;
+    /// 0 never run, 1 running, 2 all green, 3 one layer failed.
+    in property <int> diag-state;
+    in property <string> diag-note;
+    callback run-diagnose();
+    /// Catalog index of the repair for a failed layer.
+    callback fix-diag(int);
+    /// Shows the DNS tab, for DNS failures.
+    callback go-dns();
+    /// Layer names by index, translated here where @tr works.
+    pure callback diag-name(int) -> string;
+    diag-name(i) => ["Adapter link", "IP address", "Router", "DNS", "Reach", "HTTPS", "Internet icon", "Proxy", "hosts file", "VPN leftovers", "IPv6"][i];
 }
 
 component Heading inherits Text {
@@ -654,6 +678,136 @@ component UsageTab inherits Card {
     }
 }
 
+/// One layer of the connection test: state dot, name, what answered.
+component DiagLine inherits Rectangle {
+    in property <DiagRow> item;
+    in property <int> layer;
+
+    height: root.item.state == 3 && root.item.detail != "" ? content.preferred-height : 32px;
+
+    content := HorizontalLayout {
+        spacing: 8px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+
+        Rectangle {
+            width: 20px;
+            height: 20px;
+            y: 2px;
+            border-radius: 10px;
+            background: root.item.state == 3 ? Theme.bad.with-alpha(0.18)
+                : root.item.state == 2 ? Theme.accent.with-alpha(0.18)
+                : root.item.state == 1 ? Theme.info.with-alpha(0.18)
+                : root.item.state == 4 ? Theme.background : transparent;
+            border-width: root.item.state == 0 ? 1px : 0px;
+            border-color: Theme.faint;
+            if root.item.state == 2: Icon {
+                data: Icons.check;
+                size: 12px;
+                tint: Theme.accent;
+            }
+            if root.item.state == 3: Icon {
+                data: Icons.x;
+                size: 12px;
+                tint: Theme.bad;
+            }
+            if root.item.state == 1: Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.info;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.item.name;
+                color: root.item.state == 3 ? Theme.bad : root.item.state == 4 ? Theme.faint : Theme.text;
+                font-weight: root.item.state == 3 ? 600 : 400;
+                overflow: elide;
+                width: 100%;
+            }
+            if root.item.state == 3 && root.item.detail != "": Text {
+                text: root.item.detail;
+                color: Theme.bad;
+                font-size: 12px;
+                wrap: word-wrap;
+                width: 100%;
+            }
+        }
+        if root.item.state != 3 || root.item.detail == "": Text {
+            text: root.item.detail;
+            color: root.item.state == 3 ? Theme.bad : Theme.muted;
+            font-size: 12px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+            width: 224px;
+        }
+        if root.item.state == 3 && root.item.fix >= 0: Button {
+            text: @tr("Fix");
+            tall: 30px;
+            primary: true;
+            enabled: !Tweaks.busy;
+            clicked => { Net.fix-diag(root.item.fix); }
+        }
+        if root.item.state == 3 && root.layer == 3: Button {
+            text: @tr("DNS tab");
+            tall: 30px;
+            enabled: !Tweaks.busy;
+            clicked => { Net.go-dns(); }
+        }
+    }
+}
+
+/// The repair card: one button walks the connection from the adapter up, proxy and
+/// hosts checks always run, and the repair for each failed layer sits next to it.
+component RepairTab inherits Card {
+    pad: 14px;
+
+    HorizontalLayout {
+        spacing: 14px;
+        padding-left: 6px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: Net.diag-state == 3 ? @tr("Found where the connection breaks.")
+                    : Net.diag-state == 2 ? @tr("Every layer answers as it should.")
+                    : @tr("Walks your connection from the adapter up to the internet icon. Proxy, hosts, VPN and IPv6 always run, and the repair for each failed layer shows next to it.");
+                color: Net.diag-state == 2 ? Theme.accent : Net.diag-state == 3 ? Theme.bad : Theme.text;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+            if Net.diag-note != "": Text {
+                text: Net.diag-note;
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: Net.diag-state == 1 ? @tr("Diagnosing...") : @tr("Diagnose");
+                icon: Icons.search;
+                primary: Net.diag-state != 1;
+                enabled: Net.diag-state != 1;
+                clicked => { Net.run-diagnose(); }
+            }
+        }
+    }
+
+    if Net.diagnose.length > 0: VerticalLayout {
+        spacing: 2px;
+        padding-left: 6px;
+        for row[i] in Net.diagnose: DiagLine { item: row; layer: i; }
+    }
+}
+
 export component InternetPage inherits VerticalLayout {
     padding: 32px;
     padding-top: 26px;
@@ -704,8 +858,19 @@ export component InternetPage inherits VerticalLayout {
             }
         }
     }
-    if Net.tab == 5: TweakList {
-        vertical-stretch: 1;
-        rows: Tweaks.internet;
+    if Net.tab == 5: VerticalLayout {
+        RepairTab { }
+
+        TweakList {
+            vertical-stretch: 1;
+            rows: Tweaks.internet;
+            if Tweaks.internet.length == 0: Card {
+                Text {
+                    text: @tr("Every repair Vantix offers on this connection already ran, or there's nothing to fix.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+            }
+        }
     }
 }

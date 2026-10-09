@@ -84,6 +84,9 @@ struct State {
     bloat: Option<Result<net::Bloat, net::BloatError>>,
     dns_running: bool,
     dns: Vec<net::Resolver>,
+    /// The layered diagnosis runs on its own thread and only writes its state into the
+    /// net module's statics, so the tick can read and show what's happening.
+    diag_running: bool,
     /// Traffic totals at the last tick, to turn them into rates.
     traffic: Option<(Instant, HashMap<String, [u64; 2]>)>,
     ticks: u32,
@@ -196,6 +199,7 @@ fn main() -> Result<(), slint::PlatformError> {
             bloat: None,
             dns_running: false,
             dns: Vec::new(),
+            diag_running: false,
             traffic: None,
             ticks: 0,
             tray_missing: None,
@@ -572,6 +576,15 @@ impl App {
         }));
         internet.on_run_bloat(bind(self, |app| app.run_bloat()));
         internet.on_run_dns(bind(self, |app| app.run_dns()));
+        internet.on_run_diagnose(bind(self, |app| app.run_diagnose()));
+        internet.on_fix_diag(bind_with(self, |app, tweak: i32| {
+            if (tweak as usize) < CATALOG.len() {
+                app.ask(Ask::Apply(tweak as usize));
+            }
+        }));
+        internet.on_go_dns(bind(self, |app| {
+            app.with_ui(|ui| ui.global::<Net>().set_tab(2));
+        }));
         internet.on_use_dns(bind_with(self, |app, row: i32| {
             let provider = app.state.borrow().dns.get(row as usize).and_then(|r| r.provider);
             if let (Some(provider), Some(tweak)) = (provider, dns_tweak()) {
@@ -607,7 +620,9 @@ impl App {
 
         let disk = ui.global::<Space>();
         disk.on_scan(bind(self, |app| app.scan_space()));
-        disk.on_drive_changed(bind(self, |app| app.with_ui(|ui| show_space(ui, &mut app.state.borrow_mut()))));
+        disk.on_drive_changed(bind(self, |app| {
+            app.with_ui(|ui| show_space(ui, &mut app.state.borrow_mut()))
+        }));
         disk.on_enter(bind_with(self, |app, i: i32| {
             let Some(&record) = app.state.borrow().space_rows.get(i as usize) else { return };
             app.state.borrow_mut().space_dir = record;
@@ -635,7 +650,8 @@ impl App {
         {
             let mut state = self.state.borrow_mut();
             let volumes = space::volumes();
-            let labels: Vec<slint::SharedString> = volumes.iter().map(|letter| format!("{letter}:").into()).collect();
+            let labels: Vec<slint::SharedString> =
+                volumes.iter().map(|letter| format!("{letter}:").into()).collect();
             state.space_drives = volumes;
             disk.set_drives(ModelRc::new(VecModel::from(labels)));
             let system = std::env::var("SystemDrive").ok().and_then(|d| d.chars().next());
@@ -738,6 +754,7 @@ impl App {
 
         self.show_bloat(&ui);
         self.show_dns(&ui);
+        self.show_diagnose(&ui);
 
         let terms = ui.global::<Terms>();
         terms.on_accepted(bind(self, |app| app.accept_terms()));
@@ -940,8 +957,11 @@ impl App {
         self.run_job(
             move || {
                 let scan = space::scan(letter, &progress)?;
-                let largest =
-                    scan.largest_files(LARGEST_FILES).iter().map(|e| (e.record, scan.path(e.record))).collect();
+                let largest = scan
+                    .largest_files(LARGEST_FILES)
+                    .iter()
+                    .map(|e| (e.record, scan.path(e.record)))
+                    .collect();
                 Ok::<_, std::io::Error>((scan, largest))
             },
             |app, result| {
@@ -1439,8 +1459,7 @@ impl App {
                     let mut dirty = false;
                     if current {
                         for change in &mut state.changes {
-                            if change.plan.is_none()
-                                && CATALOG.iter().any(|t| t.id == change.id && t.on_plan)
+                            if change.plan.is_none() && CATALOG.iter().any(|t| t.id == change.id && t.on_plan)
                             {
                                 change.plan = active.clone();
                                 dirty = true;
@@ -1453,12 +1472,14 @@ impl App {
                     let stale: Vec<(String, Option<String>)> = state
                         .changes
                         .iter()
-                        .filter(|change| match (CATALOG.iter().position(|t| t.id == change.id), &change.plan) {
-                            (None, _) => true,
-                            (Some(_), Some(plan)) if gone.contains(plan) => true,
-                            (Some(_), Some(plan)) if Some(plan) != active.as_ref() => false,
-                            // A reset is stale once the tweak is back on, a change once it's off.
-                            (Some(i), _) => state.tweaks[i].on == Some(change.reset),
+                        .filter(|change| {
+                            match (CATALOG.iter().position(|t| t.id == change.id), &change.plan) {
+                                (None, _) => true,
+                                (Some(_), Some(plan)) if gone.contains(plan) => true,
+                                (Some(_), Some(plan)) if Some(plan) != active.as_ref() => false,
+                                // A reset is stale once the tweak is back on, a change once it's off.
+                                (Some(i), _) => state.tweaks[i].on == Some(change.reset),
+                            }
                         })
                         .map(|change| (change.id.clone(), change.plan.clone()))
                         .collect();
@@ -1628,7 +1649,9 @@ impl App {
                             state.journal_version += 1;
                             if undo {
                                 state.changes.retain(|change| change.id != id);
-                            } else if let Some(change) = state.changes.iter_mut().find(|change| change.id == id) {
+                            } else if let Some(change) =
+                                state.changes.iter_mut().find(|change| change.id == id)
+                            {
                                 // A second change keeps the first record: what it was
                                 // before Vantix is what Undo has to put back.
                                 change.time = Local::now();
@@ -1913,7 +1936,9 @@ impl App {
             use_point && self.with_ui_value(|ui| ui.global::<Job>().get_with_point()).unwrap_or(false);
         let title = match ask {
             Ask::Apply(i) | Ask::Reset(i) => self.tweak_title(i),
-            Ask::Service => self.with_ui_value(|ui| ui.global::<Job>().get_subject().to_string()).unwrap_or_default(),
+            Ask::Service => {
+                self.with_ui_value(|ui| ui.global::<Job>().get_subject().to_string()).unwrap_or_default()
+            }
             _ => String::new(),
         };
         if !with_point || title.is_empty() {
@@ -2070,7 +2095,8 @@ impl App {
                     state.journal_version += 1;
                     for (name, previous) in &undone {
                         state.changes.retain(|change| change.id != format!("service:{name}"));
-                        if let Some(service) = state.services.iter_mut().find(|service| service.name == *name) {
+                        if let Some(service) = state.services.iter_mut().find(|service| service.name == *name)
+                        {
                             service.start = *previous;
                         }
                     }
@@ -2173,7 +2199,10 @@ impl App {
                     let mut state = app.state.borrow_mut();
                     // End may have been pressed on another row meanwhile, and that row
                     // owns the line now.
-                    let mine = state.ended.as_ref().is_some_and(|(row, pending, _)| *row == name && pending.is_none());
+                    let mine = state
+                        .ended
+                        .as_ref()
+                        .is_some_and(|(row, pending, _)| *row == name && pending.is_none());
                     if mine {
                         state.ended = outcome.map(|outcome| (name.clone(), Some(outcome), Instant::now()));
                     }
@@ -2186,7 +2215,8 @@ impl App {
     /// The live ping runs only while its tab is on screen and the traffic count only while
     /// its own is, so neither costs anything the rest of the time.
     fn tick_internet(&self) {
-        let tab = self.with_ui_value(|ui| (ui.get_page() == INTERNET_PAGE).then(|| ui.global::<Net>().get_tab()));
+        let tab =
+            self.with_ui_value(|ui| (ui.get_page() == INTERNET_PAGE).then(|| ui.global::<Net>().get_tab()));
         let tab = tab.flatten();
         if tab == Some(0) {
             net::watch(&self.state.borrow().settings.ping_hosts);
@@ -2213,6 +2243,10 @@ impl App {
             if self.state.borrow().bloat_running {
                 show_bloat_progress(ui);
             }
+            // The diagnosis walks one layer at a time; the tick shows it happening.
+            if tab == 5 && (self.state.borrow().diag_running || net::diag_running()) {
+                self.show_diagnose(ui);
+            }
         });
     }
 
@@ -2222,7 +2256,11 @@ impl App {
         };
         let mut state = self.state.borrow_mut();
         let hosts = &mut state.settings.ping_hosts;
-        if host.is_empty() || host.len() > 253 || host.contains(char::is_whitespace) || hosts.len() >= MAX_HOSTS {
+        if host.is_empty()
+            || host.len() > 253
+            || host.contains(char::is_whitespace)
+            || hosts.len() >= MAX_HOSTS
+        {
             return;
         }
         if !hosts.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
@@ -2342,6 +2380,81 @@ impl App {
                 data: format_bytes(bloat.data).into(),
             });
         }
+    }
+
+    /// One run of the layered diagnosis. The state lives in the net module, read by the
+    /// tick while it walks, so the window closing and opening again keeps the result.
+    fn run_diagnose(self: &Rc<Self>) {
+        if std::mem::replace(&mut self.state.borrow_mut().diag_running, true) {
+            return;
+        }
+        self.with_ui(|ui| self.show_diagnose(ui));
+        self.run_job(net::diagnose, |app, _| {
+            app.state.borrow_mut().diag_running = false;
+            app.with_ui(|ui| app.show_diagnose(ui));
+        });
+    }
+
+    fn show_diagnose(&self, ui: &AppWindow) {
+        let statuses = net::diag_statuses();
+        let details = net::diag_details();
+        let run = self.state.borrow().diag_running;
+        let internet = ui.global::<Net>();
+        let name = |i: usize| format!("{}", ui.global::<Net>().invoke_diag_name(i as i32));
+        let state = if run || net::diag_running() {
+            1
+        } else if statuses.iter().any(|(_, s)| *s == net::Status::Failed) {
+            3
+        } else if statuses.iter().any(|(_, s)| *s != net::Status::Queued) {
+            2
+        } else {
+            0
+        };
+        let failed = statuses.iter().position(|(_, s)| *s == net::Status::Failed);
+        internet.set_diag_state(state);
+        let proxy_set = statuses.iter().enumerate().any(|(i, (layer, s))| {
+            *layer == net::Layer::Proxy && *s == net::Status::Failed
+                || *layer == net::Layer::Https && details.get(i).is_some_and(|d| d.contains("proxy"))
+        });
+        let mut note = match (state, failed) {
+            (3, Some(i)) => format!("{}: {}", name(i), details.get(i).map(String::as_str).unwrap_or("")),
+            _ => String::new(),
+        };
+        if proxy_set && !note.contains("proxy") {
+            if !note.is_empty() {
+                note.push(' ');
+            }
+            note.push_str("A proxy is set, the likely cause.");
+        }
+        internet.set_diag_note(note.into());
+        let rows: Vec<DiagRow> = statuses
+            .iter()
+            .enumerate()
+            .map(|(i, (layer, s))| {
+                let detail = details.get(i).cloned().unwrap_or_default();
+                let fix = if *s == net::Status::Failed {
+                    net::repair_for_layer(*layer, &detail)
+                        .and_then(|id| CATALOG.iter().position(|t| t.id == id))
+                        .map(|idx| idx as i32)
+                        .unwrap_or(-1)
+                } else {
+                    -1
+                };
+                DiagRow {
+                    state: match *s {
+                        net::Status::Queued => 0,
+                        net::Status::Running => 1,
+                        net::Status::Ok => 2,
+                        net::Status::Failed => 3,
+                        net::Status::Skipped => 4,
+                    },
+                    name: name(i).into(),
+                    detail: detail.into(),
+                    fix,
+                }
+            })
+            .collect();
+        internet.set_diagnose(ModelRc::new(VecModel::from(rows)));
     }
 
     fn run_dns(self: &Rc<Self>) {
@@ -2547,7 +2660,11 @@ fn format_mbps(mbps: f64) -> String {
 }
 
 fn format_rate(bytes_per_second: f64) -> String {
-    if bytes_per_second < 1.0 { String::new() } else { format!("{}/s", format_traffic(bytes_per_second as u64)) }
+    if bytes_per_second < 1.0 {
+        String::new()
+    } else {
+        format!("{}/s", format_traffic(bytes_per_second as u64))
+    }
 }
 
 /// Like format_bytes, but down to KB: most programs move little.
@@ -2975,8 +3092,10 @@ fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, state: &mu
             .groups
             .iter()
             .map(|core| {
-                let core: Vec<f32> =
-                    core.iter().map(|&thread| loads.and_then(|l| l.get(thread)).copied().unwrap_or(0.0)).collect();
+                let core: Vec<f32> = core
+                    .iter()
+                    .map(|&thread| loads.and_then(|l| l.get(thread)).copied().unwrap_or(0.0))
+                    .collect();
                 ModelRc::new(VecModel::from(core))
             })
             .collect();
@@ -3020,7 +3139,8 @@ fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, state: &mu
     {
         for (i, gpu) in s.gpus.iter().enumerate() {
             let Some(mut card) = cards.row_data(i) else { continue };
-            card.memory = format!("{} / {}", format_bytes(gpu.memory_used), format_bytes(gpu.memory_total)).into();
+            card.memory =
+                format!("{} / {}", format_bytes(gpu.memory_used), format_bytes(gpu.memory_total)).into();
             card.memory_fraction = if gpu.memory_total == 0 {
                 0.0
             } else {
@@ -3113,7 +3233,13 @@ fn format_ghz(mhz: f64) -> String {
 }
 
 fn format_percent(value: f32) -> String {
-    if value < 0.05 { "0%".into() } else if value < 10.0 { format!("{value:.1}%") } else { format!("{value:.0}%") }
+    if value < 0.05 {
+        "0%".into()
+    } else if value < 10.0 {
+        format!("{value:.1}%")
+    } else {
+        format!("{value:.0}%")
+    }
 }
 
 /// Bytes per second, never empty.
@@ -3179,10 +3305,16 @@ fn fit_to_screen(window: &slint::Window) {
     let scale = f64::from(window.scale_factor());
     window.with_winit_window(|winit| {
         let (inner, outer) = (winit.inner_size(), winit.outer_size());
-        let frame = (outer.width.saturating_sub(inner.width) as i32, outer.height.saturating_sub(inner.height) as i32);
+        let frame = (
+            outer.width.saturating_sub(inner.width) as i32,
+            outer.height.saturating_sub(inner.height) as i32,
+        );
         let fits = |space: i32, frame: i32| f64::from((space - frame).max(1)) / scale;
         let (max_width, max_height) = (fits(right - left, frame.0), fits(bottom - top, frame.1));
-        winit.set_min_inner_size(Some(LogicalSize::new(MIN_SIZE.0.min(max_width), MIN_SIZE.1.min(max_height))));
+        winit.set_min_inner_size(Some(LogicalSize::new(
+            MIN_SIZE.0.min(max_width),
+            MIN_SIZE.1.min(max_height),
+        )));
 
         let (width, height) = (f64::from(inner.width) / scale, f64::from(inner.height) / scale);
         if width > max_width || height > max_height {

@@ -919,6 +919,24 @@ msgstr "Renovar o endereço IP"
 msgid "Reset the network stack"
 msgstr "Redefinir a pilha de rede"
 
+msgid "Clear a set proxy"
+msgstr "Limpar um proxy definido"
+
+msgid "Clear the ARP cache"
+msgstr "Limpar o cache ARP"
+
+msgid "Sync the clock"
+msgstr "Sincronizar o relógio"
+
+msgid "Reconnect the adapter"
+msgstr "Reconectar o adaptador"
+
+msgid "Clean the hosts file"
+msgstr "Limpar o arquivo hosts"
+
+msgid "Turn off IPv6 on the adapter"
+msgstr "Desligar o IPv6 no adaptador"
+
 msgid "Windows forgets every name it looked up. Fixes a site that moved to a new address and still won't load on this PC."
 msgstr "O Windows esquece todos os nomes que já consultou. Resolve um site que mudou de endereço e continua sem abrir neste PC."
 
@@ -1662,3 +1680,90 @@ msgstr "Desativado, então o Windows não deixa iniciar."
 
 msgid "It is running again already: Windows starts this one back up by itself. Changing how it starts is what lasts."
 msgstr "Já está rodando de novo: o Windows reinicia este sozinho. Mudar como ele inicia é o que dura."
+
+msgid "A proxy set by a VPN or malware that stayed on sends every request to an address that no longer answers. Clears the Windows and the machine-wide proxy."
+msgstr "Um proxy que um VPN ou malware deixou ligado manda todo pedido a um endereço que não responde mais. Limpa o proxy do Windows e o de toda a máquina."
+
+msgid "Forgets the remembered address of the router and neighbors, for when the router was replaced or rebooted and the first packets go nowhere."
+msgstr "Esquece o endereço guardado do roteador e vizinhos, para quando o roteador trocou ou reiniciou e os primeiros pacotes não chegam a lugar nenhum."
+
+msgid "The PC asks the Windows time service to set the clock straight away. A clock minutes off breaks every HTTPS site with a certificate error."
+msgstr "O PC pede ao serviço de tempo do Windows para acertar o relógio na hora. Um relógio minutos errado quebra todo site HTTPS com erro de certificado."
+
+msgid "Turns the connection off and on again, for a Wi-Fi link stuck on a bad decision or half a handshake that never finished."
+msgstr "Desliga e liga de novo a conexão, para um link Wi-Fi preso numa escolha ruim ou meio handshake que nunca terminou."
+
+msgid "Removes hosts lines that point Windows, Google, Apple, Cloudflare or Steam at an address set by hand, and keeps a copy beside the file to undo."
+msgstr "Remove linhas do hosts que apontam Windows, Google, Apple, Cloudflare ou Steam a um endereço escrito à mão, e guarda uma cópia ao lado do arquivo para desfazer."
+
+msgid "Windows prefers the newer internet protocol, and when its routing is half working every site waits for the IPv6 attempt to time out first. Only for the diagnosis that says IPv6 is the broken layer."
+msgstr "O Windows prefere o protocolo mais novo, e quando o roteamento dele funciona pela metade todo site espera a tentativa IPv6 dar timeout primeiro. Só aparece quando o diagnóstico diz que o IPv6 é a camada partida."
+
+msgid "If a program needs its proxy on purpose, it stops reaching the internet until it's set again."
+msgstr "Se um programa depende do proxy de propósito, ele para de alcançar a internet até o proxy ser definido de novo."
+
+msgid "The adapter reconnects, so the connection drops for a few seconds."
+msgstr "O adaptador reconecta, então a conexão cai por alguns segundos."
+
+msgid "Sites blocked on purpose in the hosts file load again. Undo puts every line back."
+msgstr "Sites bloqueados de propósito no arquivo hosts voltam a carregar. Desfazer repõe todas as linhas."
+
+msgid "Addresses that only exist on IPv6 stop answering. Undo turns the protocol back on."
+msgstr "Endereços que existem só no IPv6 param de responder. Desfazer liga o protocolo de volta."
+
+msgid "Every repair Vantix offers on this connection already ran, or there's nothing to fix."
+msgstr "Todo reparo que o Vantix oferece nesta conexão já rodou, ou não há nada para arrumar."
+
+msgid "Walks your connection from the adapter up to the internet icon. Proxy, hosts, VPN and IPv6 always run, and the repair for each failed layer shows next to it."
+msgstr "Percorre sua conexão do adaptador até o ícone de internet. Proxy, hosts, VPN e IPv6 sempre rodam, e o reparo de cada camada que falha aparece ao lado."
+
+msgid "Diagnose"
+msgstr "Diagnosticar"
+
+msgid "Diagnosing..."
+msgstr "Diagnosticando..."
+
+msgid "Found where the connection breaks."
+msgstr "Achei onde a conexão quebra."
+
+msgid "Every layer answers as it should."
+msgstr "Todas as camadas respondem como devem."
+
+msgid "Adapter link"
+msgstr "Ligação do adaptador"
+
+msgid "IP address"
+msgstr "Endereço IP"
+
+msgid "Router"
+msgstr "Roteador"
+
+msgid "DNS"
+msgstr "DNS"
+
+msgid "Reach"
+msgstr "Alcance"
+
+msgid "HTTPS"
+msgstr "HTTPS"
+
+msgid "Internet icon"
+msgstr "Ícone de internet"
+
+msgid "Proxy"
+msgstr "Proxy"
+
+msgid "hosts file"
+msgstr "arquivo hosts"
+
+msgid "VPN leftovers"
+msgstr "Sobras de VPN"
+
+msgid "IPv6"
+msgstr "IPv6"
+
+msgid "Fix"
+msgstr "Corrigir"
+
+msgid "DNS tab"
+msgstr "Aba DNS"
