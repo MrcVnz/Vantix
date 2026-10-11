@@ -1714,8 +1714,8 @@ msgstr "Endereços que existem só no IPv6 param de responder. Desfazer liga o p
 msgid "Every repair Vantix offers on this connection already ran, or there's nothing to fix."
 msgstr "Todo reparo que o Vantix oferece nesta conexão já rodou, ou não há nada para arrumar."
 
-msgid "Walks your connection from the adapter up to the internet icon. Proxy, hosts, VPN and IPv6 always run, and the repair for each failed layer shows next to it."
-msgstr "Percorre sua conexão do adaptador até o ícone de internet. Proxy, hosts, VPN e IPv6 sempre rodam, e o reparo de cada camada que falha aparece ao lado."
+msgid "Walks your connection from the adapter up to the internet icon, then checks proxy, hosts, VPN and IPv6. The repair for each problem shows next to it."
+msgstr "Percorre sua conexão do adaptador até o ícone de internet e depois confere proxy, hosts, VPN e IPv6. O reparo de cada problema aparece ao lado."
 
 msgid "Diagnose"
 msgstr "Diagnosticar"
@@ -1725,6 +1725,168 @@ msgstr "Diagnosticando..."
 
 msgid "Found where the connection breaks."
 msgstr "Achei onde a conexão quebra."
+
+msgid "The connection works. Some things below are worth a look."
+msgstr "A conexão funciona. Vale a pena olhar algumas coisas abaixo."
+
+msgid "The adapter has no link."
+msgstr "O adaptador está sem link."
+
+msgid "The PC didn't get an address from the router."
+msgstr "O PC não recebeu um endereço do roteador."
+
+msgid "The router doesn't answer."
+msgstr "O roteador não responde."
+
+msgid "DNS doesn't answer, so sites can't be found by name."
+msgstr "O DNS não responde, então os sites não são encontrados pelo nome."
+
+msgid "Nothing past the router answers: the internet itself is down."
+msgstr "Nada depois do roteador responde: a própria internet caiu."
+
+msgid "Secure sites fail to load."
+msgstr "Os sites seguros não carregam."
+
+msgid "A sign-in page is intercepting the connection."
+msgstr "Uma página de login está interceptando a conexão."
+
+msgid "The clock is wrong, and secure sites fail because of it."
+msgstr "O relógio está errado, e os sites seguros falham por causa disso."
+
+msgid "Secure sites fail, and a proxy is the likely cause."
+msgstr "Os sites seguros falham, e um proxy é a causa provável."
+
+msgid "cable"
+msgstr "cabo"
+
+msgid "Wi-Fi"
+msgstr "Wi-Fi"
+
+msgid "no connected adapter"
+msgstr "nenhum adaptador conectado"
+
+msgid "the adapter reports no link: cable out or Wi-Fi off"
+msgstr "o adaptador diz que está sem link: cabo solto ou Wi-Fi desligado"
+
+msgid "no IPv4 address on the adapter"
+msgstr "nenhum endereço IPv4 no adaptador"
+
+msgid "169.254 address: the router's DHCP never answered"
+msgstr "endereço 169.254: o DHCP do roteador nunca respondeu"
+
+msgid "best of 3: {}"
+msgstr "melhor de 3: {}"
+
+msgid "answers ARP, blocks ping"
+msgstr "responde ARP, bloqueia ping"
+
+msgid "no answer from the router at {}"
+msgstr "o roteador em {} não responde"
+
+msgid "no router on this connection"
+msgstr "nenhum roteador nesta conexão"
+
+msgid "{} answered in {}"
+msgstr "{} respondeu em {}"
+
+msgid "no DNS server set"
+msgstr "nenhum servidor DNS definido"
+
+msgid "your DNS servers don't answer, 1.1.1.1 does in {}"
+msgstr "seus servidores DNS não respondem, o 1.1.1.1 responde em {}"
+
+msgid "not checked: not even 1.1.1.1 answers, so the next layer tells"
+msgstr "não verificado: nem o 1.1.1.1 responde, então a próxima camada diz"
+
+msgid "ping to 1.1.1.1: {}"
+msgstr "ping para 1.1.1.1: {}"
+
+msgid "TCP 443 to 1.1.1.1: {}"
+msgstr "TCP 443 para 1.1.1.1: {}"
+
+msgid "1.1.1.1 doesn't answer, not even on TCP 443"
+msgstr "o 1.1.1.1 não responde, nem pela TCP 443"
+
+msgid "answered"
+msgstr "respondeu"
+
+msgid "answered, clock within {} s"
+msgstr "respondeu, relógio certo por {} s"
+
+msgid "answered, but the clock is {} ahead"
+msgstr "respondeu, mas o relógio está {} adiantado"
+
+msgid "answered, but the clock is {} behind"
+msgstr "respondeu, mas o relógio está {} atrasado"
+
+msgid "fails: a sign-in page answers instead"
+msgstr "falha: uma página de login responde no lugar"
+
+msgid "fails, and the clock is {} ahead: the likely cause"
+msgstr "falha, e o relógio está {} adiantado: a causa provável"
+
+msgid "fails, and the clock is {} behind: the likely cause"
+msgstr "falha, e o relógio está {} atrasado: a causa provável"
+
+msgid "fails, and a proxy is set: the likely cause"
+msgstr "falha, e há um proxy definido: a causa provável"
+
+msgid "the secure connection fails"
+msgstr "a conexão segura falha"
+
+msgid "Windows agrees there is internet"
+msgstr "o Windows concorda que há internet"
+
+msgid "a sign-in page is intercepting the connection"
+msgstr "uma página de login está interceptando a conexão"
+
+msgid "works, but its name points to {}: something rewrites DNS answers"
+msgstr "funciona, mas o nome dele aponta para {}: algo reescreve as respostas DNS"
+
+msgid "not checked: the probe got no answer"
+msgstr "não verificado: o teste não teve resposta"
+
+msgid "no proxy set"
+msgstr "nenhum proxy definido"
+
+msgid "a proxy is set, and programs go through it"
+msgstr "há um proxy definido, e os programas passam por ele"
+
+msgid "auto-detect found a setup script at {}"
+msgstr "a detecção automática achou um script de configuração em {}"
+
+msgid "{} entries, none in the way"
+msgstr "{} entradas, nenhuma atrapalha"
+
+msgid "entries sending everyday sites elsewhere: {} of {}"
+msgstr "entradas que mandam sites comuns para outro lugar: {} de {}"
+
+msgid "no leftover VPN adapters"
+msgstr "nenhum adaptador de VPN sobrando"
+
+msgid "adapters left by a removed VPN: {}"
+msgstr "adaptadores deixados por uma VPN removida: {}"
+
+msgid "reaches 1.1.1.1 over IPv6"
+msgstr "alcança o 1.1.1.1 por IPv6"
+
+msgid "on, but goes nowhere: programs wait before falling back to IPv4"
+msgstr "ligado, mas não leva a lugar nenhum: os programas esperam antes de voltar ao IPv4"
+
+msgid "not checked: no IPv6 on this connection"
+msgstr "não verificado: sem IPv6 nesta conexão"
+
+msgid "not checked: IPv4 is down too, so this can't be told apart"
+msgstr "não verificado: o IPv4 também caiu, então não dá para separar"
+
+msgid "not checked: an earlier layer failed"
+msgstr "não verificado: uma camada anterior falhou"
+
+msgid "not checked: could not test here"
+msgstr "não verificado: não deu para testar aqui"
+
+msgid "These lines come out of the hosts file:"
+msgstr "Estas linhas saem do arquivo hosts:"
 
 msgid "Every layer answers as it should."
 msgstr "Todas as camadas respondem como devem."

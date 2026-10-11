@@ -1,6 +1,6 @@
 import { Theme, Icons, Icon, Card, Button, Chip, Segmented } from "theme.slint";
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
-import { Tweaks, TweakList } from "tweaks.slint";
+import { Tweaks, TweakList, TweakColumn } from "tweaks.slint";
 
 /// One ping target. Times come formatted, empty while there's no answer yet.
 export struct PingRow {
@@ -49,13 +49,15 @@ export struct DnsRow {
 }
 
 export struct DiagRow {
-    /// 0 queued, 1 running, 2 ok, 3 failed, 4 skipped.
+    /// 0 queued, 1 running, 2 ok, 3 failed, 4 skipped, 5 warning.
     state: int,
     name: string,
     /// Empty until the layer had something to say.
     detail: string,
     /// Catalog index of the repair, -1 when the layer has none.
     fix: int,
+    /// DNS failed: the DNS tab can pick servers that answer.
+    go-dns: bool,
 }
 
 export struct UsageRow {
@@ -121,9 +123,10 @@ export global Net {
 
     /// Layers of the connection test: what each one came back as, live while it walks.
     in property <[DiagRow]> diagnose;
-    /// 0 never run, 1 running, 2 all green, 3 one layer failed.
+    /// 0 never run, 1 running, 2 all green, 3 one layer failed, 4 works with warnings.
     in property <int> diag-state;
-    in property <string> diag-note;
+    /// What broke, in one line, see `diag-summary`. 0 when nothing did.
+    in property <int> diag-cause;
     callback run-diagnose();
     /// Catalog index of the repair for a failed layer.
     callback fix-diag(int);
@@ -131,7 +134,71 @@ export global Net {
     callback go-dns();
     /// Layer names by index, translated here where @tr works.
     pure callback diag-name(int) -> string;
-    diag-name(i) => ["Adapter link", "IP address", "Router", "DNS", "Reach", "HTTPS", "Internet icon", "Proxy", "hosts file", "VPN leftovers", "IPv6"][i];
+    diag-name(i) => [@tr("Adapter link"), @tr("IP address"), @tr("Router"), @tr("DNS"), @tr("Reach"), @tr("HTTPS"), @tr("Internet icon"), @tr("Proxy"), @tr("hosts file"), @tr("VPN leftovers"), @tr("IPv6")][i];
+    /// What a layer said, by the code main.rs gives each `net::Detail`, with up to two
+    /// values already formatted.
+    pure callback diag-text(int, string, string) -> string;
+    diag-text(code, a, b) => [
+        "",
+        @tr("cable"),
+        @tr("Wi-Fi"),
+        @tr("no connected adapter"),
+        @tr("the adapter reports no link: cable out or Wi-Fi off"),
+        a,
+        @tr("no IPv4 address on the adapter"),
+        @tr("169.254 address: the router's DHCP never answered"),
+        @tr("best of 3: {}", a),
+        @tr("answers ARP, blocks ping"),
+        @tr("no answer from the router at {}", a),
+        @tr("no router on this connection"),
+        @tr("{} answered in {}", a, b),
+        @tr("no DNS server set"),
+        @tr("your DNS servers don't answer, 1.1.1.1 does in {}", a),
+        @tr("not checked: not even 1.1.1.1 answers, so the next layer tells"),
+        @tr("ping to 1.1.1.1: {}", a),
+        @tr("TCP 443 to 1.1.1.1: {}", a),
+        @tr("1.1.1.1 doesn't answer, not even on TCP 443"),
+        @tr("answered"),
+        @tr("answered, clock within {} s", a),
+        @tr("answered, but the clock is {} ahead", a),
+        @tr("answered, but the clock is {} behind", a),
+        @tr("fails: a sign-in page answers instead"),
+        @tr("fails, and the clock is {} ahead: the likely cause", a),
+        @tr("fails, and the clock is {} behind: the likely cause", a),
+        @tr("fails, and a proxy is set: the likely cause"),
+        @tr("the secure connection fails"),
+        @tr("Windows agrees there is internet"),
+        @tr("a sign-in page is intercepting the connection"),
+        @tr("works, but its name points to {}: something rewrites DNS answers", a),
+        @tr("not checked: the probe got no answer"),
+        @tr("no proxy set"),
+        @tr("a proxy is set, and programs go through it"),
+        @tr("auto-detect found a setup script at {}", a),
+        @tr("{} entries, none in the way", a),
+        @tr("entries sending everyday sites elsewhere: {} of {}", a, b),
+        @tr("no leftover VPN adapters"),
+        @tr("adapters left by a removed VPN: {}", a),
+        @tr("reaches 1.1.1.1 over IPv6"),
+        @tr("on, but goes nowhere: programs wait before falling back to IPv4"),
+        @tr("not checked: no IPv6 on this connection"),
+        @tr("not checked: IPv4 is down too, so this can't be told apart"),
+        @tr("not checked: an earlier layer failed"),
+        @tr("not checked: could not test here"),
+    ][code];
+    /// The one line under the title after a failure, by `diag-cause`.
+    pure callback diag-summary(int) -> string;
+    diag-summary(cause) => [
+        "",
+        @tr("The adapter has no link."),
+        @tr("The PC didn't get an address from the router."),
+        @tr("The router doesn't answer."),
+        @tr("DNS doesn't answer, so sites can't be found by name."),
+        @tr("Nothing past the router answers: the internet itself is down."),
+        @tr("Secure sites fail to load."),
+        @tr("A sign-in page is intercepting the connection."),
+        @tr("The clock is wrong, and secure sites fail because of it."),
+        @tr("Secure sites fail, and a proxy is the likely cause."),
+    ][cause];
 }
 
 component Heading inherits Text {
@@ -678,93 +745,107 @@ component UsageTab inherits Card {
     }
 }
 
-/// One layer of the connection test: state dot, name, what answered.
-component DiagLine inherits Rectangle {
+/// One layer of the connection test: state dot, name, what answered. A failure or a
+/// warning puts its detail on a line of its own, so it wraps instead of being cut.
+component DiagLine inherits VerticalLayout {
     in property <DiagRow> item;
-    in property <int> layer;
+    property <bool> flagged: self.item.state == 3 || self.item.state == 5;
+    property <color> tone: self.item.state == 3 ? Theme.bad : self.item.state == 5 ? Theme.warn : Theme.text;
 
-    height: root.item.state == 3 && root.item.detail != "" ? content.preferred-height : 32px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    spacing: 2px;
 
-    content := HorizontalLayout {
+    HorizontalLayout {
         spacing: 8px;
-        padding-top: 4px;
-        padding-bottom: 4px;
+        min-height: 30px;
 
-        Rectangle {
-            width: 20px;
-            height: 20px;
-            y: 2px;
-            border-radius: 10px;
-            background: root.item.state == 3 ? Theme.bad.with-alpha(0.18)
-                : root.item.state == 2 ? Theme.accent.with-alpha(0.18)
-                : root.item.state == 1 ? Theme.info.with-alpha(0.18)
-                : root.item.state == 4 ? Theme.background : transparent;
-            border-width: root.item.state == 0 ? 1px : 0px;
-            border-color: Theme.faint;
-            if root.item.state == 2: Icon {
-                data: Icons.check;
-                size: 12px;
-                tint: Theme.accent;
-            }
-            if root.item.state == 3: Icon {
-                data: Icons.x;
-                size: 12px;
-                tint: Theme.bad;
-            }
-            if root.item.state == 1: Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: Theme.info;
-            }
-        }
         VerticalLayout {
-            horizontal-stretch: 1;
             alignment: center;
-            spacing: 2px;
-            Text {
-                text: root.item.name;
-                color: root.item.state == 3 ? Theme.bad : root.item.state == 4 ? Theme.faint : Theme.text;
-                font-weight: root.item.state == 3 ? 600 : 400;
-                overflow: elide;
-                width: 100%;
-            }
-            if root.item.state == 3 && root.item.detail != "": Text {
-                text: root.item.detail;
-                color: Theme.bad;
-                font-size: 12px;
-                wrap: word-wrap;
-                width: 100%;
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background: root.item.state == 3 ? Theme.bad.with-alpha(0.18)
+                    : root.item.state == 5 ? Theme.warn.with-alpha(0.18)
+                    : root.item.state == 2 ? Theme.accent.with-alpha(0.18)
+                    : root.item.state == 1 ? Theme.info.with-alpha(0.18) : transparent;
+                border-width: root.item.state == 0 || root.item.state == 4 ? 1px : 0px;
+                border-color: Theme.faint;
+                if root.item.state == 2: Icon {
+                    data: Icons.check;
+                    size: 12px;
+                    tint: Theme.accent;
+                }
+                if root.item.state == 3: Icon {
+                    data: Icons.x;
+                    size: 12px;
+                    tint: Theme.bad;
+                }
+                if root.item.state == 5: Icon {
+                    data: Icons.alert;
+                    size: 12px;
+                    tint: Theme.warn;
+                }
+                if root.item.state == 4: Rectangle {
+                    width: 8px;
+                    height: 1.5px;
+                    background: Theme.faint;
+                }
+                if root.item.state == 1: Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: Theme.info;
+                }
             }
         }
-        if root.item.state != 3 || root.item.detail == "": Text {
+        Text {
+            text: root.item.name;
+            color: root.flagged ? root.tone : root.item.state == 4 ? Theme.muted : Theme.text;
+            font-weight: root.flagged ? 600 : 400;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if !root.flagged: Text {
             text: root.item.detail;
-            color: root.item.state == 3 ? Theme.bad : Theme.muted;
+            color: root.item.state == 4 ? Theme.faint : Theme.muted;
             font-size: 12px;
             horizontal-alignment: right;
             vertical-alignment: center;
             overflow: elide;
-            width: 224px;
+            width: min(420px, root.width * 0.6);
         }
-        if root.item.state == 3 && root.item.fix >= 0: Button {
+        if root.flagged && root.item.fix >= 0: Button {
             text: @tr("Fix");
             tall: 30px;
             primary: true;
             enabled: !Tweaks.busy;
             clicked => { Net.fix-diag(root.item.fix); }
         }
-        if root.item.state == 3 && root.layer == 3: Button {
+        if root.item.go-dns: Button {
             text: @tr("DNS tab");
             tall: 30px;
             enabled: !Tweaks.busy;
             clicked => { Net.go-dns(); }
         }
     }
+    if root.flagged && root.item.detail != "": Text {
+        x: 28px;
+        width: root.width - 28px;
+        text: root.item.detail;
+        color: root.tone;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
 }
 
 /// The repair card: one button walks the connection from the adapter up, proxy and
 /// hosts checks always run, and the repair for each failed layer sits next to it.
 component RepairTab inherits Card {
+    property <string> explain: @tr("Walks your connection from the adapter up to the internet icon, then checks proxy, hosts, VPN and IPv6. The repair for each problem shows next to it.");
+
     pad: 14px;
 
     HorizontalLayout {
@@ -776,15 +857,23 @@ component RepairTab inherits Card {
             spacing: 4px;
             Text {
                 text: Net.diag-state == 3 ? @tr("Found where the connection breaks.")
+                    : Net.diag-state == 4 ? @tr("The connection works. Some things below are worth a look.")
                     : Net.diag-state == 2 ? @tr("Every layer answers as it should.")
-                    : @tr("Walks your connection from the adapter up to the internet icon. Proxy, hosts, VPN and IPv6 always run, and the repair for each failed layer shows next to it.");
-                color: Net.diag-state == 2 ? Theme.accent : Net.diag-state == 3 ? Theme.bad : Theme.text;
+                    : root.explain;
+                color: Net.diag-state == 2 ? Theme.accent : Net.diag-state == 3 ? Theme.bad
+                    : Net.diag-state == 4 ? Theme.warn : Theme.text;
                 font-weight: 600;
                 wrap: word-wrap;
             }
-            if Net.diag-note != "": Text {
-                text: Net.diag-note;
-                color: Theme.muted;
+            if Net.diag-cause > 0: Text {
+                text: Net.diag-summary(Net.diag-cause);
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+            // Once there are results, what the button does stays as a quiet line.
+            if Net.diag-state >= 2: Text {
+                text: root.explain;
+                color: Theme.faint;
                 font-size: 12px;
                 wrap: word-wrap;
             }
@@ -802,9 +891,8 @@ component RepairTab inherits Card {
     }
 
     if Net.diagnose.length > 0: VerticalLayout {
-        spacing: 2px;
         padding-left: 6px;
-        for row[i] in Net.diagnose: DiagLine { item: row; layer: i; }
+        for row in Net.diagnose: DiagLine { item: row; }
     }
 }
 
@@ -858,11 +946,12 @@ export component InternetPage inherits VerticalLayout {
             }
         }
     }
+    // The repairs sit straight in the page, so the whole page scrolls as one instead of
+    // squeezing them into a scroll box of their own under the diagnosis.
     if Net.tab == 5: VerticalLayout {
+        spacing: 12px;
         RepairTab { }
-
-        TweakList {
-            vertical-stretch: 1;
+        TweakColumn {
             rows: Tweaks.internet;
             if Tweaks.internet.length == 0: Card {
                 Text {
@@ -872,5 +961,6 @@ export component InternetPage inherits VerticalLayout {
                 }
             }
         }
+        Rectangle { vertical-stretch: 1; }
     }
 }

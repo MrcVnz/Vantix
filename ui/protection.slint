@@ -182,6 +182,22 @@ export component JobSheet inherits Rectangle {
                         wrap: word-wrap;
                         width: root.text-width;
                     }
+                    if !Job.service && Job.note != "": VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: @tr("These lines come out of the hosts file:");
+                            color: Theme.text;
+                            wrap: word-wrap;
+                            width: root.text-width;
+                        }
+                        Text {
+                            text: Job.note;
+                            color: Theme.muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            width: root.text-width;
+                        }
+                    }
                     if Job.service && Job.start >= 0: Text {
                         text: @tr("New start type: {}", Services.start-names[Job.start]);
                         color: Theme.text;

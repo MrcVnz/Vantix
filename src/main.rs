@@ -87,6 +87,8 @@ struct State {
     /// The layered diagnosis runs on its own thread and only writes its state into the
     /// net module's statics, so the tick can read and show what's happening.
     diag_running: bool,
+    /// A repair started from the diagnosis, which runs again once the repair is done.
+    diag_again: bool,
     /// Traffic totals at the last tick, to turn them into rates.
     traffic: Option<(Instant, HashMap<String, [u64; 2]>)>,
     ticks: u32,
@@ -200,6 +202,7 @@ fn main() -> Result<(), slint::PlatformError> {
             dns_running: false,
             dns: Vec::new(),
             diag_running: false,
+            diag_again: false,
             traffic: None,
             ticks: 0,
             tray_missing: None,
@@ -580,6 +583,7 @@ impl App {
         internet.on_fix_diag(bind_with(self, |app, tweak: i32| {
             if (tweak as usize) < CATALOG.len() {
                 app.ask(Ask::Apply(tweak as usize));
+                app.state.borrow_mut().diag_again = true;
             }
         }));
         internet.on_go_dns(bind(self, |app| {
@@ -1882,6 +1886,7 @@ impl App {
 
     /// Puts up the confirmation sheet with what the change gives, costs and needs.
     fn ask(self: &Rc<Self>, ask: Ask) {
+        self.state.borrow_mut().diag_again = false;
         if matches!(ask, Ask::Service | Ask::ServiceUndo(_)) {
             return self.ask_service(ask);
         }
@@ -1925,6 +1930,15 @@ impl App {
             job.set_with_point(protection && !baseline);
             job.set_baseline(protection && baseline);
             job.set_protection_off(!undo && toggle && !protection);
+            // The hosts repair says which lines go before it takes them out.
+            if !undo && index.is_some_and(|i| CATALOG[i].id == net::HOSTS_TWEAK) {
+                let lines = net::hosts_blocking_lines();
+                let mut note = lines.iter().take(8).cloned().collect::<Vec<_>>().join("\n");
+                if lines.len() > 8 {
+                    note.push_str(&format!("\n(+{})", lines.len() - 8));
+                }
+                job.set_note(note.into());
+            }
         });
     }
 
@@ -2143,9 +2157,14 @@ impl App {
                     }
                     let _ = settings::save_changes(&state.changes);
                 }
+                let again = std::mem::take(&mut app.state.borrow_mut().diag_again);
                 match error {
                     Some(message) => app.set_job(JobState::Failed, &message),
                     None => {
+                        // A fix from the diagnosis shows its effect right away.
+                        if again {
+                            app.run_diagnose();
+                        }
                         app.with_ui(|ui| {
                             let job = ui.global::<Job>();
                             job.set_freed(gained.map(format_bytes).unwrap_or_default().into());
@@ -2392,65 +2411,63 @@ impl App {
         self.run_job(net::diagnose, |app, _| {
             app.state.borrow_mut().diag_running = false;
             app.with_ui(|ui| app.show_diagnose(ui));
+            // The IPv6, hosts and proxy cards depend on what the diagnosis saw.
+            app.refresh_tweaks();
         });
     }
 
     fn show_diagnose(&self, ui: &AppWindow) {
-        let statuses = net::diag_statuses();
-        let details = net::diag_details();
-        let run = self.state.borrow().diag_running;
+        use net::{Detail, Layer, Status};
+        let results = net::diag_results();
+        let run = self.state.borrow().diag_running || net::diag_running();
         let internet = ui.global::<Net>();
-        let name = |i: usize| format!("{}", ui.global::<Net>().invoke_diag_name(i as i32));
-        let state = if run || net::diag_running() {
+        let has = |status: Status| results.iter().any(|(_, s, _)| *s == status);
+        let state = if run {
             1
-        } else if statuses.iter().any(|(_, s)| *s == net::Status::Failed) {
+        } else if has(Status::Failed) {
             3
-        } else if statuses.iter().any(|(_, s)| *s != net::Status::Queued) {
+        } else if has(Status::Warning) {
+            4
+        } else if results.iter().any(|(_, s, _)| *s != Status::Queued) {
             2
         } else {
             0
         };
-        let failed = statuses.iter().position(|(_, s)| *s == net::Status::Failed);
         internet.set_diag_state(state);
-        let proxy_set = statuses.iter().enumerate().any(|(i, (layer, s))| {
-            *layer == net::Layer::Proxy && *s == net::Status::Failed
-                || *layer == net::Layer::Https && details.get(i).is_some_and(|d| d.contains("proxy"))
-        });
-        let mut note = match (state, failed) {
-            (3, Some(i)) => format!("{}: {}", name(i), details.get(i).map(String::as_str).unwrap_or("")),
-            _ => String::new(),
+        // The first failure is the cause, except that a failed HTTPS knows better why.
+        let cause = match results.iter().position(|(_, s, _)| *s == Status::Failed) {
+            Some(i) if !run => match &results[i].2 {
+                Detail::HttpsPortal => 7,
+                Detail::HttpsClock(_) => 8,
+                Detail::HttpsProxy => 9,
+                _ => i as i32 + 1,
+            },
+            _ => 0,
         };
-        if proxy_set && !note.contains("proxy") {
-            if !note.is_empty() {
-                note.push(' ');
-            }
-            note.push_str("A proxy is set, the likely cause.");
-        }
-        internet.set_diag_note(note.into());
-        let rows: Vec<DiagRow> = statuses
+        internet.set_diag_cause(cause);
+        let rows: Vec<DiagRow> = results
             .iter()
             .enumerate()
-            .map(|(i, (layer, s))| {
-                let detail = details.get(i).cloned().unwrap_or_default();
-                let fix = if *s == net::Status::Failed {
-                    net::repair_for_layer(*layer, &detail)
-                        .and_then(|id| CATALOG.iter().position(|t| t.id == id))
-                        .map(|idx| idx as i32)
-                        .unwrap_or(-1)
-                } else {
-                    -1
-                };
+            .map(|(i, (layer, status, detail))| {
+                let flagged = matches!(status, Status::Failed | Status::Warning);
+                let fix = net::repair_for(*layer, detail)
+                    .filter(|_| flagged)
+                    .and_then(|id| CATALOG.iter().position(|t| t.id == id))
+                    .map_or(-1, |index| index as i32);
+                let (code, a, b) = diag_detail(detail);
                 DiagRow {
-                    state: match *s {
-                        net::Status::Queued => 0,
-                        net::Status::Running => 1,
-                        net::Status::Ok => 2,
-                        net::Status::Failed => 3,
-                        net::Status::Skipped => 4,
+                    state: match status {
+                        Status::Queued => 0,
+                        Status::Running => 1,
+                        Status::Ok => 2,
+                        Status::Failed => 3,
+                        Status::Skipped => 4,
+                        Status::Warning => 5,
                     },
-                    name: name(i).into(),
-                    detail: detail.into(),
+                    name: internet.invoke_diag_name(i as i32),
+                    detail: internet.invoke_diag_text(code, a.into(), b.into()),
                     fix,
+                    go_dns: *layer == Layer::Dns && *status == Status::Failed,
                 }
             })
             .collect();
@@ -2664,6 +2681,72 @@ fn format_rate(bytes_per_second: f64) -> String {
         String::new()
     } else {
         format!("{}/s", format_traffic(bytes_per_second as u64))
+    }
+}
+
+/// The code `Net.diag-text` knows a layer's detail by, with its values as text.
+fn diag_detail(detail: &net::Detail) -> (i32, String, String) {
+    use net::Detail::*;
+    let none = String::new;
+    // Positive when the PC is behind.
+    let clock = |secs: &i64, ahead: i32, behind: i32| {
+        (if *secs > 0 { behind } else { ahead }, format_offset(secs.unsigned_abs()), none())
+    };
+    match detail {
+        None => (0, none(), none()),
+        Cable => (1, none(), none()),
+        WiFi => (2, none(), none()),
+        NoAdapter => (3, none(), none()),
+        NoLink => (4, none(), none()),
+        Address(ip) => (5, ip.to_string(), none()),
+        NoIpv4 => (6, none(), none()),
+        Apipa => (7, none(), none()),
+        RouterPing(ms) => (8, format_ms(*ms), none()),
+        RouterArp => (9, none(), none()),
+        RouterSilent(ip) => (10, ip.to_string(), none()),
+        NoRouter => (11, none(), none()),
+        DnsAnswered(ip, ms) => (12, ip.to_string(), format_ms(*ms)),
+        NoDnsServer => (13, none(), none()),
+        DnsOnlyPublic(ms) => (14, format_ms(*ms), none()),
+        DnsUnsure => (15, none(), none()),
+        ReachPing(ms) => (16, format_ms(*ms), none()),
+        ReachTcp(ms) => (17, format_ms(*ms), none()),
+        Unreachable => (18, none(), none()),
+        Answered => (19, none(), none()),
+        ClockWithin(secs) => (20, secs.to_string(), none()),
+        ClockOff(secs) => clock(secs, 21, 22),
+        HttpsPortal => (23, none(), none()),
+        HttpsClock(secs) => clock(secs, 24, 25),
+        HttpsProxy => (26, none(), none()),
+        HttpsFailed => (27, none(), none()),
+        NcsiOk => (28, none(), none()),
+        Portal => (29, none(), none()),
+        NcsiDns(ip) => (30, ip.to_string(), none()),
+        NcsiSilent => (31, none(), none()),
+        NoProxy => (32, none(), none()),
+        ProxySet => (33, none(), none()),
+        Wpad(url) => (34, url.clone(), none()),
+        HostsClean(total) => (35, total.to_string(), none()),
+        HostsBlocking(blocking, total) => (36, blocking.to_string(), total.to_string()),
+        NoVpnLeftovers => (37, none(), none()),
+        VpnLeftovers(names) => (38, names.clone(), none()),
+        Ipv6Ok => (39, none(), none()),
+        Ipv6Broken => (40, none(), none()),
+        NoIpv6 => (41, none(), none()),
+        Ipv6Untested => (42, none(), none()),
+        EarlierFailed => (43, none(), none()),
+        Untestable => (44, none(), none()),
+    }
+}
+
+/// How far off a clock is: minutes, then hours, then days.
+fn format_offset(secs: u64) -> String {
+    if secs < 3600 {
+        format!("{} min", secs / 60)
+    } else if secs < 172_800 {
+        format!("{} h", secs / 3600)
+    } else {
+        format!("{} d", secs / 86_400)
     }
 }
 

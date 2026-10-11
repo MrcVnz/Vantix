@@ -391,6 +391,17 @@ export component TweakList inherits ScrollView {
     }
 }
 
+/// The same cards for a page that already scrolls as a whole.
+export component TweakColumn inherits VerticalLayout {
+    in property <[TweakRow]> rows;
+
+    @children
+    for row in root.rows: VerticalLayout {
+        padding-bottom: 12px;
+        TweakCard { item: row; }
+    }
+}
+
 /// Sits on top of every page while changes wait for a restart.
 export component RebootBanner inherits Rectangle {
     property <bool> confirm;

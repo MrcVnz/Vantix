@@ -11,18 +11,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HGLOBAL};
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, GetAdaptersAddresses,
     GetBestInterface, ICMP_ECHO_REPLY, IP_ADAPTER_ADDRESSES_LH, IcmpCloseHandle, IcmpCreateFile,
-    IcmpSendEcho,
+    IcmpSendEcho, SendARP,
 };
 use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 use windows::Win32::Networking::WinHttp::{
     WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_DATE, WINHTTP_QUERY_FLAG_NUMBER,
-    WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest,
-    WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts,
-    WinHttpWriteData,
+    WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpDetectAutoProxyConfigUrl,
+    WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse,
+    WinHttpSendRequest, WinHttpSetTimeouts, WinHttpWriteData,
 };
 use windows::Win32::Networking::WinInet::{INTERNET_OPTION_REFRESH, INTERNET_OPTION_SETTINGS_CHANGED};
 use windows::Win32::Networking::WinSock::SOCKET_ADDRESS;
@@ -59,6 +59,8 @@ pub struct Connection {
     pub wifi: bool,
     /// Has a global IPv6 address, so IPv6 DNS servers can be reached through it.
     pub ipv6: bool,
+    /// The IPv6 component is bound to the adapter at all.
+    pub ipv6_bound: bool,
 }
 
 /// The adapter Windows sends internet traffic through.
@@ -72,6 +74,7 @@ pub fn connection() -> Option<Connection> {
 
 pub fn adapters() -> Vec<Connection> {
     const DHCP_ENABLED: u32 = 0x4;
+    const IPV6_ENABLED: u32 = 0x100;
     const ETHERNET: u32 = 6;
     const PPP: u32 = 23;
     const WIFI: u32 = 71;
@@ -142,6 +145,7 @@ pub fn adapters() -> Vec<Connection> {
                     description: unsafe { a.Description.to_string() }.unwrap_or_default(),
                     dns,
                     dhcp: unsafe { a.Anonymous2.Flags } & DHCP_ENABLED != 0,
+                    ipv6_bound: unsafe { a.Anonymous2.Flags } & IPV6_ENABLED != 0,
                     physical: matches!(a.IfType, ETHERNET | WIFI | PPP),
                     wifi: a.IfType == WIFI,
                     ipv6,
@@ -1419,11 +1423,17 @@ pub const PROXY_TWEAK: &str = "proxy-reset";
 const PROXY_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 const WINHTTP_CONNECTIONS: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections";
 const WINHTTP_SETTINGS: &str = "WinHttpSettings";
+/// WinINet keeps the user's settings twice: the plain values above and this blob, which
+/// is the one it trusts. Clearing only the values lets it write them back from here.
+const USER_CONNECTIONS: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections";
+const USER_SETTINGS: &str = "DefaultConnectionSettings";
 
-/// Whether the WinHTTP blob enables a proxy. Layout (little endian): version, counter,
-/// flags (bit 0 always set, bit 1 manual proxy, bit 2 setup script, bit 3 auto detect),
-/// then proxy, bypass and setup script as length prefixed ASCII strings. Windows keeps a
-/// blob even for direct access, so a missing value and a flags-only blob both mean none.
+/// Whether a connection settings blob enables a proxy. WinHTTP's and WinINet's share the
+/// layout (little endian): version, counter, flags (bit 0 always set, bit 1 manual proxy,
+/// bit 2 setup script, bit 3 auto detect), then proxy, bypass and setup script as length
+/// prefixed ASCII strings. Windows keeps a blob even for direct access, so a missing
+/// value and a flags-only blob both mean none. Auto detect alone doesn't count: Windows
+/// ships with it on, and it only matters when a script is found (see `wpad_script`).
 fn winhttp_has_proxy(blob: &[u8]) -> bool {
     let words =
         |at: usize| blob.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).unwrap_or(0);
@@ -1456,7 +1466,32 @@ pub fn proxy_set() -> windows::core::Result<bool> {
             .is_some_and(|s| !s.is_empty());
     let machine = reg::get_binary(reg::HKEY_LOCAL_MACHINE, WINHTTP_CONNECTIONS, WINHTTP_SETTINGS)?
         .is_some_and(|blob| winhttp_has_proxy(&blob));
-    Ok(user || machine)
+    let blob = reg::get_binary(reg::HKEY_CURRENT_USER, USER_CONNECTIONS, USER_SETTINGS)?
+        .is_some_and(|blob| winhttp_has_proxy(&blob));
+    Ok(user || machine || blob)
+}
+
+/// The flags word of the user's connection settings blob.
+fn connection_flags() -> Option<u32> {
+    let blob = reg::get_binary(reg::HKEY_CURRENT_USER, USER_CONNECTIONS, USER_SETTINGS).ok()??;
+    blob.get(8..12).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// The blob with manual proxy and setup script turned off, and auto detect too when it
+/// found a script. The strings stay, as Windows leaves them when the boxes are unticked;
+/// the counter goes up so WinINet reads it as new.
+fn direct_blob(mut blob: Vec<u8>, auto_detect_off: bool) -> Vec<u8> {
+    if blob.len() >= 12 {
+        let word = |b: &[u8], at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+        let counter = word(&blob, 4).wrapping_add(1);
+        let mut flags = (word(&blob, 8) & !(2 | 4)) | 1;
+        if auto_detect_off {
+            flags &= !8;
+        }
+        blob[4..8].copy_from_slice(&counter.to_le_bytes());
+        blob[8..12].copy_from_slice(&flags.to_le_bytes());
+    }
+    blob
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -1497,8 +1532,8 @@ fn notify_proxy_changed() {
     }
 }
 
-/// Saved as "enable|server|override|autoproxy|winhttp-hex", `-` for nothing set.
-/// The WinHTTP part is the raw blob in hex, so undo writes back exactly what was there.
+/// Saved as "enable|server|override|autoproxy|winhttp-hex|connections-hex", `-` for
+/// nothing set. The blobs are raw hex, so undo writes back exactly what was there.
 pub fn reset_proxy() -> windows::core::Result<Option<String>> {
     let mut fields = Vec::new();
     let dashed =
@@ -1513,25 +1548,33 @@ pub fn reset_proxy() -> windows::core::Result<Option<String>> {
     }
     let winhttp = reg::get_binary(reg::HKEY_LOCAL_MACHINE, WINHTTP_CONNECTIONS, WINHTTP_SETTINGS)?;
     fields.push(winhttp.as_deref().map(hex_encode).unwrap_or_else(|| "-".into()));
+    let user = reg::get_binary(reg::HKEY_CURRENT_USER, USER_CONNECTIONS, USER_SETTINGS)?;
+    fields.push(user.as_deref().map(hex_encode).unwrap_or_else(|| "-".into()));
     let saved = fields.join("|");
 
     reg::set_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable", 0)?;
     for name in ["ProxyServer", "ProxyOverride", "AutoConfigURL"] {
         let _ = reg::delete_value(reg::HKEY_CURRENT_USER, PROXY_KEY, name);
     }
+    if let Some(blob) = user {
+        let blob = direct_blob(blob, WPAD_FOUND.load(Ordering::Relaxed));
+        reg::set_binary(reg::HKEY_CURRENT_USER, USER_CONNECTIONS, USER_SETTINGS, &blob)?;
+    }
     tweaks::run("netsh.exe", &["winhttp", "reset", "proxy"])?;
     notify_proxy_changed();
     Ok(Some(saved))
 }
 
-/// The card shows reset (off) while any of them is set, whatever it's set to.
+/// The card shows reset (off) while any of them is set, whatever it's set to, or while
+/// the last diagnosis saw auto detect find a script.
 pub fn shows_proxy() -> bool {
-    in_journal(PROXY_TWEAK) || proxy_set().unwrap_or(false)
+    in_journal(PROXY_TWEAK) || WPAD_FOUND.load(Ordering::Relaxed) || proxy_set().unwrap_or(false)
 }
 
 /// True when no proxy is set, which is what this tweak applies.
 pub fn proxy_clear() -> windows::core::Result<bool> {
-    Ok(!proxy_set()?)
+    let wpad = WPAD_FOUND.load(Ordering::Relaxed) && connection_flags().is_some_and(|flags| flags & 8 != 0);
+    Ok(!proxy_set()? && !wpad)
 }
 
 /// The tweak is "off" when no proxy is set, so applying and resetting are the same job.
@@ -1548,6 +1591,8 @@ pub fn restore_proxy(previous: Option<&str>) -> windows::core::Result<()> {
     let next = |parts: &mut std::str::Split<'_, char>| parts.next().unwrap_or("-").to_string();
     let (enable, server, override_list, autoproxy, winhttp) =
         (next(&mut parts), next(&mut parts), next(&mut parts), next(&mut parts), next(&mut parts));
+    // Entries saved before the user blob was kept have no sixth field: leave it alone.
+    let user = parts.next();
     if enable == "-" {
         reg::delete_value(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable")?;
     } else if let Ok(value) = enable.parse::<u32>() {
@@ -1576,6 +1621,15 @@ pub fn restore_proxy(previous: Option<&str>) -> windows::core::Result<()> {
         reg::set_binary(reg::HKEY_LOCAL_MACHINE, WINHTTP_CONNECTIONS, WINHTTP_SETTINGS, &blob)?;
     } else {
         tweaks::run("netsh.exe", &["winhttp", "reset", "proxy"])?;
+    }
+    match user {
+        Some("-") => reg::delete_value(reg::HKEY_CURRENT_USER, USER_CONNECTIONS, USER_SETTINGS)?,
+        Some(hex) => {
+            if let Some(blob) = hex_decode(hex) {
+                reg::set_binary(reg::HKEY_CURRENT_USER, USER_CONNECTIONS, USER_SETTINGS, &blob)?;
+            }
+        }
+        None => {}
     }
     notify_proxy_changed();
     Ok(())
@@ -1607,42 +1661,65 @@ pub fn restart_connection() -> windows::core::Result<()> {
 const HOSTS_PATH: &str = r"C:\Windows\System32\drivers\etc\hosts";
 const HOSTS_BACKUP: &str = r"C:\Windows\System32\drivers\etc\hosts.vantix.bak";
 
-/// Domains in the hosts file that look like Vantix's own: what a browser or updater
-/// should reach, sent somewhere else by hand.
-const HOSTS_OF_INTEREST: [&str; 6] =
-    ["microsoft.com", "windowsupdate.com", "google.com", "apple.com", "cloudflare.com", "steamcommunity.com"];
+/// Names whose redirection breaks browsing or updates. Exact names only: privacy lists
+/// that send telemetry hosts like vortex.data.microsoft.com to 0.0.0.0 are someone's
+/// choice and stay. Windows Update is the exception, any name under it counts.
+const HOSTS_OF_INTEREST: [&str; 11] = [
+    "google.com",
+    "www.google.com",
+    "microsoft.com",
+    "www.microsoft.com",
+    "update.microsoft.com",
+    "windowsupdate.com",
+    "apple.com",
+    "www.apple.com",
+    "cloudflare.com",
+    "steamcommunity.com",
+    "store.steampowered.com",
+];
 
-/// Whether a hosts entry names the domain itself or one below it. A plain suffix
-/// match would also catch "notgoogle.com".
-fn hosts_match(host: &str, domain: &str) -> bool {
+fn hosts_match(host: &str) -> bool {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
-    host == domain || host.ends_with(&format!(".{domain}"))
+    HOSTS_OF_INTEREST.contains(&host.as_str()) || host.ends_with(".windowsupdate.com")
 }
 
-fn hosts_blocking(line: &str) -> bool {
-    HOSTS_OF_INTEREST
-        .iter()
-        .any(|domain| line.split_whitespace().skip(1).any(|host| hosts_match(host, domain)))
+/// Whether one raw line of the file redirects a name above. Comments after `#` don't count.
+fn hosts_blocking(line: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(line);
+    let entry = text.split('#').next().unwrap_or("");
+    entry.split_whitespace().skip(1).any(hosts_match)
 }
 
-/// (total lines, blocking ones), `None` when the file is missing or unreadable.
+/// (total entries, blocking ones), `None` when the file is missing or unreadable.
 pub fn hosts_state() -> Option<(usize, usize)> {
     hosts_state_in(HOSTS_PATH)
 }
 
 pub fn hosts_state_in(path: &str) -> Option<(usize, usize)> {
     let bytes = std::fs::read(path).ok()?;
-    let text = String::from_utf8_lossy(&bytes);
-    let lines: Vec<&str> =
-        text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
-    let blocking = lines.iter().filter(|l| hosts_blocking(l)).count();
-    Some((lines.len(), blocking))
+    let entries: Vec<&[u8]> = bytes
+        .split(|&b| b == b'\n')
+        .filter(|line| {
+            let line = line.trim_ascii();
+            !line.is_empty() && !line.starts_with(b"#")
+        })
+        .collect();
+    let blocking = entries.iter().filter(|line| hosts_blocking(line)).count();
+    Some((entries.len(), blocking))
 }
 
-/// Whether the hosts file is already back to safe form. The journal holds one entry,
-/// so the changed form is checked by the card that offers the reset.
-/// Whether any hosts line gets in the way of a domain Vantix cares about, which is what
-/// the card offers to clean.
+/// The lines the repair takes out, as text, for the confirmation.
+pub fn hosts_blocking_lines() -> Vec<String> {
+    let bytes = std::fs::read(HOSTS_PATH).unwrap_or_default();
+    bytes
+        .split(|&b| b == b'\n')
+        .filter(|line| hosts_blocking(line))
+        .map(|line| String::from_utf8_lossy(line.trim_ascii()).into_owned())
+        .collect()
+}
+
+/// Whether any hosts line gets in the way of a name above, which is what the card
+/// offers to clean.
 pub fn shows_hosts() -> bool {
     in_journal(HOSTS_TWEAK) || hosts_state().is_some_and(|(_, blocking)| blocking > 0)
 }
@@ -1656,26 +1733,20 @@ pub fn clear_hosts() -> windows::core::Result<()> {
     reset_hosts().map(drop)
 }
 
-/// Saved as the number of blocks taken out; the bytes themselves are the backup file.
+/// Saved as the number of lines taken out; the bytes themselves are the backup file.
 pub fn reset_hosts() -> windows::core::Result<Option<String>> {
     reset_hosts_in(HOSTS_PATH, HOSTS_BACKUP)
 }
 
+/// Works on raw bytes split at `\n`, so every kept line goes back exactly as it was,
+/// line ending and ANSI characters included.
 pub fn reset_hosts_in(path: &str, backup: &str) -> windows::core::Result<Option<String>> {
     let Some((_, blocking)) = hosts_state_in(path) else { return Err(failure("hosts file is missing")) };
     if blocking > 0 {
         std::fs::copy(path, backup)?;
         let bytes = std::fs::read(path)?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let mut kept: Vec<&str> = Vec::new();
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') || !hosts_blocking(trimmed) {
-                kept.push(line);
-            }
-        }
-        let out = if kept.is_empty() { String::new() } else { kept.join("\r\n") + "\r\n" };
-        if let Err(e) = std::fs::write(path, out) {
+        let kept: Vec<&[u8]> = bytes.split(|&b| b == b'\n').filter(|line| !hosts_blocking(line)).collect();
+        if let Err(e) = std::fs::write(path, kept.join(&b'\n')) {
             let readonly = std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly());
             if readonly {
                 return Err(failure("hosts file is read-only, remove the read-only flag first"));
@@ -1705,32 +1776,33 @@ pub const IPV6_TWEAK: &str = "ipv6-adapter-off";
 /// The id used in the journal for the hosts repair.
 pub const HOSTS_TWEAK: &str = "hosts-reset";
 
-/// The binding is on if the component is enabled; Vantix's own change is seen in the
-/// journal, like everywhere else.
-/// The card shows only when the diagnosis blamed IPv6, or while the change is in the
-/// journal for undo. Global IPv6 off stays out of the app.
+/// The card shows only when the diagnosis warned about IPv6, or while the change is in
+/// the journal for undo. Global IPv6 off stays out of the app.
 pub fn shows_ipv6() -> bool {
-    if in_journal(IPV6_TWEAK) {
-        return true;
-    }
-    STATUSES.lock().unwrap().iter().any(|(layer, status)| *layer == Layer::Ipv6 && *status == Status::Failed)
+    in_journal(IPV6_TWEAK)
+        || RESULTS
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(layer, status, _)| *layer == Layer::Ipv6 && *status == Status::Warning)
 }
 
+/// From the adapter's own flags, so reading the cards doesn't start a PowerShell.
 pub fn ipv6_off() -> windows::core::Result<bool> {
-    let Some(adapter) = connection() else { return Ok(false) };
-    let quoted = adapter.name.replace('\'', "");
-    let out = tweaks::powershell(&format!(
-        "(Get-NetAdapterBinding -Name '{quoted}' -ComponentID ms_tcpip6).Enabled"
-    ))?;
-    Ok(out.trim().eq_ignore_ascii_case("false"))
+    Ok(connection().is_some_and(|adapter| !adapter.ipv6_bound))
+}
+
+/// An adapter name as a PowerShell single-quoted string.
+fn quoted(name: &str) -> String {
+    format!("'{}'", name.replace('\'', "''"))
 }
 
 /// Saved as the adapter's GUID, so undo finds the same adapter after a restart.
 pub fn disable_ipv6() -> windows::core::Result<Option<String>> {
     let Some(adapter) = connection() else { return Err(failure("no connected adapter")) };
-    let quoted = adapter.name.replace('\'', "");
     tweaks::powershell(&format!(
-        "Disable-NetAdapterBinding -Name '{quoted}' -ComponentID ms_tcpip6 -ErrorAction Stop"
+        "Disable-NetAdapterBinding -Name {} -ComponentID ms_tcpip6 -ErrorAction Stop",
+        quoted(&adapter.name)
     ))?;
     Ok(Some(adapter.guid))
 }
@@ -1742,9 +1814,9 @@ pub fn restore_ipv6(previous: Option<&str>) -> windows::core::Result<()> {
     else {
         return Ok(());
     };
-    let quoted = adapter.name.replace('\'', "");
     tweaks::powershell(&format!(
-        "Enable-NetAdapterBinding -Name '{quoted}' -ComponentID ms_tcpip6 -ErrorAction Stop"
+        "Enable-NetAdapterBinding -Name {} -ComponentID ms_tcpip6 -ErrorAction Stop",
+        quoted(&adapter.name)
     ))?;
     Ok(())
 }
@@ -2029,7 +2101,7 @@ pub enum Layer {
     Link,
     /// A 169.254 address means the DHCP server never answered.
     Ip,
-    /// The router answers pings.
+    /// The router answers pings, or at least ARP.
     Gateway,
     /// Name lookups work with the servers in use, and with 1.1.1.1 when they don't.
     Dns,
@@ -2072,41 +2144,90 @@ pub enum Status {
     Running,
     /// Answers as it should.
     Ok,
-    /// This layer is the one that broke.
+    /// This layer is the one that broke. Only layers Link to NCSI fail.
     Failed,
-    /// Everything before it failed, so this never ran.
+    /// Not checked, and the detail says why.
     Skipped,
+    /// Works, but something here is worth a look.
+    Warning,
 }
 
-/// Detail text per layer, shown under the layer name: what answered and how fast.
-static DETAILS: Mutex<Option<Vec<String>>> = Mutex::new(None);
-/// One status per layer, read by the tick every 250 ms.
-static STATUSES: Mutex<Vec<(Layer, Status)>> = Mutex::new(Vec::new());
-/// Whether a diagnosis is running right now, so the staggered retries stop.
+/// What a layer has to say. The UI turns it into text, so it can be translated.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Detail {
+    #[default]
+    None,
+    Cable,
+    WiFi,
+    NoAdapter,
+    NoLink,
+    Address(Ipv4Addr),
+    NoIpv4,
+    Apipa,
+    RouterPing(f64),
+    RouterArp,
+    RouterSilent(Ipv4Addr),
+    NoRouter,
+    DnsAnswered(IpAddr, f64),
+    NoDnsServer,
+    /// The servers in use are silent, 1.1.1.1 answers in this many ms.
+    DnsOnlyPublic(f64),
+    /// Nothing answers, not even 1.1.1.1, so the fault may be past the router.
+    DnsUnsure,
+    ReachPing(f64),
+    ReachTcp(f64),
+    Unreachable,
+    Answered,
+    ClockWithin(i64),
+    /// HTTPS works, the clock is this many seconds off (positive when the PC is behind).
+    ClockOff(i64),
+    /// HTTPS fails and a sign-in page answers plain HTTP.
+    HttpsPortal,
+    /// HTTPS fails and the clock is this many seconds off.
+    HttpsClock(i64),
+    HttpsProxy,
+    HttpsFailed,
+    NcsiOk,
+    Portal,
+    /// The probe works, but its DNS name points somewhere else: something rewrites DNS.
+    NcsiDns(IpAddr),
+    NcsiSilent,
+    NoProxy,
+    ProxySet,
+    /// "Automatically detect settings" finds a setup script at this address.
+    Wpad(String),
+    HostsClean(usize),
+    /// Lines in the way, out of the total.
+    HostsBlocking(usize, usize),
+    NoVpnLeftovers,
+    VpnLeftovers(String),
+    Ipv6Ok,
+    Ipv6Broken,
+    NoIpv6,
+    Ipv6Untested,
+    EarlierFailed,
+    /// Something this check needs isn't there, like the hosts file or WinHTTP.
+    Untestable,
+}
+
+/// One status and detail per layer, read by the tick every 250 ms.
+static RESULTS: Mutex<Vec<(Layer, Status, Detail)>> = Mutex::new(Vec::new());
+/// Whether a diagnosis is running right now, so a second click does nothing.
 static DIAG_ON: AtomicBool = AtomicBool::new(false);
+/// Set by the proxy layer when auto-detect finds a script, so the proxy repair also
+/// turns auto-detect off. Off it stays on, as Windows ships it.
+static WPAD_FOUND: AtomicBool = AtomicBool::new(false);
 
-pub fn diag_statuses() -> Vec<(Layer, Status)> {
-    STATUSES.lock().unwrap().clone()
-}
-
-pub fn diag_details() -> Vec<String> {
-    DETAILS.lock().unwrap().clone().unwrap_or_default()
+pub fn diag_results() -> Vec<(Layer, Status, Detail)> {
+    RESULTS.lock().unwrap().clone()
 }
 
 pub fn diag_running() -> bool {
     DIAG_ON.load(Ordering::Relaxed)
 }
 
-fn set_status(i: usize, status: Status) {
-    STATUSES.lock().unwrap()[i].1 = status;
-}
-
-fn set_detail(i: usize, detail: String) {
-    if let Some(details) = DETAILS.lock().unwrap().as_mut()
-        && i < details.len()
-    {
-        details[i] = detail;
-    }
+fn set_result(i: usize, status: Status, detail: Detail) {
+    RESULTS.lock().unwrap()[i] = (LAYERS[i], status, detail);
 }
 
 /// Best of up to 3 pings, `None` when all got lost. The name says best because one
@@ -2123,202 +2244,237 @@ fn ping_best(icmp: &Icmp, to: Ipv4Addr) -> Option<f64> {
     best
 }
 
-/// One run of the layered diagnosis. Layers 1 to 7 (Link to NCSI) stop at the first
-/// failure. Proxy, hosts, VPN and IPv6 always run, each with its own status, so a dead
-/// proxy is still reported when HTTPS already failed.
+/// One run of the layered diagnosis. Layers Link to NCSI stop at the first failure,
+/// except that NCSI still runs after HTTPS fails, since it is the one that sees a
+/// sign-in page. Proxy, hosts, VPN and IPv6 always run and only ever warn.
 pub fn diagnose() {
     if DIAG_ON.swap(true, Ordering::Relaxed) {
         return;
     }
-    *STATUSES.lock().unwrap() = LAYERS.map(|layer| (layer, Status::Queued)).to_vec();
-    *DETAILS.lock().unwrap() = Some(vec![String::new(); LAYERS.len()]);
+    *RESULTS.lock().unwrap() = LAYERS.map(|layer| (layer, Status::Queued, Detail::None)).to_vec();
     let icmp = Icmp::new();
-    let mut failed_early = false;
+    let mut stopped = false;
     let mut reach_ok = false;
+    let mut https_failed = false;
+    // The plain HTTP probe, fetched once: HTTPS reads it when it fails, NCSI always.
+    let mut probe: Option<Option<Probe>> = None;
     for (i, layer) in LAYERS.iter().enumerate() {
-        // The last four checks always run, even after an early failure.
         let always = matches!(layer, Layer::Proxy | Layer::Hosts | Layer::Vpn | Layer::Ipv6);
-        if failed_early && !always {
-            set_status(i, Status::Skipped);
+        if stopped && !always {
+            set_result(i, Status::Skipped, Detail::EarlierFailed);
             continue;
         }
-        set_status(i, Status::Running);
-        let outcome = match layer {
+        set_result(i, Status::Running, Detail::None);
+        let (status, detail) = match layer {
             Layer::Link => link(),
             Layer::Ip => ip(),
             Layer::Gateway => gateway(icmp.as_ref()),
             Layer::Dns => dns(),
             Layer::Reach => reach(icmp.as_ref()),
-            Layer::Https => https(),
-            Layer::Ncsi => ncsi(),
+            Layer::Https => https(|| probe.get_or_insert_with(ncsi_probe).clone()),
+            Layer::Ncsi => ncsi(probe.get_or_insert_with(ncsi_probe).as_ref()),
             Layer::Proxy => proxy(),
             Layer::Hosts => hosts(),
             Layer::Vpn => vpn(),
             Layer::Ipv6 => ipv6(reach_ok),
         };
-        if *layer == Layer::Reach && outcome.is_ok() {
-            reach_ok = true;
+        reach_ok |= *layer == Layer::Reach && status == Status::Ok;
+        if *layer == Layer::Https {
+            https_failed = status == Status::Failed;
+        } else if status == Status::Failed || *layer == Layer::Ncsi && https_failed {
+            stopped = true;
         }
-        match outcome {
-            Ok(detail) => {
-                set_detail(i, detail);
-                set_status(i, Status::Ok);
-            }
-            // Irrelevant here: not a pass, not a failure.
-            Err(None) => {
-                set_status(i, Status::Skipped);
-            }
-            Err(Some(detail)) => {
-                set_detail(i, detail);
-                set_status(i, Status::Failed);
-                if !always {
-                    failed_early = true;
-                }
-            }
-        }
+        set_result(i, status, detail);
     }
     DIAG_ON.store(false, Ordering::Relaxed);
 }
 
-fn link() -> Result<String, Option<String>> {
-    let Some(adapter) = connection() else { return Err(Some("no connected adapter".into())) };
-    if !adapter.up {
-        return Err(Some("the adapter reports no link".into()));
-    }
-    Ok(if adapter.wifi { "Wi-Fi" } else { "cable" }.into())
-}
-
-fn ip() -> Result<String, Option<String>> {
-    let Some(adapter) = connection() else { return Err(Some(String::new())) };
-    check_ip(adapter.ip).map_err(Some)
-}
-
-/// Pure check for tests: the PC address fails only when missing or link-local.
-/// A public gateway or CGNAT (100.64.0.0/10) is legitimate and passes.
-fn check_ip(addr: Option<Ipv4Addr>) -> Result<String, String> {
-    let Some(addr) = addr else { return Err("no IPv4 address on the adapter".into()) };
-    if addr.is_link_local() {
-        return Err("169.254 address: DHCP never answered".into());
-    }
-    Ok(addr.to_string())
-}
-
-fn gateway(icmp: Option<&Icmp>) -> Result<String, Option<String>> {
-    let Some(address) = connection().and_then(|c| c.gateway) else { return Err(None) };
-    let Some(icmp) = icmp else { return Err(None) };
-    match ping_best(icmp, address) {
-        Some(time) => Ok(format!("best of 3: {time:.1} ms")),
-        None => Err(Some(format!("no answer from the router at {address}"))),
+fn link() -> (Status, Detail) {
+    match connection() {
+        None => (Status::Failed, Detail::NoAdapter),
+        Some(adapter) if !adapter.up => (Status::Failed, Detail::NoLink),
+        Some(adapter) => (Status::Ok, if adapter.wifi { Detail::WiFi } else { Detail::Cable }),
     }
 }
 
-fn dns() -> Result<String, Option<String>> {
+fn ip() -> (Status, Detail) {
+    match connection() {
+        Some(adapter) => check_ip(adapter.ip),
+        None => (Status::Failed, Detail::NoAdapter),
+    }
+}
+
+/// The PC address fails only when missing or link-local. A public address or CGNAT
+/// (100.64.0.0/10) is legitimate and passes.
+fn check_ip(addr: Option<Ipv4Addr>) -> (Status, Detail) {
+    match addr {
+        None => (Status::Failed, Detail::NoIpv4),
+        Some(addr) if addr.is_link_local() => (Status::Failed, Detail::Apipa),
+        Some(addr) => (Status::Ok, Detail::Address(addr)),
+    }
+}
+
+/// Some routers and fibre boxes drop pings on purpose. ARP has to answer for anything
+/// to work at all, so a router that answers ARP is there.
+fn gateway(icmp: Option<&Icmp>) -> (Status, Detail) {
+    let Some(address) = connection().and_then(|c| c.gateway) else {
+        return (Status::Skipped, Detail::NoRouter);
+    };
+    let ping = icmp.and_then(|icmp| ping_best(icmp, address));
+    check_gateway(address, ping, || answers_arp(address))
+}
+
+fn check_gateway(address: Ipv4Addr, ping: Option<f64>, arp: impl FnOnce() -> bool) -> (Status, Detail) {
+    match ping {
+        Some(ms) => (Status::Ok, Detail::RouterPing(ms)),
+        None if arp() => (Status::Ok, Detail::RouterArp),
+        None => (Status::Failed, Detail::RouterSilent(address)),
+    }
+}
+
+fn answers_arp(address: Ipv4Addr) -> bool {
+    let mut mac = [0u8; 8];
+    let mut len = mac.len() as u32;
+    let to = u32::from_ne_bytes(address.octets());
+    unsafe { SendARP(to, 0, mac.as_mut_ptr().cast(), &mut len) == 0 && len > 0 }
+}
+
+fn dns() -> (Status, Detail) {
     let servers = current_dns();
     if servers.is_empty() {
-        return Err(Some("no DNS server set".into()));
+        return (Status::Failed, Detail::NoDnsServer);
     }
-    for server in &servers {
-        if let Some(ms) = query_server(*server, "google.com") {
-            return Ok(format!("{server} answered in {ms:.0} ms"));
-        }
-    }
-    // The configured servers are silent: ask 1.1.1.1 to tell a DNS outage apart
-    // from a network outage.
-    if let Some(ms) = query_server(IpAddr::V4(CLOUDFLARE), "google.com") {
-        return Err(Some(format!("your DNS servers do not answer, 1.1.1.1 does in {ms:.0} ms")));
-    }
-    let first = servers[0];
-    Err(Some(format!("no answer from {first}")))
+    let scope = connection_scope();
+    let answer =
+        servers.iter().find_map(|server| query_server(*server, scope, "google.com").map(|ms| (*server, ms)));
+    check_dns(answer, || query_server(IpAddr::V4(CLOUDFLARE), 0, "google.com"))
 }
 
-/// One raw query straight to the server, with its round trip in ms.
-fn query_server(server: IpAddr, domain: &str) -> Option<f64> {
+/// When neither the servers in use nor 1.1.1.1 answer, DNS can't be blamed: the
+/// internet itself may be down, and Reach is the layer that can tell.
+fn check_dns(answer: Option<(IpAddr, f64)>, public: impl FnOnce() -> Option<f64>) -> (Status, Detail) {
+    if let Some((server, ms)) = answer {
+        return (Status::Ok, Detail::DnsAnswered(server, ms));
+    }
+    match public() {
+        Some(ms) => (Status::Failed, Detail::DnsOnlyPublic(ms)),
+        None => (Status::Skipped, Detail::DnsUnsure),
+    }
+}
+
+/// One raw query straight to the server, with its round trip in ms. Link-local IPv6
+/// servers need the interface they live on.
+fn query_server(server: IpAddr, scope: u32, domain: &str) -> Option<f64> {
+    let target = match server {
+        IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80 => {
+            SocketAddr::V6(SocketAddrV6::new(v6, 53, 0, scope))
+        }
+        _ => SocketAddr::new(server, 53),
+    };
     let local: SocketAddr =
         if server.is_ipv6() { "[::]:0".parse().unwrap() } else { "0.0.0.0:0".parse().unwrap() };
     let socket = UdpSocket::bind(local).ok()?;
-    socket.connect(SocketAddr::new(server, 53)).ok()?;
+    socket.connect(target).ok()?;
     socket.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
     lookup(&socket, domain)
 }
 
-fn reach(icmp: Option<&Icmp>) -> Result<String, Option<String>> {
-    if let Some(time) = icmp.and_then(|icmp| ping_best(icmp, CLOUDFLARE)) {
-        return Ok(format!("ping to 1.1.1.1, best of 3: {time:.1} ms"));
+fn reach(icmp: Option<&Icmp>) -> (Status, Detail) {
+    if let Some(ms) = icmp.and_then(|icmp| ping_best(icmp, CLOUDFLARE)) {
+        return (Status::Ok, Detail::ReachPing(ms));
     }
     // Pings may be dropped deliberately: reach out with TCP instead.
-    tcp_check(CLOUDFLARE.into())
-}
-
-/// TCP 443 to one address, for machines and networks where ICMP does not get through.
-fn tcp_check(address: IpAddr) -> Result<String, Option<String>> {
     let began = Instant::now();
-    TcpStream::connect_timeout(&SocketAddr::new(address, 443), Duration::from_secs(4))
-        .map_err(|_| Some(format!("cannot reach {address} on TCP 443")))?;
-    Ok(format!("TCP 443, {:.1} ms", began.elapsed().as_secs_f64() * 1000.0))
+    match TcpStream::connect_timeout(&SocketAddr::new(CLOUDFLARE.into(), 443), Duration::from_secs(4)) {
+        Ok(_) => (Status::Ok, Detail::ReachTcp(began.elapsed().as_secs_f64() * 1000.0)),
+        Err(_) => (Status::Failed, Detail::Unreachable),
+    }
 }
 
-fn https() -> Result<String, Option<String>> {
-    let Some((_session, connection)) = http_connection() else { return Err(None) };
+/// A clock 2 minutes or more off is worth fixing; a day or more breaks certificates.
+const CLOCK_SLACK: i64 = 120;
+
+fn https(probe: impl FnOnce() -> Option<Probe>) -> (Status, Detail) {
+    let Some((_session, connection)) = http_connection() else {
+        return (Status::Skipped, Detail::Untestable);
+    };
     let Some(request) = request(&connection, "HEAD", "/__down?bytes=1") else {
-        return Err(None);
+        return (Status::Skipped, Detail::Untestable);
     };
     if unsafe { WinHttpSendRequest(request.0, None, None, 0, 0, 0).is_err() } || !answered_ok(&request) {
-        // A dead proxy breaks HTTPS while raw TCP still works; the proxy layer below
-        // names it, so say so here too.
-        if proxy_set().unwrap_or(false) {
-            return Err(Some("HTTPS failed and a proxy is set, the proxy is the likely cause".into()));
-        }
-        return Err(Some("the HTTPS handshake or request failed".into()));
+        let probe = probe();
+        let offset = probe
+            .as_ref()
+            .and_then(|p| p.date.as_deref())
+            .and_then(|d| clock_offset_secs(d, chrono::Utc::now()));
+        return https_failure(probe.as_ref().is_some_and(|p| !p.real()), offset, || {
+            proxy_set().unwrap_or(false)
+        });
     }
-    // A clock wrong by more than a day, either way, makes every certificate look dead.
-    // The first call with a null buffer always reports insufficient buffer; that is how
-    // the needed size is asked for.
-    let mut header_size = 0u32;
+    match http_date(&request).and_then(|date| clock_offset_secs(&date, chrono::Utc::now())) {
+        Some(secs) => check_clock(secs),
+        None => (Status::Ok, Detail::Answered),
+    }
+}
+
+/// Why HTTPS failed, from what plain HTTP saw: a sign-in page, a clock off far enough,
+/// or a proxy in the way, in that order. The portal comes first because the probe went
+/// around any proxy and still got someone else's page.
+fn https_failure(portal: bool, offset: Option<i64>, proxy: impl FnOnce() -> bool) -> (Status, Detail) {
+    if portal {
+        return (Status::Failed, Detail::HttpsPortal);
+    }
+    if let Some(secs) = offset.filter(|secs| secs.abs() >= CLOCK_SLACK) {
+        return (Status::Failed, Detail::HttpsClock(secs));
+    }
+    if proxy() {
+        return (Status::Failed, Detail::HttpsProxy);
+    }
+    (Status::Failed, Detail::HttpsFailed)
+}
+
+fn check_clock(secs: i64) -> (Status, Detail) {
+    if secs.abs() >= CLOCK_SLACK {
+        (Status::Warning, Detail::ClockOff(secs))
+    } else {
+        (Status::Ok, Detail::ClockWithin(secs.abs().max(1)))
+    }
+}
+
+/// The Date header of an answered request. The first call with a null buffer always
+/// reports insufficient buffer; that is how the needed size is asked for.
+fn http_date(request: &Http) -> Option<String> {
+    let mut size = 0u32;
     unsafe {
         let _ = WinHttpQueryHeaders(
             request.0,
             WINHTTP_QUERY_DATE,
             PCWSTR::null(),
             None,
-            &mut header_size,
+            &mut size,
             std::ptr::null_mut(),
         );
     }
-    if header_size == 0 {
-        return Err(None);
+    if size == 0 {
+        return None;
     }
-    let mut buffer = vec![0u16; (header_size / 2) as usize];
+    let mut buffer = vec![0u16; (size / 2) as usize];
     unsafe {
-        if WinHttpQueryHeaders(
+        WinHttpQueryHeaders(
             request.0,
             WINHTTP_QUERY_DATE,
             PCWSTR::null(),
             Some(buffer.as_mut_ptr().cast()),
-            &mut header_size,
+            &mut size,
             std::ptr::null_mut(),
         )
-        .is_err()
-        {
-            return Err(None);
-        }
+        .ok()?;
     }
-    let date = String::from_utf16_lossy(&buffer);
-    let now = chrono::Utc::now();
-    if sent_time_worse(&date, now).unwrap_or(false) {
-        return Err(Some("answer received, but the clock is off by more than a day".into()));
-    }
-    match clock_offset_secs(&date, now) {
-        Some(secs) if secs.abs() >= 120 => {
-            let mins = secs.abs() / 60;
-            let side = if secs > 0 { "ahead" } else { "behind" };
-            Ok(format!("answered, clock {mins} min {side}"))
-        }
-        Some(secs) => Ok(format!("answered, clock within {} s", secs.abs().max(1))),
-        None => Ok("answered".into()),
-    }
+    Some(String::from_utf16_lossy(&buffer[..(size / 2) as usize]))
 }
 
-/// Parses a Date header like "Mon, 01 Jan 2026 12:00:00 GMT".
+/// Parses a Date header like "Mon, 01 Jan 2026 12:00:00 GMT". By hand, so the layer
+/// needs no other dependency.
 fn parse_http_date(date: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     const MONTHS: [&str; 12] =
         ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -2328,52 +2484,44 @@ fn parse_http_date(date: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     }
     let day: u32 = words[1].parse().ok()?;
     let month = MONTHS.iter().position(|m| words[2].starts_with(m))? as u32;
-    let year: i64 = words[3].parse().ok()?;
-    let clock = words[4].trim_end_matches("GMT").trim();
-    let mut clock = clock.split(':');
+    let year: i32 = words[3].parse().ok()?;
+    let mut clock = words[4].split(':');
     let hour = clock.next()?.parse().ok()?;
     let minute = clock.next()?.parse().ok()?;
     let second = clock.next().unwrap_or("0").parse().ok()?;
-    chrono::NaiveDate::from_ymd_opt(year as i32, month + 1, day)?
-        .and_hms_opt(hour, minute, second)?
-        .and_utc()
-        .into()
+    Some(chrono::NaiveDate::from_ymd_opt(year, month + 1, day)?.and_hms_opt(hour, minute, second)?.and_utc())
 }
 
-/// Seconds the Date header is away from the local clock, positive when ahead.
+/// Seconds the Date header is away from the local clock, positive when the server is
+/// ahead, which means the PC is behind.
 fn clock_offset_secs(date: &str, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
     Some((parse_http_date(date)? - now).num_seconds())
 }
 
-/// Whether a Date header is more than a day away from the local clock.
-///
-/// WinHTTP quotes the header in HTTP time format like "Mon, 01 Jan 2026 12:00:00 GMT".
-/// Parsing it by hand keeps the layer free of another dependency.
-fn sent_time_worse(date: &str, now: chrono::DateTime<chrono::Utc>) -> Option<bool> {
-    Some(clock_offset_secs(date, now)?.abs() > chrono::Duration::days(1).num_seconds())
+/// What the plain HTTP probe got back.
+#[derive(Clone)]
+struct Probe {
+    body: String,
+    date: Option<String>,
 }
 
-fn ncsi() -> Result<String, Option<String>> {
-    // The probe Windows itself uses: a plain HTTP GET that must answer the exact body.
-    // A direct TCP connection, so a broken proxy cannot hide the answer.
-    match ncsi_body() {
-        Some(body) => check_ncsi(&body).map_err(Some),
-        None => Err(None),
+impl Probe {
+    /// The exact body means the real server answered; anything else is a sign-in page.
+    fn real(&self) -> bool {
+        self.body.contains("Microsoft Connect Test")
     }
 }
 
-/// Pure check for tests: the exact body means internet, anything else is a captive portal.
-fn check_ncsi(body: &str) -> Result<String, String> {
-    if body.contains("Microsoft Connect Test") {
-        Ok("Windows agrees there is internet".into())
-    } else {
-        Err("a sign-in page is intercepting the connection".into())
-    }
+/// The probe Windows itself uses: a plain HTTP GET that must answer the exact body.
+/// A direct TCP connection, so a broken proxy can't hide the answer, and no TLS, so a
+/// wrong clock can't either. Portal pages aren't always UTF-8, hence the lossy read.
+/// One retry, as Windows does: a single lost lookup or connect isn't an outage.
+fn ncsi_probe() -> Option<Probe> {
+    ncsi_get().or_else(ncsi_get)
 }
 
-/// GETs the NCSI text file over plain HTTP with a 5 s timeout.
-fn ncsi_body() -> Option<String> {
-    let addr = format!("{}:80", "www.msftconnecttest.com").to_socket_addrs().ok()?.find(|a| a.is_ipv4())?;
+fn ncsi_get() -> Option<Probe> {
+    let addr = "www.msftconnecttest.com:80".to_socket_addrs().ok()?.find(|a| a.is_ipv4())?;
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     stream.set_write_timeout(Some(Duration::from_secs(5))).ok()?;
@@ -2382,125 +2530,218 @@ fn ncsi_body() -> Option<String> {
             b"GET /connecttest.txt HTTP/1.0\r\nHost: www.msftconnecttest.com\r\nConnection: close\r\n\r\n",
         )
         .ok()?;
-    let mut text = String::new();
-    stream.read_to_string(&mut text).ok()?;
-    // Confirm the NCSI DNS name still resolves to the expected address when possible.
-    // A mismatch does not fail the layer; the body above is what counts.
-    let _ = ncsi_dns_ok();
-    text.split("\r\n\r\n").nth(1).or(Some(text.as_str())).map(str::to_string)
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let clean = loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break true,
+            Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+            Err(_) => break false,
+        }
+    };
+    let probe = parse_probe(&String::from_utf8_lossy(&bytes));
+    // Some servers reset the connection right after answering. What came before the
+    // reset still counts when it's the real answer; a cut page might be anything.
+    (clean && !bytes.is_empty() || probe.real()).then_some(probe)
 }
 
-fn ncsi_dns_ok() -> bool {
-    format!("{}:80", "dns.msftncsi.com")
-        .to_socket_addrs()
-        .map(|mut addrs| addrs.any(|a| a.ip() == IpAddr::V4(Ipv4Addr::new(131, 107, 255, 255))))
-        .unwrap_or(false)
+fn parse_probe(text: &str) -> Probe {
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or(("", text));
+    let date = head
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("date"))
+        .map(|(_, value)| value.trim().to_string());
+    Probe { body: body.to_string(), date }
 }
 
-fn proxy() -> Result<String, Option<String>> {
-    match proxy_set() {
-        Ok(false) => Ok("no proxy set".into()),
-        Ok(true) => Err(Some("a proxy is set in WinINet or WinHTTP".into())),
-        Err(_) => Err(None),
+fn ncsi(probe: Option<&Probe>) -> (Status, Detail) {
+    let Some(probe) = probe else { return (Status::Skipped, Detail::NcsiSilent) };
+    if !probe.real() {
+        return (Status::Failed, Detail::Portal);
+    }
+    // Windows also checks that this name resolves to Microsoft's address. Something
+    // else answering means a router, filter or malware is rewriting DNS answers.
+    let expected = IpAddr::V4(Ipv4Addr::new(131, 107, 255, 255));
+    let answer =
+        "dns.msftncsi.com:80".to_socket_addrs().ok().and_then(|mut addrs| addrs.find(|a| a.is_ipv4()));
+    match answer {
+        Some(addr) if addr.ip() != expected => (Status::Warning, Detail::NcsiDns(addr.ip())),
+        _ => (Status::Ok, Detail::NcsiOk),
     }
 }
 
-fn hosts() -> Result<String, Option<String>> {
-    match hosts_state() {
-        Some((total, blocking)) if blocking > 0 => {
-            Err(Some(format!("{blocking} of {total} lines send well-known domains elsewhere")))
+fn proxy() -> (Status, Detail) {
+    WPAD_FOUND.store(false, Ordering::Relaxed);
+    match proxy_set() {
+        Ok(true) => return (Status::Warning, Detail::ProxySet),
+        Ok(false) => {}
+        Err(_) => return (Status::Skipped, Detail::Untestable),
+    }
+    match wpad_script() {
+        Some(url) => {
+            WPAD_FOUND.store(true, Ordering::Relaxed);
+            (Status::Warning, Detail::Wpad(url))
         }
-        Some((total, _)) => Ok(format!("{total} lines, none in the way")),
-        None => Err(None),
+        None => (Status::Ok, Detail::NoProxy),
+    }
+}
+
+/// With "Automatically detect settings" on, which is how Windows ships, the browser asks
+/// DHCP and DNS for a setup script. On a home network nothing answers; a script that
+/// does answer sends every request through whatever it names. Asked on a thread with a
+/// time limit, since the lookup can hang on a network with a domain suffix.
+fn wpad_script() -> Option<String> {
+    const DHCP: u32 = 1;
+    const DNS_A: u32 = 2;
+    let flags = connection_flags()?;
+    if flags & 8 == 0 {
+        return None;
+    }
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut url = PWSTR::null();
+        let found =
+            unsafe { WinHttpDetectAutoProxyConfigUrl(DHCP | DNS_A, &mut url) }.is_ok() && !url.is_null();
+        let text = found.then(|| unsafe { url.to_string() }.unwrap_or_default());
+        if !url.is_null() {
+            unsafe {
+                let _ = GlobalFree(Some(HGLOBAL(url.0.cast())));
+            }
+        }
+        let _ = send.send(text.filter(|t| !t.is_empty()));
+    });
+    receive.recv_timeout(Duration::from_secs(6)).ok().flatten()
+}
+
+fn hosts() -> (Status, Detail) {
+    match hosts_state() {
+        Some((total, blocking)) if blocking > 0 => (Status::Warning, Detail::HostsBlocking(blocking, total)),
+        Some((total, _)) => (Status::Ok, Detail::HostsClean(total)),
+        None => (Status::Skipped, Detail::Untestable),
     }
 }
 
 /// A leftover adapter of a VPN that was removed badly keeps routing and filtering
-/// rules that were set up for it. Only counts when the vendor program is gone too;
-/// a working VPN is not leftovers. A warning, never a stop: the layer reports it but
-/// the diagnosis keeps going.
-const VPN_MARKS: [&str; 8] =
-    ["TAP-Windows", "Wintun", "WireGuard", "OpenVPN", "Tailscale", "ZeroTier", "NordLynx", "ProtonVPN"];
+/// rules that were set up for it. Each adapter brand comes with the programs that
+/// install it, and it only counts as leftovers when none of those is still installed:
+/// WireGuard being there says nothing about a dead TAP adapter from OpenVPN.
+const VPN_BRANDS: [(&str, &[&str]); 8] = [
+    (
+        "tap-windows",
+        &[
+            "openvpn",
+            "protonvpn",
+            "proton vpn",
+            "nordvpn",
+            "surfshark",
+            "private internet access",
+            "expressvpn",
+            "windscribe",
+            "cyberghost",
+        ],
+    ),
+    (
+        "wintun",
+        &[
+            "wireguard",
+            "tailscale",
+            "protonvpn",
+            "proton vpn",
+            "nordvpn",
+            "surfshark",
+            "mullvad",
+            "windscribe",
+        ],
+    ),
+    ("wireguard", &["wireguard", "mullvad", "surfshark", "nordvpn", "protonvpn", "proton vpn"]),
+    ("openvpn", &["openvpn"]),
+    ("tailscale", &["tailscale"]),
+    ("zerotier", &["zerotier"]),
+    ("nordlynx", &["nordvpn"]),
+    ("protonvpn", &["protonvpn", "proton vpn"]),
+];
 
-fn vpn() -> Result<String, Option<String>> {
-    let leftover: Vec<String> = adapters()
-        .into_iter()
-        .filter(|a| !a.up)
-        .filter(|a| {
-            let description = a.description.to_ascii_lowercase();
-            VPN_MARKS.iter().any(|mark| description.contains(&mark.to_ascii_lowercase()))
-        })
-        .filter(|_| !vpn_program_installed())
-        .map(|a| a.name)
-        .collect();
+fn vpn() -> (Status, Detail) {
+    let adapters: Vec<(String, String)> =
+        adapters().into_iter().filter(|a| !a.up).map(|a| (a.name, a.description)).collect();
+    // Only read the Uninstall keys when there is a candidate at all.
+    let installed =
+        if adapters.iter().any(|(_, d)| vpn_brand(d).is_some()) { installed_programs() } else { Vec::new() };
+    let leftover = vpn_leftovers(&adapters, &installed);
     if leftover.is_empty() {
-        Ok("no leftover VPN adapters".into())
+        (Status::Ok, Detail::NoVpnLeftovers)
     } else {
-        Err(Some(format!("leftover VPN adapters: {}", leftover.join(", "))))
+        (Status::Warning, Detail::VpnLeftovers(leftover.join(", ")))
     }
 }
 
-/// Whether any vendor VPN program is still installed, from the Uninstall keys.
-fn vpn_program_installed() -> bool {
+fn vpn_brand(description: &str) -> Option<&'static [&'static str]> {
+    let description = description.to_ascii_lowercase();
+    VPN_BRANDS.iter().find(|(mark, _)| description.contains(mark)).map(|(_, programs)| *programs)
+}
+
+/// Names of the adapters, out of (name, description), whose VPN program is gone.
+fn vpn_leftovers(adapters: &[(String, String)], installed: &[String]) -> Vec<String> {
+    adapters
+        .iter()
+        .filter(|(_, description)| {
+            vpn_brand(description).is_some_and(|programs| {
+                !installed.iter().any(|name| programs.iter().any(|p| name.contains(p)))
+            })
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// Display names of installed programs, lowercased, from the Uninstall keys.
+fn installed_programs() -> Vec<String> {
+    let mut names = Vec::new();
     for root in [reg::HKEY_LOCAL_MACHINE, reg::HKEY_CURRENT_USER] {
         for key in [
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
             r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
         ] {
             for sub in reg::subkeys(root, key) {
-                let path = format!(r"{key}\{sub}");
-                let name = reg::string_values(root, &path)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find(|(n, _)| n == "DisplayName")
-                    .map(|(_, v)| v)
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                if VPN_MARKS.iter().any(|mark| name.contains(&mark.to_ascii_lowercase())) {
-                    return true;
+                if let Ok(Some(name)) = reg::get_string(root, &format!(r"{key}\{sub}"), "DisplayName") {
+                    names.push(name.to_ascii_lowercase());
                 }
             }
         }
     }
-    false
+    names
 }
 
-/// IPv6 with a global address but no working route. Only fails when the adapter has a
-/// global address, IPv6 to a known host fails, and IPv4 (Reach) passed. Without a
-/// global address the layer is skipped.
-fn ipv6(reach_ok: bool) -> Result<String, Option<String>> {
-    let Some(adapter) = connection() else { return Err(None) };
+/// IPv6 with a global address but no working route. Only warns when the adapter has a
+/// global address, IPv6 to a known host fails, and IPv4 (Reach) passed: with IPv4 down
+/// too, a failed IPv6 connect says nothing.
+fn ipv6(reach_ok: bool) -> (Status, Detail) {
+    let Some(adapter) = connection() else { return (Status::Skipped, Detail::NoIpv6) };
     if !adapter.ipv6 {
-        return Err(None);
+        return (Status::Skipped, Detail::NoIpv6);
     }
-    let target = "2606:4700:4700::1111".parse().map(|ip| SocketAddr::new(ip, 443));
-    let Ok(target) = target else { return Err(None) };
-    let ok = TcpStream::connect_timeout(&target, Duration::from_secs(3)).is_ok();
-    if ok {
-        return Ok("IPv6 reaches 2606:4700:4700::1111".into());
+    let target = SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111)), 443);
+    if TcpStream::connect_timeout(&target, Duration::from_secs(3)).is_ok() {
+        return (Status::Ok, Detail::Ipv6Ok);
     }
-    if reach_ok {
-        return Err(Some("IPv6 is on but unreachable".into()));
-    }
-    Err(None)
+    if reach_ok { (Status::Warning, Detail::Ipv6Broken) } else { (Status::Skipped, Detail::Ipv6Untested) }
 }
 
-/// The tweak id that fixes a failed layer, if one applies. Clock failures map to the
-/// clock repair; captive portals and VPN leftovers need manual steps instead.
-pub fn repair_for_layer(layer: Layer, detail: &str) -> Option<&'static str> {
-    match layer {
-        Layer::Link => Some("restart-connection"),
-        Layer::Ip => Some("renew-ip"),
-        Layer::Gateway => Some("clear-arp"),
-        Layer::Dns => Some("flush-dns"),
-        Layer::Reach => Some("restart-connection"),
-        Layer::Https if detail.contains("clock") => Some("sync-clock"),
-        Layer::Https => None,
-        Layer::Ncsi => None,
-        Layer::Proxy => Some(PROXY_TWEAK),
-        Layer::Hosts => Some(HOSTS_TWEAK),
-        Layer::Vpn => None,
-        Layer::Ipv6 => Some(IPV6_TWEAK),
+/// The tweak id that fixes a layer that failed or warns, if one applies. Captive
+/// portals, rewritten DNS and VPN leftovers need steps outside the app.
+pub fn repair_for(layer: Layer, detail: &Detail) -> Option<&'static str> {
+    match (layer, detail) {
+        (Layer::Link, _) => Some("restart-connection"),
+        (Layer::Ip, _) => Some("renew-ip"),
+        (Layer::Gateway, _) => Some("clear-arp"),
+        (Layer::Dns, _) => Some("flush-dns"),
+        (Layer::Reach, _) => Some("restart-connection"),
+        (Layer::Https, Detail::HttpsClock(_) | Detail::ClockOff(_)) => Some("sync-clock"),
+        (Layer::Https, Detail::HttpsProxy) => Some(PROXY_TWEAK),
+        (Layer::Proxy, _) => Some(PROXY_TWEAK),
+        (Layer::Hosts, _) => Some(HOSTS_TWEAK),
+        (Layer::Ipv6, _) => Some(IPV6_TWEAK),
+        _ => None,
     }
 }
 
@@ -2514,12 +2755,13 @@ mod tests {
     fn net_connection() {
         let c = connection().expect("no connection");
         println!(
-            "{} {} index={} physical={} ipv6={} gateway={:?} dhcp={} dns={:?} current={:?} set={:?}",
+            "{} {} index={} physical={} ipv6={} bound={} gateway={:?} dhcp={} dns={:?} current={:?} set={:?}",
             c.name,
             c.guid,
             c.index,
             c.physical,
             c.ipv6,
+            c.ipv6_bound,
             c.gateway,
             c.dhcp,
             c.dns,
@@ -2650,34 +2892,34 @@ mod tests {
     fn net_diagnose() {
         let start = Instant::now();
         diagnose();
-        let statuses = diag_statuses();
-        let details = diag_details();
-        for (i, (layer, status)) in statuses.iter().enumerate() {
-            println!(
-                "{:<5} {:?} {}",
-                format!("{}", i + 1),
-                status,
-                details.get(i).map(String::as_str).unwrap_or("")
-            );
+        for (i, (layer, status, detail)) in diag_results().iter().enumerate() {
+            println!("{:<2} {layer:<8?} {status:<8?} {detail:?}", i + 1);
             assert_eq!(*layer, LAYERS[i]);
             assert_ne!(*status, Status::Running, "no layer stays running");
-            assert_ne!(
-                *status,
-                Status::Failed,
-                "layer {layer:?} failed: {}",
-                details.get(i).map(String::as_str).unwrap_or("")
-            );
-            if *status == Status::Ok {
-                assert!(
-                    !details.get(i).map(String::as_str).unwrap_or("").is_empty(),
-                    "layer {layer:?} Ok needs a detail"
-                );
-            }
+            assert_ne!(*status, Status::Queued, "every layer gets a result");
+            assert_ne!(*status, Status::Failed, "layer {layer:?} failed: {detail:?}");
+            assert_ne!(*detail, Detail::None, "layer {layer:?} needs a detail");
         }
-        // Nothing changes the system: the run itself must leave the flag down.
-        assert!(!DIAG_ON.load(Ordering::Relaxed));
         assert!(!diag_running());
         println!("took {:?}", start.elapsed());
+    }
+
+    /// Puts one registry value back as it was, or deletes it when there was none.
+    fn restore_value(
+        root: windows::Win32::System::Registry::HKEY,
+        key: &str,
+        name: &str,
+        value: &Option<Vec<u8>>,
+        kind: u8,
+    ) {
+        let _ = match (value, kind) {
+            (None, _) => reg::delete_value(root, key, name),
+            (Some(bytes), b'd') => {
+                reg::set_dword(root, key, name, u32::from_le_bytes(bytes[..4].try_into().unwrap()))
+            }
+            (Some(bytes), b's') => reg::set_string(root, key, name, std::str::from_utf8(bytes).unwrap()),
+            (Some(bytes), _) => reg::set_binary(root, key, name, bytes),
+        };
     }
 
     /// Reads the proxy, writes a fake one, clears it through the tweak's own calls,
@@ -2686,125 +2928,73 @@ mod tests {
     #[test]
     #[ignore]
     fn proxy_round_trip() {
-        struct Guard {
-            enable: Option<u32>,
-            server: Option<String>,
-            override_list: Option<String>,
-            auto: Option<String>,
-            winhttp: Option<Vec<u8>>,
-        }
+        type Saved =
+            Vec<(windows::Win32::System::Registry::HKEY, &'static str, &'static str, Option<Vec<u8>>, u8)>;
+        let read = || -> Saved {
+            let hkcu = reg::HKEY_CURRENT_USER;
+            let dword =
+                |name| reg::get_dword(hkcu, PROXY_KEY, name).unwrap().map(|v| v.to_le_bytes().to_vec());
+            let string = |name| reg::get_string(hkcu, PROXY_KEY, name).unwrap().map(String::into_bytes);
+            vec![
+                (hkcu, PROXY_KEY, "ProxyEnable", dword("ProxyEnable"), b'd'),
+                (hkcu, PROXY_KEY, "ProxyServer", string("ProxyServer"), b's'),
+                (hkcu, PROXY_KEY, "ProxyOverride", string("ProxyOverride"), b's'),
+                (hkcu, PROXY_KEY, "AutoConfigURL", string("AutoConfigURL"), b's'),
+                (
+                    hkcu,
+                    USER_CONNECTIONS,
+                    USER_SETTINGS,
+                    reg::get_binary(hkcu, USER_CONNECTIONS, USER_SETTINGS).unwrap(),
+                    b'b',
+                ),
+                (
+                    reg::HKEY_LOCAL_MACHINE,
+                    WINHTTP_CONNECTIONS,
+                    WINHTTP_SETTINGS,
+                    reg::get_binary(reg::HKEY_LOCAL_MACHINE, WINHTTP_CONNECTIONS, WINHTTP_SETTINGS).unwrap(),
+                    b'b',
+                ),
+            ]
+        };
+        struct Guard(Saved);
         impl Drop for Guard {
             fn drop(&mut self) {
-                match self.enable {
-                    Some(v) => {
-                        let _ = reg::set_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable", v);
-                    }
-                    None => {
-                        let _ = reg::delete_value(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable");
-                    }
-                }
-                match &self.server {
-                    Some(v) => {
-                        let _ = reg::set_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyServer", v);
-                    }
-                    None => {
-                        let _ = reg::delete_value(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyServer");
-                    }
-                }
-                match &self.override_list {
-                    Some(v) => {
-                        let _ = reg::set_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyOverride", v);
-                    }
-                    None => {
-                        let _ = reg::delete_value(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyOverride");
-                    }
-                }
-                match &self.auto {
-                    Some(v) => {
-                        let _ = reg::set_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "AutoConfigURL", v);
-                    }
-                    None => {
-                        let _ = reg::delete_value(reg::HKEY_CURRENT_USER, PROXY_KEY, "AutoConfigURL");
-                    }
-                }
-                match &self.winhttp {
-                    Some(blob) => {
-                        let _ = reg::set_binary(
-                            reg::HKEY_LOCAL_MACHINE,
-                            WINHTTP_CONNECTIONS,
-                            WINHTTP_SETTINGS,
-                            blob,
-                        );
-                    }
-                    None => {
-                        let _ =
-                            reg::delete_value(reg::HKEY_LOCAL_MACHINE, WINHTTP_CONNECTIONS, WINHTTP_SETTINGS);
-                    }
+                for (root, key, name, value, kind) in &self.0 {
+                    restore_value(*root, key, name, value, *kind);
                 }
                 notify_proxy_changed();
             }
         }
-        let read = || -> Option<String> {
-            reg::get_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyServer").unwrap()
-        };
-        let saved_enable = reg::get_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable").unwrap();
-        let saved_server = read();
-        let saved_override = reg::get_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyOverride").unwrap();
-        let saved_auto = reg::get_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "AutoConfigURL").unwrap();
-        let saved_winhttp =
-            reg::get_binary(reg::HKEY_LOCAL_MACHINE, WINHTTP_CONNECTIONS, WINHTTP_SETTINGS).unwrap();
-        let _guard = Guard {
-            enable: saved_enable,
-            server: saved_server.clone(),
-            override_list: saved_override.clone(),
-            auto: saved_auto.clone(),
-            winhttp: saved_winhttp.clone(),
-        };
-        println!("before: enable={saved_enable:?} server={saved_server:?} winhttp={saved_winhttp:?}");
+        let before = read();
+        let guard = Guard(before.clone());
         let before_netsh = tweaks::run("netsh.exe", &["winhttp", "show", "proxy"]).unwrap_or_default();
-        println!("before netsh: {before_netsh}");
         reg::set_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable", 1).unwrap();
         reg::set_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyServer", "127.0.0.1:9999").unwrap();
         notify_proxy_changed();
+        let faked = read();
         assert!(proxy_set().unwrap(), "a set proxy must be seen");
         assert!(!proxy_clear().unwrap(), "clear reads false while a proxy is set");
         let start = Instant::now();
         let previous = reset_proxy().unwrap();
         println!("saved {previous:?} in {:?}", start.elapsed());
-        assert!(!proxy_set().unwrap(), "reset must clear both WinINet and WinHTTP");
-        assert!(proxy_clear().unwrap(), "clear reads true once the proxy is gone");
-        assert_eq!(reg::get_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable").unwrap(), Some(0));
+        assert!(!proxy_set().unwrap(), "reset must clear WinINet, its blob and WinHTTP");
+        assert!(proxy_clear().unwrap());
+        let flags = connection_flags().unwrap_or(1);
+        assert_eq!(flags & 6, 0, "blob has no manual proxy or script left");
         restore_proxy(previous.as_deref()).unwrap();
-        // Undo puts back the fake proxy that was saved, not the original from before the test.
-        assert_eq!(reg::get_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable").unwrap(), Some(1));
-        assert_eq!(read().as_deref(), Some("127.0.0.1:9999"));
-        drop(_guard);
-        assert_eq!(reg::get_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable").unwrap(), saved_enable);
-        assert_eq!(read(), saved_server);
-        assert_eq!(
-            reg::get_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyOverride").unwrap(),
-            saved_override
-        );
-        assert_eq!(reg::get_string(reg::HKEY_CURRENT_USER, PROXY_KEY, "AutoConfigURL").unwrap(), saved_auto);
-        assert_eq!(
-            reg::get_binary(reg::HKEY_LOCAL_MACHINE, WINHTTP_CONNECTIONS, WINHTTP_SETTINGS).unwrap(),
-            saved_winhttp
-        );
+        // Undo puts back the fake proxy that was saved, not the original from before.
+        assert_eq!(read(), faked);
+        drop(guard);
+        assert_eq!(read(), before);
         let after_netsh = tweaks::run("netsh.exe", &["winhttp", "show", "proxy"]).unwrap_or_default();
-        println!("after netsh: {after_netsh}");
         assert_eq!(after_netsh, before_netsh, "WinHTTP proxy must read the same after undo");
-        println!("after: enable={:?} server={:?}", saved_enable, read());
     }
 
-    /// Cleans a scratch copy of a hosts file, never the real one:
-    /// `cargo test hosts_round_trip -- --ignored --nocapture`
+    /// Cleans scratch copies of a hosts file, never the real one.
     #[test]
-    #[ignore]
     fn hosts_round_trip() {
         let dir = std::env::temp_dir().join(format!("vantix-hosts-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("hosts").to_string_lossy().into_owned();
-        let backup = dir.join("hosts.bak").to_string_lossy().into_owned();
         struct Remove(std::path::PathBuf);
         impl Drop for Remove {
             fn drop(&mut self) {
@@ -2812,46 +3002,76 @@ mod tests {
             }
         }
         let _remove = Remove(dir.clone());
-        let content =
-            "# comment\n127.0.0.1 localhost\n93.184.216.34 google.com\n93.184.216.34 notgoogle.com\n";
+        let path = dir.join("hosts").to_string_lossy().into_owned();
+        let backup = dir.join("hosts.bak").to_string_lossy().into_owned();
+        // ANSI "Café" (0xE9) in a comment, CRLF and LF lines mixed, a privacy list entry,
+        // a lookalike, and two lines that do get in the way.
+        let content: &[u8] = b"# Caf\xe9\r\n127.0.0.1 localhost\r\n0.0.0.0 vortex.data.microsoft.com\r\n\
+            93.184.216.34 www.google.com # test\r\n93.184.216.34 notgoogle.com\n0.0.0.0 fe2.update.windowsupdate.com\n";
         std::fs::write(&path, content).unwrap();
-        let state = hosts_state_in(&path).unwrap();
-        println!("state: {state:?}");
-        assert_eq!(state.1, 1, "only google.com counts, notgoogle.com must not match");
-        assert!(hosts_match("mail.google.com", "google.com"));
-        assert!(!hosts_match("notgoogle.com", "google.com"));
-        let previous = reset_hosts_in(&path, &backup).unwrap();
-        println!("removed: {previous:?}");
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !after.lines().any(|l| l.split_whitespace().any(|h| h == "google.com")),
-            "blocking line goes away"
+        assert_eq!(hosts_state_in(&path), Some((5, 2)));
+        reset_hosts_in(&path, &backup).unwrap();
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(
+            after,
+            b"# Caf\xe9\r\n127.0.0.1 localhost\r\n0.0.0.0 vortex.data.microsoft.com\r\n93.184.216.34 notgoogle.com\n"
         );
-        assert!(after.contains("notgoogle.com"), "lookalike stays");
-        assert!(after.contains("localhost"), "safe lines stay");
         restore_hosts_in(&path, &backup).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        assert_eq!(std::fs::read(&path).unwrap(), content);
         assert!(!std::path::Path::new(&backup).exists(), "backup goes away on undo");
-        println!("round trip ok");
+    }
+
+    /// `cargo test net_ncsi -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn net_ncsi() {
+        let misses = (0..20).filter(|_| !ncsi_get().is_some_and(|p| p.real())).count();
+        println!("missed {misses} of 20");
     }
 
     #[test]
     fn diagnose_pure_checks() {
-        assert!(check_ip(Some(Ipv4Addr::new(192, 168, 0, 23))).is_ok());
-        assert!(check_ip(Some(Ipv4Addr::new(100, 64, 0, 1))).is_ok());
-        assert!(check_ip(Some(Ipv4Addr::new(169, 254, 1, 5))).is_err());
-        assert!(check_ip(None).is_err());
-        assert!(check_ncsi("Microsoft Connect Test").is_ok());
-        assert!(check_ncsi("<html>sign in to the hotel wifi</html>").is_err());
-        let now = chrono::DateTime::parse_from_rfc2822("Thu, 01 Jan 2026 12:00:00 GMT")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-        let three_days = "Sun, 04 Jan 2026 12:00:00 GMT";
-        let thirty_secs = "Thu, 01 Jan 2026 12:00:30 GMT";
-        assert_eq!(sent_time_worse(three_days, now), Some(true));
-        assert_eq!(sent_time_worse(thirty_secs, now), Some(false));
-        assert_eq!(clock_offset_secs(thirty_secs, now), Some(30));
+        assert_eq!(check_ip(Some(Ipv4Addr::new(100, 64, 0, 1))).0, Status::Ok);
+        assert_eq!(check_ip(Some(Ipv4Addr::new(169, 254, 1, 5))), (Status::Failed, Detail::Apipa));
+        assert_eq!(check_ip(None).0, Status::Failed);
+
+        let router = Ipv4Addr::new(192, 168, 0, 1);
+        assert_eq!(check_gateway(router, None, || true), (Status::Ok, Detail::RouterArp));
+        assert_eq!(check_gateway(router, None, || false), (Status::Failed, Detail::RouterSilent(router)));
+        assert_eq!(check_gateway(router, Some(0.6), || panic!("no ARP after a ping")).0, Status::Ok);
+
+        assert_eq!(check_dns(None, || None), (Status::Skipped, Detail::DnsUnsure));
+        assert_eq!(check_dns(None, || Some(9.0)), (Status::Failed, Detail::DnsOnlyPublic(9.0)));
+
+        let portal = parse_probe(
+            "HTTP/1.1 200 OK\r\nDate: Thu, 01 Jan 2026 12:00:00 GMT\r\n\r\n<html>Hotel login</html>",
+        );
+        assert!(!portal.real());
+        assert_eq!(portal.date.as_deref(), Some("Thu, 01 Jan 2026 12:00:00 GMT"));
+        assert_eq!(ncsi(Some(&portal)), (Status::Failed, Detail::Portal));
+        assert_eq!(https_failure(true, Some(600), || true), (Status::Failed, Detail::HttpsPortal));
+        assert_eq!(https_failure(false, Some(-600), || true), (Status::Failed, Detail::HttpsClock(-600)));
+        assert_eq!(https_failure(false, Some(30), || true), (Status::Failed, Detail::HttpsProxy));
+        assert_eq!(https_failure(false, None, || false), (Status::Failed, Detail::HttpsFailed));
+        assert!(parse_probe("HTTP/1.1 200 OK\r\n\r\nMicrosoft Connect Test").real());
+
+        assert_eq!(check_clock(300), (Status::Warning, Detail::ClockOff(300)));
+        assert_eq!(check_clock(-30), (Status::Ok, Detail::ClockWithin(30)));
+        let now = chrono::DateTime::parse_from_rfc2822("Thu, 01 Jan 2026 12:00:00 GMT").unwrap().to_utc();
+        assert_eq!(clock_offset_secs("Thu, 01 Jan 2026 12:05:00 GMT", now), Some(300));
         assert_eq!(clock_offset_secs("not a date", now), None);
+    }
+
+    #[test]
+    fn vpn_leftover_checks() {
+        let tap = ("Local Area Connection".to_string(), "TAP-Windows Adapter V9".to_string());
+        let wintun = ("Proton".to_string(), "Wintun Userspace Tunnel".to_string());
+        let wire = || vec!["wireguard".to_string()];
+        assert_eq!(vpn_leftovers(std::slice::from_ref(&tap), &wire()), ["Local Area Connection"]);
+        assert!(vpn_leftovers(std::slice::from_ref(&tap), &["openvpn 2.6.12-i001 amd64".into()]).is_empty());
+        assert!(vpn_leftovers(std::slice::from_ref(&wintun), &wire()).is_empty());
+        assert_eq!(vpn_leftovers(&[wintun], &[]), ["Proton"]);
+        assert!(vpn_leftovers(&[("Ethernet".into(), "Realtek PCIe GbE".into())], &[]).is_empty());
     }
 
     #[test]
@@ -2872,20 +3092,27 @@ mod tests {
         let hex = hex_encode(&manual);
         assert_eq!(hex_decode(&hex).as_deref(), Some(manual.as_slice()));
         assert_eq!(hex_decode("zz"), None);
+        // Auto detect alone, as Windows ships, isn't a proxy.
+        let mut detect = manual.clone();
+        detect[8] = 9;
+        assert!(!winhttp_has_proxy(&direct_blob(detect.clone(), false)) && !winhttp_has_proxy(&detect));
+        let cleared = direct_blob(manual.clone(), false);
+        assert!(!winhttp_has_proxy(&cleared));
+        assert_eq!((cleared[4], cleared[8]), (2, 1), "counter up, flags back to direct");
+        assert_eq!(direct_blob(detect.clone(), false)[8], 9, "auto detect stays unless a script was found");
+        assert_eq!(direct_blob(detect, true)[8], 1);
     }
 
     #[test]
     fn repair_mapping_checks() {
-        assert_eq!(repair_for_layer(Layer::Link, ""), Some("restart-connection"));
-        assert_eq!(repair_for_layer(Layer::Ip, ""), Some("renew-ip"));
-        assert_eq!(repair_for_layer(Layer::Gateway, ""), Some("clear-arp"));
-        assert_eq!(repair_for_layer(Layer::Dns, ""), Some("flush-dns"));
-        assert_eq!(repair_for_layer(Layer::Https, "clock is off"), Some("sync-clock"));
-        assert_eq!(repair_for_layer(Layer::Https, "handshake failed"), None);
-        assert_eq!(repair_for_layer(Layer::Ncsi, ""), None);
-        assert_eq!(repair_for_layer(Layer::Proxy, ""), Some(PROXY_TWEAK));
-        assert_eq!(repair_for_layer(Layer::Hosts, ""), Some(HOSTS_TWEAK));
-        assert_eq!(repair_for_layer(Layer::Vpn, ""), None);
-        assert_eq!(repair_for_layer(Layer::Ipv6, ""), Some(IPV6_TWEAK));
+        assert_eq!(repair_for(Layer::Gateway, &Detail::RouterSilent(Ipv4Addr::LOCALHOST)), Some("clear-arp"));
+        assert_eq!(repair_for(Layer::Https, &Detail::ClockOff(300)), Some("sync-clock"));
+        assert_eq!(repair_for(Layer::Https, &Detail::HttpsClock(-300)), Some("sync-clock"));
+        assert_eq!(repair_for(Layer::Https, &Detail::HttpsProxy), Some(PROXY_TWEAK));
+        assert_eq!(repair_for(Layer::Https, &Detail::HttpsFailed), None);
+        assert_eq!(repair_for(Layer::Ncsi, &Detail::Portal), None);
+        assert_eq!(repair_for(Layer::Hosts, &Detail::HostsBlocking(1, 3)), Some(HOSTS_TWEAK));
+        assert_eq!(repair_for(Layer::Vpn, &Detail::VpnLeftovers("x".into())), None);
+        assert_eq!(repair_for(Layer::Ipv6, &Detail::Ipv6Broken), Some(IPV6_TWEAK));
     }
 }
