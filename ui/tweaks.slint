@@ -30,6 +30,16 @@ export struct TweakRow {
     estimate: string,
     /// Space it freed when applied, measured on the drive.
     freed: string,
+    /// Has a "test it" button: ping under load before and after the change.
+    testable: bool,
+    /// 0 none, 1 measuring before, 2 waiting for the change, 3 measuring after, 4 done,
+    /// 5 the test server or 1.1.1.1 didn't answer.
+    test-stage: int,
+    /// Average ping under load, before and after.
+    test-before: string,
+    test-after: string,
+    /// -1 better, 0 within noise, 1 worse.
+    test-verdict: int,
 }
 
 export struct ChangeRow {
@@ -54,6 +64,10 @@ export global Tweaks {
     in property <bool> busy;
 
     callback activate(int);
+    /// Measure, apply, measure again.
+    callback test(int);
+    /// A tweak test is measuring, so no other can start.
+    in property <bool> testing;
     callback undo(int);
     callback undo-all();
     callback reset(int);
@@ -108,6 +122,13 @@ export global TweakText {
         @tr("Lowest Wi-Fi roaming"),
         @tr("Stop uploading updates to PCs on the internet"),
         @tr("Limit a program's upload"),
+        @tr("Turn off Large Send Offload"),
+        @tr("Turn off Flow Control"),
+        @tr("Turn off Packet Coalescing"),
+        @tr("Largest receive and send buffers"),
+        @tr("Turn off LLMNR"),
+        @tr("Turn off NetBIOS over TCP/IP"),
+        @tr("DNS over HTTPS"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -155,6 +176,13 @@ export global TweakText {
         @tr("The Intel Wi-Fi card only looks for another access point when the signal is very weak. Each search stalls the connection for a moment. For PCs that stay in one place. The connection drops for a few seconds while the adapter restarts."),
         @tr("Windows is set to send updates to other PCs on the internet, which fills your upload and lags everything else. This keeps the sharing to your local network, the Windows default."),
         @tr("A Windows QoS policy holds the program's upload to half of what the Bufferbloat test measured, so it can't fill the line and raise everyone's ping. Downloads stay as they are: Windows can only limit what a program sends. Takes effect at once."),
+        @tr("The network card cuts big uploads into packets by itself. Some Realtek and Intel cards send them in bursts that queue up in front of game traffic while something uploads. Off, the CPU does that work. The connection drops for a few seconds while the adapter restarts."),
+        @tr("A busy router or switch can tell the network card to stop sending for a moment, and everything waits, game packets included. Off, the card keeps sending and the router drops what it can't take, which TCP handles better than a pause. The connection drops for a few seconds while the adapter restarts."),
+        @tr("The network card holds incoming broadcast packets back and hands them over in groups, so the PC wakes less often. Off, they arrive as they come. The connection drops for a few seconds while the adapter restarts."),
+        @tr("Room on the network card for packets that arrive or leave in a burst before the CPU gets to them. Some drivers ship well below what the card takes, and a full buffer drops packets. This sets both to the highest the driver lists. The connection drops for a few seconds while the adapter restarts."),
+        @tr("Security, not speed. When a name isn't in DNS, Windows asks the whole local network who has it, and anyone can answer. On public Wi-Fi a device can answer for a name it doesn't own and collect your PC's sign-in hash."),
+        @tr("Security, not speed. The older cousin of LLMNR: Windows answers and asks for names over broadcast, on every adapter. The same trick works on it, and it also tells the network your PC's name. Set on every adapter, so a VPN or a second card doesn't bring it back."),
+        @tr("Privacy, not speed. The DNS service you picked on the DNS tab gets its lookups over HTTPS, so the network and your provider can't read or change which sites you look up. Windows 11 only."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -202,6 +230,13 @@ export global TweakText {
         @tr("Carried around, the laptop stays on a far access point longer before it switches."),
         "",
         @tr("That program uploads slower, so a backup or sync takes longer to finish."),
+        @tr("A little more CPU use during big uploads."),
+        @tr("On an old or overloaded switch, big transfers can lose a few more packets."),
+        @tr("Slightly shorter battery life on laptops."),
+        "",
+        @tr("Devices found only by name on the local network, like some printers or NAS boxes, need their IP or a DNS entry."),
+        @tr("Very old devices and Windows XP era shares that are browsed by name stop showing up."),
+        @tr("No plain fallback: if the HTTPS address can't be reached, names stop resolving until you undo this. Some public Wi-Fi sign-in pages need it off."),
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }
@@ -333,6 +368,22 @@ component TweakCard inherits Rectangle {
                 font-size: 12px;
                 wrap: word-wrap;
             }
+
+            if root.item.test-stage > 0: Text {
+                text: root.item.test-stage == 1 ? @tr("Measuring ping during a download before the change, about 10 s...")
+                    : root.item.test-stage == 2 ? @tr("Before: {} during a download. Apply to measure again.", root.item.test-before)
+                    : root.item.test-stage == 3 ? @tr("Before: {} during a download. Measuring again after the change...", root.item.test-before)
+                    : root.item.test-stage == 5 ? @tr("The test couldn't reach 1.1.1.1 or the speed test server.")
+                    : root.item.test-verdict < 0 ? @tr("During a download: {} before, {} after. Better on your network.", root.item.test-before, root.item.test-after)
+                    : root.item.test-verdict > 0 ? @tr("During a download: {} before, {} after. Worse on your network, undo it.", root.item.test-before, root.item.test-after)
+                    : @tr("During a download: {} before, {} after. No difference beyond the usual noise, so undoing it costs nothing.", root.item.test-before, root.item.test-after);
+                color: root.item.test-stage == 4 && root.item.test-verdict < 0 ? Theme.accent
+                    : root.item.test-stage == 4 && root.item.test-verdict > 0 ? Theme.bad
+                    : root.item.test-stage == 5 ? Theme.warn : Theme.info;
+                font-size: 12px;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
         }
 
         VerticalLayout {
@@ -344,13 +395,26 @@ component TweakCard inherits Rectangle {
                 color: Theme.faint;
                 horizontal-alignment: right;
             }
-            if root.item.state == TweakState.off || root.item.state == TweakState.action || root.item.state == TweakState.ran: HorizontalLayout {
-                alignment: end;
-                Button {
-                    text: root.item.state == TweakState.off ? @tr("Apply") : root.item.state == TweakState.ran ? @tr("Run again") : @tr("Run");
-                    primary: root.item.state != TweakState.ran;
-                    enabled: !Tweaks.busy;
-                    clicked => { Tweaks.activate(root.item.index); }
+            if root.item.state == TweakState.off || root.item.state == TweakState.action || root.item.state == TweakState.ran: VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: end;
+                    Button {
+                        text: root.item.state == TweakState.off ? @tr("Apply") : root.item.state == TweakState.ran ? @tr("Run again") : @tr("Run");
+                        primary: root.item.state != TweakState.ran;
+                        enabled: !Tweaks.busy && !Tweaks.testing;
+                        clicked => { Tweaks.activate(root.item.index); }
+                    }
+                }
+                if root.item.testable && root.item.state == TweakState.off: HorizontalLayout {
+                    alignment: end;
+                    Button {
+                        text: @tr("Test first");
+                        icon: Icons.gauge;
+                        tall: 32px;
+                        enabled: !Tweaks.busy && !Tweaks.testing;
+                        clicked => { Tweaks.test(root.item.index); }
+                    }
                 }
             }
             if root.item.state == TweakState.system: HorizontalLayout {

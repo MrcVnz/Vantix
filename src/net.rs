@@ -492,6 +492,41 @@ pub fn bufferbloat() -> Result<Bloat, BloatError> {
     Ok(Bloat { idle, download, upload, data: down_bytes + up_bytes })
 }
 
+/// Ping idle and under a full download, for "test this tweak": the bufferbloat test cut
+/// to its download half, about 10 seconds.
+#[derive(Clone, Copy, Debug)]
+pub struct LoadCheck {
+    /// Average ping while the download runs, in ms.
+    pub loaded: f64,
+}
+
+pub fn load_check() -> Result<LoadCheck, BloatError> {
+    let icmp = Icmp::new().ok_or(BloatError::NoPing)?;
+    *PROGRESS.lock().unwrap() = Progress::default();
+    // A short idle start, only to know 1.1.1.1 answers at all.
+    if sample_pings(&icmp, Duration::from_secs(2), Phase::Idle, None).iter().all(|(_, p)| p.is_none()) {
+        return Err(BloatError::NoPing);
+    }
+    let (load, bytes) = loaded(&icmp, Phase::Download);
+    if bytes == 0 {
+        return Err(BloatError::NoServer);
+    }
+    Ok(LoadCheck { loaded: load.latency })
+}
+
+/// How a second check compares to the first: -1 better, 0 within noise, 1 worse. Pings
+/// under load swing a few ms between runs, so less than 5 ms or 15% is noise.
+pub fn compare_checks(before: &LoadCheck, after: &LoadCheck) -> i32 {
+    let change = after.loaded - before.loaded;
+    if change.abs() < 5.0_f64.max(before.loaded * 0.15) {
+        0
+    } else if change < 0.0 {
+        -1
+    } else {
+        1
+    }
+}
+
 /// Bytes moved by the streams of one phase, and when the ramp ended with how many.
 struct Meter<'a> {
     bytes: &'a AtomicU64,
@@ -736,6 +771,8 @@ pub struct Provider {
     pub name: &'static str,
     v4: [Ipv4Addr; 2],
     v6: [Ipv6Addr; 2],
+    /// Its DNS over HTTPS address.
+    doh: &'static str,
 }
 
 pub const PROVIDERS: [Provider; 5] = [
@@ -746,6 +783,7 @@ pub const PROVIDERS: [Provider; 5] = [
             Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111),
             Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001),
         ],
+        doh: "https://cloudflare-dns.com/dns-query",
     },
     Provider {
         name: "Google",
@@ -754,6 +792,7 @@ pub const PROVIDERS: [Provider; 5] = [
             Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
             Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8844),
         ],
+        doh: "https://dns.google/dns-query",
     },
     Provider {
         name: "Quad9",
@@ -762,6 +801,7 @@ pub const PROVIDERS: [Provider; 5] = [
             Ipv6Addr::new(0x2620, 0xfe, 0, 0, 0, 0, 0, 0xfe),
             Ipv6Addr::new(0x2620, 0xfe, 0, 0, 0, 0, 0, 0x9),
         ],
+        doh: "https://dns.quad9.net/dns-query",
     },
     Provider {
         name: "OpenDNS",
@@ -770,6 +810,7 @@ pub const PROVIDERS: [Provider; 5] = [
             Ipv6Addr::new(0x2620, 0x119, 0x35, 0, 0, 0, 0, 0x35),
             Ipv6Addr::new(0x2620, 0x119, 0x53, 0, 0, 0, 0, 0x53),
         ],
+        doh: "https://doh.opendns.com/dns-query",
     },
     Provider {
         name: "AdGuard",
@@ -778,6 +819,7 @@ pub const PROVIDERS: [Provider; 5] = [
             Ipv6Addr::new(0x2a10, 0x50c0, 0, 0, 0, 0, 0xad1, 0xff),
             Ipv6Addr::new(0x2a10, 0x50c0, 0, 0, 0, 0, 0xad2, 0xff),
         ],
+        doh: "https://dns.adguard-dns.com/dns-query",
     },
 ];
 
@@ -1229,10 +1271,17 @@ const NET_CLASS: &str = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-
 
 pub struct Property {
     keyword: &'static str,
-    /// Values that count as on; the first is the one written.
+    /// Values that count as on; the first is the one written. `MAX` for a number set to
+    /// the highest the driver takes.
     on: &'static [&'static str],
+    /// `DEFAULT` for whatever the driver ships with.
     off: &'static str,
 }
+
+/// The highest value the driver lists for a numeric keyword.
+const MAX: &str = "max";
+/// The driver's own default for the keyword.
+const DEFAULT: &str = "default";
 
 pub struct AdapterSetting {
     id: &'static str,
@@ -1287,6 +1336,46 @@ pub const WIFI_ROAMING: AdapterSetting = AdapterSetting {
     one_way: false,
 };
 
+/// The card cutting large sends into packets itself. Off, the CPU does it, which some
+/// Realtek and Intel cards need to stop sending in bursts that queue up behind a game.
+pub const LSO: AdapterSetting = AdapterSetting {
+    id: "lso-off",
+    wifi: None,
+    properties: &[
+        Property { keyword: "*LsoV2IPv4", on: &["0"], off: "1" },
+        Property { keyword: "*LsoV2IPv6", on: &["0"], off: "1" },
+    ],
+    one_way: false,
+};
+
+/// Pause frames: a busy switch or router can tell the card to stop sending for a moment.
+pub const FLOW_CONTROL: AdapterSetting = AdapterSetting {
+    id: "flow-control-off",
+    wifi: Some(false),
+    properties: &[Property { keyword: "*FlowControl", on: &["0"], off: DEFAULT }],
+    one_way: false,
+};
+
+/// Holds incoming broadcast and multicast packets to wake the PC less often.
+pub const PACKET_COALESCING: AdapterSetting = AdapterSetting {
+    id: "packet-coalescing-off",
+    wifi: None,
+    properties: &[Property { keyword: "*PacketCoalescing", on: &["0"], off: "1" }],
+    one_way: false,
+};
+
+/// Room for packets that arrive or leave in a burst before the CPU gets to them. Some
+/// drivers ship well below what the card takes; a full ring drops packets.
+pub const BUFFERS: AdapterSetting = AdapterSetting {
+    id: "adapter-buffers-max",
+    wifi: None,
+    properties: &[
+        Property { keyword: "*ReceiveBuffers", on: &[MAX], off: DEFAULT },
+        Property { keyword: "*TransmitBuffers", on: &[MAX], off: DEFAULT },
+    ],
+    one_way: true,
+};
+
 /// The adapter's driver key, found by its GUID.
 fn class_key(guid: &str) -> Option<String> {
     let id = |key: &str| reg::get_string(reg::HKEY_LOCAL_MACHINE, key, "NetCfgInstanceId").ok().flatten();
@@ -1296,13 +1385,37 @@ fn class_key(guid: &str) -> Option<String> {
         .find(|key| id(key).is_some_and(|id| id.eq_ignore_ascii_case(guid)))
 }
 
+/// The value to write: `MAX` and `DEFAULT` come from the driver's list.
+fn value_for(key: &str, keyword: &str, value: &str) -> Option<String> {
+    let params = format!(r"{key}\Ndi\Params\{keyword}");
+    let read = |name| reg::get_string(reg::HKEY_LOCAL_MACHINE, &params, name).ok().flatten();
+    match value {
+        MAX => read("max"),
+        DEFAULT => read("Default"),
+        value => Some(value.to_string()),
+    }
+}
+
 /// Whether the driver lists the keyword and takes `value` for it.
 fn accepts(key: &str, keyword: &str, value: &str) -> bool {
     let params = format!(r"{key}\Ndi\Params\{keyword}");
     let choices = format!(r"{params}\enum");
+    let Some(value) = value_for(key, keyword, value) else { return false };
     reg::key_exists(reg::HKEY_LOCAL_MACHINE, &params)
         && (!reg::key_exists(reg::HKEY_LOCAL_MACHINE, &choices)
-            || reg::get_string(reg::HKEY_LOCAL_MACHINE, &choices, value).is_ok_and(|v| v.is_some()))
+            || reg::get_string(reg::HKEY_LOCAL_MACHINE, &choices, &value).is_ok_and(|v| v.is_some()))
+}
+
+/// Whether the value in use counts as on. A number set to `MAX` is on at the driver's
+/// highest or above it.
+fn is_on(key: &str, p: &Property) -> bool {
+    let Some(current) = property(key, p.keyword) else { return false };
+    if p.on[0] == MAX {
+        let number = |text: &str| text.trim().parse::<u64>().ok();
+        let max = value_for(key, p.keyword, MAX).as_deref().and_then(number);
+        return number(&current).zip(max).is_some_and(|(current, max)| current >= max);
+    }
+    p.on.contains(&current.as_str())
 }
 
 /// What the driver uses: the value set, or its default when none is.
@@ -1345,8 +1458,7 @@ fn present(setting: &AdapterSetting, key: &str) -> Vec<&'static Property> {
 
 fn setting_on(setting: &AdapterSetting, key: &str) -> bool {
     let properties = present(setting, key);
-    !properties.is_empty()
-        && properties.iter().all(|p| property(key, p.keyword).is_some_and(|v| p.on.contains(&v.as_str())))
+    !properties.is_empty() && properties.iter().all(|p| is_on(key, p))
 }
 
 fn shows_setting(setting: &AdapterSetting) -> bool {
@@ -1365,12 +1477,13 @@ fn apply_setting(setting: &AdapterSetting) -> windows::core::Result<Option<Strin
     let (guid, key) = changed_adapter(setting.id, setting.wifi)?;
     let mut saved = vec![guid.clone()];
     for p in present(setting, &key) {
-        if property(&key, p.keyword).is_some_and(|v| p.on.contains(&v.as_str())) {
+        if is_on(&key, p) {
             continue;
         }
+        let Some(value) = value_for(&key, p.keyword, p.on[0]) else { continue };
         let written = reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword).and_then(|old| {
             saved.push(format!("{}={}", p.keyword, old.as_deref().unwrap_or("-")));
-            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, p.on[0])
+            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, &value)
         });
         // Nothing reaches the journal on an error, so what was already written goes back.
         if let Err(e) = written {
@@ -1403,8 +1516,10 @@ fn revert_setting(previous: Option<&str>) -> windows::core::Result<()> {
 fn reset_setting(setting: &AdapterSetting) -> windows::core::Result<()> {
     let (guid, key) = changed_adapter(setting.id, setting.wifi)?;
     for p in present(setting, &key) {
-        if accepts(&key, p.keyword, p.off) {
-            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, p.off)?;
+        if accepts(&key, p.keyword, p.off)
+            && let Some(value) = value_for(&key, p.keyword, p.off)
+        {
+            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, &value)?;
         }
     }
     restart_adapter(&guid)
@@ -1470,6 +1585,24 @@ adapter_tweak!(
     reset_wifi_roaming,
     WIFI_ROAMING
 );
+adapter_tweak!(shows_lso, lso_off, disable_lso, restore_lso, reset_lso, LSO);
+adapter_tweak!(
+    shows_flow_control,
+    flow_control_off,
+    disable_flow_control,
+    restore_flow_control,
+    reset_flow_control,
+    FLOW_CONTROL
+);
+adapter_tweak!(
+    shows_coalescing,
+    coalescing_off,
+    disable_coalescing,
+    restore_coalescing,
+    reset_coalescing,
+    PACKET_COALESCING
+);
+adapter_tweak!(shows_buffers, buffers_max, raise_buffers, restore_buffers, reset_buffers, BUFFERS);
 
 // "Allow the computer to turn off this device to save power". Bit 0x10 unticks it, 0x08
 // with it stops the wake-up handling Windows adds on top. Windows only uses it on laptops
@@ -1930,6 +2063,215 @@ pub fn restore_ipv6(previous: Option<&str>) -> windows::core::Result<()> {
 
 pub fn enable_ipv6() -> windows::core::Result<()> {
     restore_ipv6(Some(&connection().map(|c| c.guid).unwrap_or_default()))
+}
+
+// Name resolution that answers anyone on the network. Turning these off is about
+// security, not speed: on a shared network, a device can answer an LLMNR or NetBIOS
+// lookup for a name it doesn't own and collect the PC's sign-in hash.
+
+const DNS_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows NT\DNSClient";
+const NETBT_INTERFACES: &str = r"SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces";
+/// NetbiosOptions: 0 from DHCP, 1 on, 2 off.
+const NETBIOS_OFF: u32 = 2;
+
+pub fn llmnr_off() -> windows::core::Result<bool> {
+    Ok(reg::get_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast")? == Some(0))
+}
+
+/// Saved as the old value, `-` when there was none.
+pub fn disable_llmnr() -> windows::core::Result<Option<String>> {
+    let old = reg::get_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast")?;
+    reg::set_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast", 0)?;
+    Ok(Some(old.map_or("-".into(), |v| v.to_string())))
+}
+
+pub fn restore_llmnr(previous: Option<&str>) -> windows::core::Result<()> {
+    match previous.and_then(|p| p.parse().ok()) {
+        Some(value) => reg::set_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast", value),
+        None => reg::delete_value(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast"),
+    }
+}
+
+pub fn reset_llmnr() -> windows::core::Result<()> {
+    reg::delete_value(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast")
+}
+
+/// Every adapter's NetBIOS setting, by its key under NetBT.
+fn netbios_options() -> Vec<(String, Option<u32>)> {
+    reg::subkeys(reg::HKEY_LOCAL_MACHINE, NETBT_INTERFACES)
+        .into_iter()
+        .filter(|sub| sub.starts_with("Tcpip_"))
+        .map(|sub| {
+            let value = reg::get_dword(
+                reg::HKEY_LOCAL_MACHINE,
+                &format!(r"{NETBT_INTERFACES}\{sub}"),
+                "NetbiosOptions",
+            );
+            (sub, value.ok().flatten())
+        })
+        .collect()
+}
+
+pub fn shows_netbios() -> bool {
+    !netbios_options().is_empty()
+}
+
+pub fn netbios_off() -> windows::core::Result<bool> {
+    let options = netbios_options();
+    Ok(!options.is_empty() && options.iter().all(|(_, value)| *value == Some(NETBIOS_OFF)))
+}
+
+/// Every adapter, the ones not in use too: a VPN or a second card brings the lookups
+/// right back. Saved as "Tcpip_{guid}=old|...", `-` for no value.
+pub fn disable_netbios() -> windows::core::Result<Option<String>> {
+    let mut saved = Vec::new();
+    for (sub, old) in netbios_options() {
+        if old == Some(NETBIOS_OFF) {
+            continue;
+        }
+        let key = format!(r"{NETBT_INTERFACES}\{sub}");
+        if let Err(e) = reg::set_dword(reg::HKEY_LOCAL_MACHINE, &key, "NetbiosOptions", NETBIOS_OFF) {
+            let _ = restore_netbios(Some(&saved.join("|")));
+            return Err(e);
+        }
+        saved.push(format!("{sub}={}", old.map_or("-".into(), |v| v.to_string())));
+    }
+    Ok(Some(saved.join("|")))
+}
+
+pub fn restore_netbios(previous: Option<&str>) -> windows::core::Result<()> {
+    for (sub, value) in previous.unwrap_or_default().split('|').filter_map(|pair| pair.split_once('=')) {
+        let key = format!(r"{NETBT_INTERFACES}\{sub}");
+        // An adapter that was removed has nothing left to put back.
+        if !reg::key_exists(reg::HKEY_LOCAL_MACHINE, &key) {
+            continue;
+        }
+        match value.parse() {
+            Ok(value) => reg::set_dword(reg::HKEY_LOCAL_MACHINE, &key, "NetbiosOptions", value)?,
+            Err(_) => reg::delete_value(reg::HKEY_LOCAL_MACHINE, &key, "NetbiosOptions")?,
+        }
+    }
+    Ok(())
+}
+
+/// Back to "from DHCP", what Windows ships with.
+pub fn reset_netbios() -> windows::core::Result<()> {
+    for (sub, _) in netbios_options() {
+        reg::set_dword(reg::HKEY_LOCAL_MACHINE, &format!(r"{NETBT_INTERFACES}\{sub}"), "NetbiosOptions", 0)?;
+    }
+    Ok(())
+}
+
+// DNS over HTTPS for the service picked on the DNS tab. Windows 11 keeps a list of
+// encrypted servers; with "autoupgrade" on, every query to that address goes over HTTPS
+// instead of plain UDP. Set per address, so it follows the service whichever adapter
+// uses it. No UDP fallback: if the HTTPS server can't be reached, names stop resolving
+// rather than silently going out in the clear.
+
+pub const DOH_TWEAK: &str = "dns-over-https";
+
+/// The public service set by hand on the adapter in use.
+fn set_provider() -> Option<usize> {
+    let adapter = dns_adapter()?;
+    let first = fixed_dns(V4_INTERFACES, &adapter.guid).first()?.parse().ok()?;
+    provider_of(IpAddr::V4(first))
+}
+
+/// What `netsh dns show encryption` says about one address: (auto upgrade, UDP fallback),
+/// `None` when it isn't listed. The labels are translated, the yes/no values aren't.
+fn doh_entry(server: &str) -> Option<(bool, bool)> {
+    let out = tweaks::run("netsh.exe", &["dns", "show", "encryption", &format!("server={server}")]).ok()?;
+    let values: Vec<&str> =
+        out.lines().filter_map(|line| line.split_once(": ").map(|(_, value)| value.trim())).collect();
+    match values[..] {
+        [_template, auto, fallback, ..] => Some((auto == "yes", fallback == "yes")),
+        _ => None,
+    }
+}
+
+fn doh_servers(provider: usize) -> Vec<String> {
+    let p = &PROVIDERS[provider];
+    p.v4.iter().map(|ip| ip.to_string()).chain(p.v6.iter().map(|ip| ip.to_string())).collect()
+}
+
+pub fn shows_doh() -> bool {
+    crate::boost::windows_build() >= 22000 && (in_journal(DOH_TWEAK) || set_provider().is_some())
+}
+
+pub fn doh_on() -> windows::core::Result<bool> {
+    let Some(provider) = set_provider() else { return Ok(false) };
+    Ok(doh_entry(&PROVIDERS[provider].v4[0].to_string()).is_some_and(|(auto, _)| auto))
+}
+
+/// Saved as "address=auto,fallback|address=-", `-` for an address Vantix added.
+pub fn enable_doh() -> windows::core::Result<Option<String>> {
+    enable_doh_for(set_provider().ok_or_else(|| failure("no public DNS service set"))?)
+}
+
+fn enable_doh_for(provider: usize) -> windows::core::Result<Option<String>> {
+    let mut saved = Vec::new();
+    for server in doh_servers(provider) {
+        let target = format!("server={server}");
+        let result = match doh_entry(&server) {
+            Some((auto, fallback)) => {
+                saved.push(format!("{server}={},{}", yes_no(auto), yes_no(fallback)));
+                tweaks::run(
+                    "netsh.exe",
+                    &["dns", "set", "encryption", &target, "autoupgrade=yes", "udpfallback=no"],
+                )
+            }
+            None => {
+                saved.push(format!("{server}=-"));
+                let template = format!("dohtemplate={}", PROVIDERS[provider].doh);
+                tweaks::run(
+                    "netsh.exe",
+                    &["dns", "add", "encryption", &target, &template, "autoupgrade=yes", "udpfallback=no"],
+                )
+            }
+        };
+        if let Err(e) = result {
+            let _ = restore_doh(Some(&saved.join("|")));
+            return Err(e);
+        }
+    }
+    let _ = flush_dns();
+    Ok(Some(saved.join("|")))
+}
+
+fn yes_no(on: bool) -> &'static str {
+    if on { "yes" } else { "no" }
+}
+
+pub fn restore_doh(previous: Option<&str>) -> windows::core::Result<()> {
+    for (server, value) in previous.unwrap_or_default().split('|').filter_map(|pair| pair.split_once('=')) {
+        let target = format!("server={server}");
+        match value.split_once(',') {
+            Some((auto, fallback)) => {
+                let (auto, fallback) = (format!("autoupgrade={auto}"), format!("udpfallback={fallback}"));
+                tweaks::run("netsh.exe", &["dns", "set", "encryption", &target, &auto, &fallback])?;
+            }
+            None => {
+                tweaks::run("netsh.exe", &["dns", "delete", "encryption", &target])?;
+            }
+        }
+    }
+    let _ = flush_dns();
+    Ok(())
+}
+
+/// Turns the upgrade off for the service in use, for DoH that was on before Vantix.
+pub fn reset_doh() -> windows::core::Result<()> {
+    let provider = set_provider().ok_or_else(|| failure("no public DNS service set"))?;
+    for server in doh_servers(provider) {
+        if doh_entry(&server).is_some() {
+            tweaks::run(
+                "netsh.exe",
+                &["dns", "set", "encryption", &format!("server={server}"), "autoupgrade=no"],
+            )?;
+        }
+    }
+    let _ = flush_dns();
+    Ok(())
 }
 
 pub fn uses_wifi() -> bool {
@@ -2852,6 +3194,184 @@ pub fn repair_for(layer: Layer, detail: &Detail) -> Option<&'static str> {
     }
 }
 
+// Wi-Fi around the PC: every access point the adapter hears, on which channel and how
+// loud, so a crowded channel shows up and the router can be moved to a quieter one.
+// Read only. Windows 11 24H2 and later only answer a scan while location access is on
+// for desktop apps.
+
+/// One access point heard in a scan.
+#[derive(Clone, Debug)]
+pub struct Bss {
+    pub ssid: String,
+    pub bssid: [u8; 6],
+    pub rssi: i32,
+    /// Center frequency in MHz.
+    pub mhz: u32,
+    /// The one this PC is connected to.
+    pub connected: bool,
+}
+
+impl Bss {
+    /// 2, 5 or 6 (GHz), 0 for anything else.
+    pub fn band(&self) -> u8 {
+        band_channel(self.mhz).0
+    }
+
+    pub fn channel(&self) -> u32 {
+        band_channel(self.mhz).1
+    }
+}
+
+pub fn band_channel(mhz: u32) -> (u8, u32) {
+    match mhz {
+        2484 => (2, 14),
+        2412..=2472 => (2, (mhz - 2407) / 5),
+        5150..=5895 => (5, (mhz - 5000) / 5),
+        5925..=7125 => (6, (mhz - 5950) / 5),
+        _ => (0, 0),
+    }
+}
+
+#[derive(Debug)]
+pub enum WifiError {
+    /// No Wi-Fi adapter, or the WLAN service isn't running.
+    NoAdapter,
+    /// Windows refused the scan: location access is off for desktop apps.
+    Location,
+    Failed,
+}
+
+/// Whether the PC has a Wi-Fi adapter the WLAN service knows, connected or not.
+pub fn has_wifi() -> bool {
+    use windows::Win32::NetworkManagement::WiFi::*;
+    let mut version = 0;
+    let mut handle = HANDLE::default();
+    if unsafe { WlanOpenHandle(2, None, &mut version, &mut handle) } != 0 {
+        return false;
+    }
+    let mut list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+    let found = unsafe { WlanEnumInterfaces(handle, None, &mut list) } == 0
+        && !list.is_null()
+        && unsafe { (*list).dwNumberOfItems } > 0;
+    unsafe {
+        if !list.is_null() {
+            WlanFreeMemory(list.cast());
+        }
+        WlanCloseHandle(handle, None);
+    }
+    found
+}
+
+/// Scans and returns what the first Wi-Fi adapter hears, strongest first. Takes about
+/// four seconds, which is how long a scan of every channel takes.
+pub fn wifi_scan() -> Result<Vec<Bss>, WifiError> {
+    use windows::Win32::NetworkManagement::WiFi::*;
+    const ACCESS_DENIED: u32 = 5;
+    let mut version = 0;
+    let mut handle = HANDLE::default();
+    if unsafe { WlanOpenHandle(2, None, &mut version, &mut handle) } != 0 {
+        return Err(WifiError::NoAdapter);
+    }
+    struct Client(HANDLE);
+    impl Drop for Client {
+        fn drop(&mut self) {
+            unsafe { WlanCloseHandle(self.0, None) };
+        }
+    }
+    let client = Client(handle);
+
+    let mut list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+    if unsafe { WlanEnumInterfaces(client.0, None, &mut list) } != 0 || list.is_null() {
+        return Err(WifiError::NoAdapter);
+    }
+    let guid = unsafe { ((*list).dwNumberOfItems > 0).then(|| (*list).InterfaceInfo[0].InterfaceGuid) };
+    unsafe { WlanFreeMemory(list.cast()) };
+    let Some(guid) = guid else { return Err(WifiError::NoAdapter) };
+
+    match unsafe { WlanScan(client.0, &guid, None, None, None) } {
+        0 => std::thread::sleep(Duration::from_secs(4)),
+        ACCESS_DENIED => return Err(WifiError::Location),
+        // A scan already running, or the adapter being busy: the cached list still helps.
+        _ => {}
+    }
+
+    let mut connected = None;
+    let mut size = 0;
+    let mut data: *mut core::ffi::c_void = std::ptr::null_mut();
+    let query = unsafe {
+        WlanQueryInterface(
+            client.0,
+            &guid,
+            wlan_intf_opcode_current_connection,
+            None,
+            &mut size,
+            &mut data,
+            None,
+        )
+    };
+    if query == 0 && !data.is_null() {
+        let attributes = unsafe { &*data.cast::<WLAN_CONNECTION_ATTRIBUTES>() };
+        connected = Some(attributes.wlanAssociationAttributes.dot11Bssid);
+        unsafe { WlanFreeMemory(data) };
+    }
+
+    let mut bss: *mut WLAN_BSS_LIST = std::ptr::null_mut();
+    match unsafe { WlanGetNetworkBssList(client.0, &guid, None, dot11_BSS_type_any, false, None, &mut bss) } {
+        0 if !bss.is_null() => {}
+        ACCESS_DENIED => return Err(WifiError::Location),
+        _ => return Err(WifiError::Failed),
+    }
+    let mut found = Vec::new();
+    unsafe {
+        let count = (*bss).dwNumberOfItems as usize;
+        let entries = std::slice::from_raw_parts((*bss).wlanBssEntries.as_ptr(), count);
+        for entry in entries {
+            let len = (entry.dot11Ssid.uSSIDLength as usize).min(32);
+            found.push(Bss {
+                ssid: String::from_utf8_lossy(&entry.dot11Ssid.ucSSID[..len]).into_owned(),
+                bssid: entry.dot11Bssid,
+                rssi: entry.lRssi,
+                mhz: entry.ulChCenterFrequency / 1000,
+                connected: connected == Some(entry.dot11Bssid),
+            });
+        }
+        WlanFreeMemory(bss.cast());
+    }
+    found.sort_by_key(|b| std::cmp::Reverse(b.rssi));
+    Ok(found)
+}
+
+/// Below this an access point is too faint to get in the way.
+const HEARD: i32 = -85;
+
+/// How much the others crowd one channel: each network that overlaps it counts by how
+/// loud it is, from 1 at -85 dBm to 5 at -45 and above. On 2.4 GHz a channel overlaps the
+/// four on each side; on 5 and 6 GHz only the same channel is counted, since the width
+/// each router uses isn't in the scan.
+pub fn crowding(networks: &[Bss], band: u8, channel: u32, own: Option<[u8; 6]>) -> u32 {
+    networks
+        .iter()
+        .filter(|b| b.band() == band && b.rssi >= HEARD && Some(b.bssid) != own)
+        .filter(|b| if band == 2 { b.channel().abs_diff(channel) < 5 } else { b.channel() == channel })
+        .map(|b| ((b.rssi - HEARD) / 10 + 1).clamp(1, 5) as u32)
+        .sum()
+}
+
+/// Channels worth picking on a band: on 2.4 GHz only 1, 6 and 11 don't overlap each
+/// other; on 5 GHz the ones without radar checks (DFS), which every router and client takes.
+const CHANNELS_2G: [u32; 3] = [1, 6, 11];
+pub const CHANNELS_5G: [u32; 8] = [36, 40, 44, 48, 149, 153, 157, 161];
+
+/// The quietest channel on a band, with how crowded it is.
+pub fn quietest(networks: &[Bss], band: u8, own: Option<[u8; 6]>) -> Option<(u32, u32)> {
+    let channels: &[u32] = match band {
+        2 => &CHANNELS_2G,
+        5 => &CHANNELS_5G,
+        _ => return None,
+    };
+    channels.iter().map(|&c| (c, crowding(networks, band, c, own))).min_by_key(|&(_, load)| load)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2929,6 +3449,67 @@ mod tests {
             );
         }
         println!("took {:?}", start.elapsed());
+    }
+
+    /// Changes and puts back LLMNR, NetBIOS and DNS over HTTPS for Quad9 and AdGuard,
+    /// checking each comes back as it was. Needs an elevated terminal:
+    /// `cargo test net_security_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn net_security_round_trip() {
+        let llmnr = reg::get_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast").unwrap();
+        let previous = disable_llmnr().unwrap();
+        assert!(llmnr_off().unwrap());
+        restore_llmnr(previous.as_deref()).unwrap();
+        assert_eq!(reg::get_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast").unwrap(), llmnr);
+
+        let netbios = netbios_options();
+        let previous = disable_netbios().unwrap();
+        assert!(netbios_off().unwrap());
+        restore_netbios(previous.as_deref()).unwrap();
+        assert_eq!(netbios_options(), netbios);
+
+        // Quad9 is in Windows' own list; AdGuard isn't, so Vantix adds it and takes it out.
+        for provider in [2, 4] {
+            let before: Vec<_> = doh_servers(provider).iter().map(|s| doh_entry(s)).collect();
+            let previous = enable_doh_for(provider).unwrap();
+            println!("{}: saved {previous:?}", PROVIDERS[provider].name);
+            assert!(doh_servers(provider).iter().all(|s| doh_entry(s) == Some((true, false))));
+            restore_doh(previous.as_deref()).unwrap();
+            let after: Vec<_> = doh_servers(provider).iter().map(|s| doh_entry(s)).collect();
+            assert_eq!(after, before);
+        }
+    }
+
+    /// Restarts the adapter in use twice: `cargo test lso_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn lso_round_trip() {
+        let (_, key) = setting_adapter(LSO.id, LSO.wifi).expect("no adapter");
+        let read = || {
+            ["*LsoV2IPv4", "*LsoV2IPv6"].map(|k| reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, k).unwrap())
+        };
+        let original = read();
+        let was_off = lso_off().unwrap();
+        let previous = disable_lso().unwrap();
+        assert!(lso_off().unwrap());
+        restore_lso(previous.as_deref()).unwrap();
+        assert_eq!(read(), original);
+        assert_eq!(lso_off().unwrap(), was_off);
+        println!("connection back: {:?}", connection().map(|c| c.gateway));
+    }
+
+    /// Reads only: `cargo test net_security_read -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn net_security_read() {
+        println!("llmnr off {:?}, netbios off {:?}", llmnr_off(), netbios_off());
+        println!("netbios {:?}", netbios_options());
+        println!("doh 1.1.1.1 {:?}, adguard {:?}", doh_entry("1.1.1.1"), doh_entry("94.140.14.14"));
+        println!("provider set {:?}, doh shown {}", set_provider(), shows_doh());
+        println!("wifi adapter {}, scan {:?}", has_wifi(), wifi_scan().map(|n| n.len()));
+        assert!(doh_entry("1.1.1.1").is_some());
+        assert_eq!(doh_entry("94.140.14.14"), None);
     }
 
     /// Cancels a run after a second: `cargo test net_dns_cancel -- --ignored --nocapture`
@@ -3185,6 +3766,41 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc2822("Thu, 01 Jan 2026 12:00:00 GMT").unwrap().to_utc();
         assert_eq!(clock_offset_secs("Thu, 01 Jan 2026 12:05:00 GMT", now), Some(300));
         assert_eq!(clock_offset_secs("not a date", now), None);
+    }
+
+    #[test]
+    fn load_check_noise() {
+        let check = |loaded| LoadCheck { loaded };
+        assert_eq!(compare_checks(&check(40.0), &check(44.0)), 0);
+        assert_eq!(compare_checks(&check(40.0), &check(30.0)), -1);
+        assert_eq!(compare_checks(&check(200.0), &check(225.0)), 0);
+        assert_eq!(compare_checks(&check(200.0), &check(240.0)), 1);
+    }
+
+    #[test]
+    fn wifi_channels() {
+        assert_eq!(band_channel(2412), (2, 1));
+        assert_eq!(band_channel(2437), (2, 6));
+        assert_eq!(band_channel(2484), (2, 14));
+        assert_eq!(band_channel(5180), (5, 36));
+        assert_eq!(band_channel(5745), (5, 149));
+        assert_eq!(band_channel(5955), (6, 1));
+        let ap = |mhz, rssi, last| Bss {
+            ssid: String::new(),
+            bssid: [0, 0, 0, 0, 0, last],
+            rssi,
+            mhz,
+            connected: false,
+        };
+        // Two loud networks on 6 and one on 7 (overlapping), a faint one on 11.
+        let around =
+            [ap(2437, -40, 1), ap(2437, -50, 2), ap(2442, -60, 3), ap(2462, -90, 4), ap(2437, -45, 9)];
+        let own = Some([0, 0, 0, 0, 0, 9]);
+        assert_eq!(crowding(&around, 2, 6, own), 5 + 4 + 3, "own network doesn't count");
+        assert_eq!(crowding(&around, 2, 11, own), 3, "channel 7 overlaps 11, the faint one doesn't count");
+        assert_eq!(quietest(&around, 2, own), Some((1, 0)));
+        assert_eq!(quietest(&around, 5, own), Some((36, 0)));
+        assert_eq!(quietest(&around, 6, own), None);
     }
 
     #[test]

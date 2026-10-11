@@ -70,6 +70,26 @@ export struct DiagRow {
     go-dns: bool,
 }
 
+export struct WifiRow {
+    ssid: string,
+    /// 2, 5 or 6 GHz.
+    band: int,
+    channel: int,
+    /// dBm.
+    signal: int,
+    /// 0 at -90 dBm, 1 at -30.
+    strength: float,
+    connected: bool,
+}
+
+export struct ChannelLoad {
+    channel: int,
+    /// Of the most crowded channel on the chart, 0 to 1.
+    share: float,
+    own: bool,
+    best: bool,
+}
+
 export struct UsageRow {
     name: string,
     /// The exe name, as upload limits match it.
@@ -151,6 +171,27 @@ export global Net {
     callback fix-diag(int);
     /// Shows the DNS tab, for DNS failures.
     callback go-dns();
+
+    /// The Wi-Fi tab shows only on a PC with a Wi-Fi adapter.
+    in property <bool> has-wifi;
+    /// 0 not scanned, 1 scanning, 2 done, 3 no adapter, 4 location access is off, 5 failed.
+    in property <int> wifi-state;
+    in property <float> wifi-progress;
+    in property <[WifiRow]> wifi;
+    in property <[ChannelLoad]> wifi-2g;
+    in property <[ChannelLoad]> wifi-5g;
+    /// The network the PC is on, empty when it isn't on Wi-Fi.
+    in property <string> wifi-ssid;
+    in property <int> wifi-band;
+    in property <int> wifi-channel;
+    in property <int> wifi-signal;
+    in property <int> wifi-best;
+    /// 0 fine, 1 crowded, 2 on 2.4 GHz with 5 GHz on offer, 3 not on Wi-Fi.
+    in property <int> wifi-verdict;
+    callback scan-wifi();
+    pure callback band-name(int) -> string;
+    band-name(band) => band == 2 ? @tr("2.4 GHz") : band == 5 ? @tr("5 GHz") : band == 6 ? @tr("6 GHz") : "";
+    callback open-location();
     /// Layer names by index, translated here where @tr works.
     pure callback diag-name(int) -> string;
     diag-name(i) => [@tr("Adapter link"), @tr("IP address"), @tr("Router"), @tr("DNS"), @tr("Reach"), @tr("HTTPS"), @tr("Internet icon"), @tr("Proxy"), @tr("hosts file"), @tr("VPN leftovers"), @tr("IPv6")][i];
@@ -735,6 +776,180 @@ component DnsTab inherits Card {
     Rectangle { vertical-stretch: 1; }
 }
 
+/// Load per channel, as bars, with the PC's channel and the quietest one marked.
+component ChannelChart inherits VerticalLayout {
+    in property <string> title;
+    in property <[ChannelLoad]> channels;
+
+    spacing: 6px;
+    Heading { text: root.title; }
+    HorizontalLayout {
+        spacing: 4px;
+        height: 96px;
+        for c in root.channels: VerticalLayout {
+            spacing: 4px;
+            Rectangle {
+                vertical-stretch: 1;
+                Rectangle {
+                    y: parent.height - self.height;
+                    height: max(3px, parent.height * c.share);
+                    border-radius: 3px;
+                    background: c.own ? Theme.info : c.best ? Theme.accent : Theme.faint.with-alpha(0.5);
+                    animate height { duration: 400ms; easing: ease-out-quart; }
+                }
+            }
+            Text {
+                text: c.channel;
+                color: c.own ? Theme.info : c.best ? Theme.accent : Theme.muted;
+                font-size: 11px;
+                font-weight: c.own || c.best ? 700 : 400;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+component WifiTab inherits Card {
+    pad: 14px;
+
+    init => {
+        if Net.wifi-state == 0 {
+            Net.scan-wifi();
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 14px;
+        padding-left: 6px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: Net.wifi-state <= 1 ? @tr("Listening to every Wi-Fi channel, about 4 s...")
+                    : Net.wifi-state == 3 ? @tr("No Wi-Fi adapter answered.")
+                    : Net.wifi-state == 4 ? @tr("Windows only shares Wi-Fi scans with apps while location access is on for desktop apps.")
+                    : Net.wifi-state == 5 ? @tr("The scan failed. Try again in a moment.")
+                    : Net.wifi-verdict == 1 ? @tr("Channel {} is crowded. Channel {} is the quietest: set it in your router.", Net.wifi-channel, Net.wifi-best)
+                    : Net.wifi-verdict == 2 ? @tr("Your router also has a 5 GHz network, faster and less crowded. Join it if the signal reaches.")
+                    : Net.wifi-verdict == 3 ? @tr("This PC isn't connected to Wi-Fi. These are the networks around it.")
+                    : @tr("Channel {} isn't crowded. Nothing to change.", Net.wifi-channel);
+                color: Net.wifi-state == 2 && Net.wifi-verdict == 0 ? Theme.accent
+                    : Net.wifi-state == 2 && (Net.wifi-verdict == 1 || Net.wifi-verdict == 2) ? Theme.warn
+                    : Net.wifi-state >= 3 ? Theme.warn : Theme.text;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+            if Net.wifi-state == 2 && Net.wifi-ssid != "": Text {
+                text: @tr("{} on {}, channel {}, signal {} dBm.", Net.wifi-ssid, Net.band-name(Net.wifi-band), Net.wifi-channel, Net.wifi-signal)
+                    + (Net.wifi-signal < -70 ? " " + @tr("Weak: walls or distance cost speed and add lag.") : "");
+                color: Net.wifi-signal < -70 ? Theme.warn : Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if Net.wifi-state <= 1: Rectangle {
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.background;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * Net.wifi-progress;
+                    border-radius: 3px;
+                    background: Theme.accent;
+                    animate width { duration: 250ms; }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            if Net.wifi-state == 4: Button {
+                text: @tr("Location settings");
+                icon: Icons.external;
+                clicked => { Net.open-location(); }
+            }
+            if Net.wifi-state != 4: Button {
+                text: Net.wifi-state <= 1 ? @tr("Scanning...") : @tr("Scan again");
+                icon: Icons.wifi;
+                enabled: Net.wifi-state >= 2;
+                clicked => { Net.scan-wifi(); }
+            }
+        }
+    }
+
+    if Net.wifi-state == 2: HorizontalLayout {
+        spacing: 24px;
+        padding-left: 6px;
+        padding-right: 14px;
+        ChannelChart {
+            horizontal-stretch: 13;
+            title: @tr("2.4 GHz channels");
+            channels: Net.wifi-2g;
+        }
+        ChannelChart {
+            horizontal-stretch: 8;
+            title: @tr("5 GHz channels");
+            channels: Net.wifi-5g;
+        }
+    }
+
+    if Net.wifi-state == 2: HorizontalLayout {
+        spacing: 16px;
+        padding-left: 6px;
+        padding-right: 14px;
+        Heading { horizontal-stretch: 1; text: @tr("Network"); }
+        Heading { width: 70px; text: @tr("Band"); horizontal-alignment: right; }
+        Heading { width: 70px; text: @tr("Channel"); horizontal-alignment: right; }
+        Heading { width: 170px; text: @tr("Signal"); horizontal-alignment: right; }
+    }
+
+    if Net.wifi-state == 2: VerticalLayout {
+        for row in Net.wifi: HorizontalLayout {
+            spacing: 16px;
+            padding-left: 6px;
+            padding-right: 14px;
+            height: 36px;
+            HorizontalLayout {
+                horizontal-stretch: 1;
+                spacing: 8px;
+                alignment: start;
+                Text {
+                    text: row.ssid != "" ? row.ssid : @tr("(hidden)");
+                    color: row.ssid != "" ? Theme.text : Theme.faint;
+                    font-weight: row.connected ? 700 : 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if row.connected: VerticalLayout {
+                    alignment: center;
+                    Chip { text: @tr("Connected"); tint: Theme.info; }
+                }
+            }
+            Value { width: 70px; text: Net.band-name(row.band); font-weight: 400; color: Theme.muted; }
+            Value { width: 70px; text: row.channel; font-weight: 400; color: Theme.muted; }
+            HorizontalLayout {
+                width: 170px;
+                spacing: 8px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 6px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 3px;
+                    background: Theme.background;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * row.strength;
+                        border-radius: 3px;
+                        background: row.signal >= -60 ? Theme.accent : row.signal >= -70 ? Theme.warn : Theme.bad;
+                    }
+                }
+                Value { width: 64px; text: row.signal + " dBm"; font-weight: 400; }
+            }
+        }
+    }
+
+    Rectangle { vertical-stretch: 1; }
+}
+
 component UsageTab inherits Card {
     pad: 14px;
 
@@ -1014,9 +1229,12 @@ export component InternetPage inherits VerticalLayout {
         }
         VerticalLayout {
             alignment: center;
+            // Wi-Fi goes last, so the other tabs keep their numbers either way.
             Segmented {
-                width: 540px;
-                options: [@tr("Ping"), @tr("Bufferbloat"), @tr("DNS"), @tr("Network use"), @tr("Tweaks"), @tr("Repair")];
+                width: Net.has-wifi ? 620px : 540px;
+                options: Net.has-wifi
+                    ? [@tr("Ping"), @tr("Bufferbloat"), @tr("DNS"), @tr("Network use"), @tr("Tweaks"), @tr("Repair"), @tr("Wi-Fi")]
+                    : [@tr("Ping"), @tr("Bufferbloat"), @tr("DNS"), @tr("Network use"), @tr("Tweaks"), @tr("Repair")];
                 selected <=> Net.tab;
             }
         }
@@ -1026,6 +1244,7 @@ export component InternetPage inherits VerticalLayout {
     if Net.tab == 1: BloatTab { vertical-stretch: 1; }
     if Net.tab == 2: DnsTab { vertical-stretch: 1; }
     if Net.tab == 3: UsageTab { vertical-stretch: 1; }
+    if Net.tab == 6 && Net.has-wifi: WifiTab { vertical-stretch: 1; }
     if Net.tab == 4: TweakList {
         vertical-stretch: 1;
         rows: Tweaks.network;

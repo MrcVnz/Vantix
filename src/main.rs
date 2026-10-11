@@ -93,6 +93,11 @@ struct State {
     diag_running: bool,
     /// A repair started from the diagnosis, which runs again once the repair is done.
     diag_again: bool,
+    tweak_test: Option<TweakTest>,
+    has_wifi: bool,
+    /// When the Wi-Fi scan started, while it runs.
+    wifi_scanning: Option<Instant>,
+    wifi: Option<Result<Vec<net::Bss>, net::WifiError>>,
     /// Traffic totals at the last tick, to turn them into rates.
     traffic: Option<(Instant, HashMap<String, [u64; 2]>)>,
     ticks: u32,
@@ -140,6 +145,16 @@ struct TweakInfo {
     estimate: Option<u64>,
     /// Actions only: ran in this session.
     ran: bool,
+}
+
+/// "Test this tweak": a ping check under load before the change and again after it.
+#[derive(Clone, Copy)]
+struct TweakTest {
+    index: usize,
+    /// 1 measuring before, 2 waiting for the change, 3 measuring after, 4 done, 5 failed.
+    stage: i32,
+    before: Option<net::LoadCheck>,
+    after: Option<net::LoadCheck>,
 }
 
 #[derive(Clone, Copy)]
@@ -209,6 +224,10 @@ fn main() -> Result<(), slint::PlatformError> {
             dns_run: None,
             diag_running: false,
             diag_again: false,
+            tweak_test: None,
+            has_wifi: false,
+            wifi_scanning: None,
+            wifi: None,
             traffic: None,
             ticks: 0,
             tray_missing: None,
@@ -520,6 +539,11 @@ impl App {
         });
         ui.global::<Job>().on_dismiss(bind(self, |app| {
             app.state.borrow_mut().asked = None;
+            // Turned down after the first measurement: the test ends there.
+            if app.state.borrow().tweak_test.is_some_and(|test| test.stage == 2) {
+                app.state.borrow_mut().tweak_test = None;
+                app.with_ui(|ui| app.show_tweaks(ui));
+            }
             app.with_ui(|ui| ui.global::<Job>().set_state(JobState::Idle));
         }));
 
@@ -597,6 +621,10 @@ impl App {
                 app.state.borrow_mut().diag_again = true;
             }
         }));
+        internet.on_scan_wifi(bind(self, |app| app.scan_wifi()));
+        internet.on_open_location(|| {
+            let _ = std::process::Command::new("explorer.exe").arg("ms-settings:privacy-location").spawn();
+        });
         internet.on_go_dns(bind(self, |app| {
             app.with_ui(|ui| ui.global::<Net>().set_tab(2));
         }));
@@ -775,6 +803,11 @@ impl App {
         self.show_bloat(&ui);
         self.show_dns(&ui);
         self.show_diagnose(&ui);
+        self.show_wifi(&ui);
+        self.run_job(net::has_wifi, |app, found| {
+            app.state.borrow_mut().has_wifi = found.unwrap_or(false);
+            app.with_ui(|ui| app.show_wifi(ui));
+        });
 
         let terms = ui.global::<Terms>();
         terms.on_accepted(bind(self, |app| app.accept_terms()));
@@ -785,6 +818,7 @@ impl App {
         let tweaks = ui.global::<Tweaks>();
         tweaks.on_activate(bind_with(self, |app, i: i32| app.ask(Ask::Apply(i as usize))));
         tweaks.on_undo(bind_with(self, |app, i: i32| app.ask(Ask::Undo(i as usize))));
+        tweaks.on_test(bind_with(self, |app, i: i32| app.test_tweak(i as usize)));
         tweaks.on_undo_all(bind(self, |app| app.ask(Ask::UndoAll)));
         tweaks.on_reset(bind_with(self, |app, i: i32| app.ask(Ask::Reset(i as usize))));
         tweaks.on_restart(|| {
@@ -1767,6 +1801,9 @@ impl App {
         };
         let row = |i: usize| {
             let (tweak, info) = (&CATALOG[i], state.tweaks[i]);
+            let test = state.tweak_test.filter(|test| test.index == i);
+            let checked =
+                |check: Option<net::LoadCheck>| check.map(|c| format_ms(c.loaded)).unwrap_or_default();
             let applied = change(tweak.id);
             let pending = applied.is_some_and(|c| c.reboot && tweaks::same_boot(c.boot));
             let state = if state.working == Some(i) {
@@ -1793,6 +1830,18 @@ impl App {
                 pending,
                 estimate: info.estimate.map(format_bytes).unwrap_or_default().into(),
                 freed: applied.and_then(|c| c.freed).map(format_bytes).unwrap_or_default().into(),
+                // A ping test says nothing about a change that waits for a restart, or about
+                // DNS over HTTPS, which is about privacy.
+                testable: tweak.section == Section::Network
+                    && matches!(tweak.kind, Kind::Toggle { .. })
+                    && !tweak.reboot
+                    && tweak.id != net::DOH_TWEAK,
+                test_stage: test.map_or(0, |t| t.stage),
+                test_before: checked(test.and_then(|t| t.before)).into(),
+                test_after: checked(test.and_then(|t| t.after)).into(),
+                test_verdict: test
+                    .and_then(|t| Some(net::compare_checks(&t.before?, &t.after?)))
+                    .unwrap_or_default(),
             }
         };
         let section = |section: Section| -> Vec<TweakRow> {
@@ -1825,6 +1874,7 @@ impl App {
         tweaks.set_games(ModelRc::new(VecModel::from(section(Section::Games))));
         tweaks.set_internet(ModelRc::new(VecModel::from(section(Section::Internet))));
         tweaks.set_network(ModelRc::new(VecModel::from(section(Section::Network))));
+        tweaks.set_testing(state.tweak_test.is_some_and(|test| matches!(test.stage, 1..=3)));
         tweaks.set_input(ModelRc::new(VecModel::from(section(Section::Input))));
         tweaks.set_storage(ModelRc::new(VecModel::from(section(Section::Storage))));
         tweaks.set_background(ModelRc::new(VecModel::from(section(Section::Background))));
@@ -2107,7 +2157,18 @@ impl App {
                 let (free_after, _) = disk::system_drive_space();
                 (outcomes, free_after.saturating_sub(free_before), active, undone)
             },
-            |app, result| {
+            move |app, result| {
+                let tested = app.state.borrow().tweak_test.filter(|test| test.stage == 2);
+                if let Some(test) = tested {
+                    let ok = result.as_ref().is_some_and(|(outcomes, ..)| {
+                        outcomes.iter().all(|(_, _, _, result)| result.is_ok())
+                    });
+                    if ok && matches!(ask, Ask::Apply(i) if i == test.index) {
+                        app.measure_after(test);
+                    } else {
+                        app.state.borrow_mut().tweak_test = None;
+                    }
+                }
                 let Some((outcomes, gained, active, undone)) = result else {
                     app.state.borrow_mut().working = None;
                     app.set_job(JobState::Failed, "");
@@ -2199,6 +2260,45 @@ impl App {
         );
     }
 
+    /// Measures ping under load, asks to apply the tweak, and measures again once it's
+    /// in (see `measure_after`), so the effect is seen on this network, not taken on faith.
+    fn test_tweak(self: &Rc<Self>, index: usize) {
+        {
+            let mut state = self.state.borrow_mut();
+            if state.bloat_running || state.tweak_test.is_some_and(|test| matches!(test.stage, 1..=3)) {
+                return;
+            }
+            state.tweak_test = Some(TweakTest { index, stage: 1, before: None, after: None });
+        }
+        self.with_ui(|ui| self.show_tweaks(ui));
+        self.run_job(net::load_check, move |app, result| {
+            let before = result.and_then(Result::ok);
+            let stage = if before.is_some() { 2 } else { 5 };
+            app.state.borrow_mut().tweak_test = Some(TweakTest { index, stage, before, after: None });
+            app.with_ui(|ui| app.show_tweaks(ui));
+            if before.is_some() {
+                app.ask(Ask::Apply(index));
+            }
+        });
+    }
+
+    fn measure_after(self: &Rc<Self>, test: TweakTest) {
+        self.state.borrow_mut().tweak_test = Some(TweakTest { stage: 3, ..test });
+        self.run_job(
+            || {
+                // An adapter that just restarted takes a moment to settle.
+                std::thread::sleep(Duration::from_secs(2));
+                net::load_check()
+            },
+            move |app, result| {
+                let after = result.and_then(Result::ok);
+                let stage = if after.is_some() { 4 } else { 5 };
+                app.state.borrow_mut().tweak_test = Some(TweakTest { stage, after, ..test });
+                app.with_ui(|ui| app.show_tweaks(ui));
+            },
+        );
+    }
+
     /// Samples only while the Monitor page is on screen.
     fn tick_monitor(&self) {
         let open = self.with_ui_value(|ui| ui.get_page() == MONITOR_PAGE).unwrap_or(false);
@@ -2280,6 +2380,10 @@ impl App {
             }
             if self.state.borrow().dns_running {
                 self.show_dns(ui);
+            }
+            if let Some(started) = self.state.borrow().wifi_scanning {
+                let progress = (started.elapsed().as_secs_f32() / 4.5).min(1.0);
+                ui.global::<Net>().set_wifi_progress(progress);
             }
             // The diagnosis walks one layer at a time; the tick shows it happening.
             if tab == 5 && (self.state.borrow().diag_running || net::diag_running()) {
@@ -2363,6 +2467,10 @@ impl App {
     }
 
     fn run_bloat(self: &Rc<Self>) {
+        // A tweak test loads the line too; the two would spoil each other's numbers.
+        if self.state.borrow().tweak_test.is_some_and(|test| matches!(test.stage, 1..=3)) {
+            return;
+        }
         if std::mem::replace(&mut self.state.borrow_mut().bloat_running, true) {
             return;
         }
@@ -2525,6 +2633,106 @@ impl App {
                 app.with_ui(|ui| app.show_dns(ui));
             },
         );
+    }
+
+    fn scan_wifi(self: &Rc<Self>) {
+        if self.state.borrow().wifi_scanning.is_some() {
+            return;
+        }
+        self.state.borrow_mut().wifi_scanning = Some(Instant::now());
+        self.with_ui(|ui| self.show_wifi(ui));
+        self.run_job(net::wifi_scan, |app, result| {
+            {
+                let mut state = app.state.borrow_mut();
+                state.wifi_scanning = None;
+                state.wifi = Some(result.unwrap_or(Err(net::WifiError::Failed)));
+            }
+            app.with_ui(|ui| app.show_wifi(ui));
+        });
+    }
+
+    fn show_wifi(&self, ui: &AppWindow) {
+        let state = self.state.borrow();
+        let internet = ui.global::<Net>();
+        internet.set_has_wifi(state.has_wifi);
+        let networks = match (&state.wifi, state.wifi_scanning) {
+            (_, Some(_)) => {
+                internet.set_wifi_state(1);
+                return;
+            }
+            (None, None) => {
+                internet.set_wifi_state(0);
+                return;
+            }
+            (Some(Err(error)), None) => {
+                internet.set_wifi_state(match error {
+                    net::WifiError::NoAdapter => 3,
+                    net::WifiError::Location => 4,
+                    net::WifiError::Failed => 5,
+                });
+                return;
+            }
+            (Some(Ok(networks)), None) => networks,
+        };
+        let own = networks.iter().find(|b| b.connected);
+        let own_bssid = own.map(|b| b.bssid);
+        let mut verdict = 3;
+        let mut best = 0;
+        if let Some(own) = own {
+            let load = net::crowding(networks, own.band(), own.channel(), own_bssid);
+            let quietest = net::quietest(networks, own.band(), own_bssid);
+            best = quietest.map_or(0, |(channel, _)| channel as i32);
+            let five = networks.iter().any(|b| b.band() == 5 && b.ssid == own.ssid && !own.ssid.is_empty());
+            // A few loud neighbours more than the quietest channel is worth a change; less
+            // is within what moves from one scan to the next.
+            verdict = if own.band() == 2 && five {
+                2
+            } else if quietest.is_some_and(|(channel, quiet)| channel != own.channel() && load >= quiet + 4) {
+                1
+            } else {
+                0
+            };
+            internet.set_wifi_ssid(own.ssid.as_str().into());
+            internet.set_wifi_band(own.band() as i32);
+            internet.set_wifi_channel(own.channel() as i32);
+            internet.set_wifi_signal(own.rssi);
+        } else {
+            internet.set_wifi_ssid("".into());
+        }
+        internet.set_wifi_best(best);
+        internet.set_wifi_verdict(verdict);
+        let chart = |band: u8, channels: &[u32]| {
+            let loads: Vec<u32> =
+                channels.iter().map(|&c| net::crowding(networks, band, c, own_bssid)).collect();
+            let top = loads.iter().copied().max().unwrap_or(0).max(1) as f32;
+            let quiet = net::quietest(networks, band, own_bssid).map(|(channel, _)| channel);
+            let rows: Vec<ChannelLoad> = channels
+                .iter()
+                .zip(loads)
+                .map(|(&channel, load)| ChannelLoad {
+                    channel: channel as i32,
+                    share: load as f32 / top,
+                    own: own.is_some_and(|b| b.band() == band && b.channel() == channel),
+                    best: quiet == Some(channel),
+                })
+                .collect();
+            ModelRc::new(VecModel::from(rows))
+        };
+        internet.set_wifi_2g(chart(2, &(1..=13).collect::<Vec<_>>()));
+        internet.set_wifi_5g(chart(5, &net::CHANNELS_5G));
+        let rows: Vec<WifiRow> = networks
+            .iter()
+            .map(|b| WifiRow {
+                ssid: b.ssid.as_str().into(),
+                band: b.band() as i32,
+                channel: b.channel() as i32,
+                signal: b.rssi,
+                strength: ((b.rssi + 90) as f32 / 60.0).clamp(0.0, 1.0),
+                connected: b.connected,
+            })
+            .collect();
+        internet.set_wifi(ModelRc::new(VecModel::from(rows)));
+        internet.set_wifi_state(2);
     }
 
     fn show_dns(&self, ui: &AppWindow) {

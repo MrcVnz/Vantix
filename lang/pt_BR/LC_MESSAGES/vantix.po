@@ -1944,3 +1944,153 @@ msgstr "Corrigir"
 
 msgid "DNS tab"
 msgstr "Aba DNS"
+
+msgid "Turn off Large Send Offload"
+msgstr "Desligar o Large Send Offload"
+
+msgid "The network card cuts big uploads into packets by itself. Some Realtek and Intel cards send them in bursts that queue up in front of game traffic while something uploads. Off, the CPU does that work. The connection drops for a few seconds while the adapter restarts."
+msgstr "A placa de rede corta os envios grandes em pacotes sozinha. Algumas placas Realtek e Intel mandam esses pacotes em rajadas que ficam na fila na frente do tráfego do jogo enquanto algo faz upload. Desligado, o processador faz esse trabalho. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "A little more CPU use during big uploads."
+msgstr "Um pouco mais de uso do processador em uploads grandes."
+
+msgid "Turn off Flow Control"
+msgstr "Desligar o Controle de Fluxo"
+
+msgid "A busy router or switch can tell the network card to stop sending for a moment, and everything waits, game packets included. Off, the card keeps sending and the router drops what it can't take, which TCP handles better than a pause. The connection drops for a few seconds while the adapter restarts."
+msgstr "Um roteador ou switch ocupado pode mandar a placa de rede parar de enviar por um momento, e tudo espera, pacotes do jogo incluídos. Desligado, a placa continua enviando e o roteador descarta o que não aguenta, o que o TCP resolve melhor do que uma pausa. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "On an old or overloaded switch, big transfers can lose a few more packets."
+msgstr "Num switch antigo ou sobrecarregado, transferências grandes podem perder alguns pacotes a mais."
+
+msgid "Turn off Packet Coalescing"
+msgstr "Desligar o Packet Coalescing"
+
+msgid "The network card holds incoming broadcast packets back and hands them over in groups, so the PC wakes less often. Off, they arrive as they come. The connection drops for a few seconds while the adapter restarts."
+msgstr "A placa de rede segura os pacotes de broadcast que chegam e entrega em grupos, para o PC acordar menos vezes. Desligado, eles chegam na hora. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "Slightly shorter battery life on laptops."
+msgstr "Bateria um pouco mais curta em notebooks."
+
+msgid "Largest receive and send buffers"
+msgstr "Maiores buffers de recepção e envio"
+
+msgid "Room on the network card for packets that arrive or leave in a burst before the CPU gets to them. Some drivers ship well below what the card takes, and a full buffer drops packets. This sets both to the highest the driver lists. The connection drops for a few seconds while the adapter restarts."
+msgstr "Espaço na placa de rede para os pacotes que chegam ou saem em rajada antes do processador cuidar deles. Alguns drivers vêm bem abaixo do que a placa aceita, e um buffer cheio descarta pacotes. Isto põe os dois no máximo que o driver lista. A conexão cai por alguns segundos enquanto o adaptador reinicia."
+
+msgid "Turn off LLMNR"
+msgstr "Desligar o LLMNR"
+
+msgid "Security, not speed. When a name isn't in DNS, Windows asks the whole local network who has it, and anyone can answer. On public Wi-Fi a device can answer for a name it doesn't own and collect your PC's sign-in hash."
+msgstr "Segurança, não velocidade. Quando um nome não está no DNS, o Windows pergunta para a rede local inteira quem tem esse nome, e qualquer um pode responder. Num Wi-Fi público, um aparelho pode responder por um nome que não é dele e capturar o hash de login do seu PC."
+
+msgid "Devices found only by name on the local network, like some printers or NAS boxes, need their IP or a DNS entry."
+msgstr "Aparelhos achados só pelo nome na rede local, como algumas impressoras ou NAS, passam a precisar do IP ou de uma entrada no DNS."
+
+msgid "Turn off NetBIOS over TCP/IP"
+msgstr "Desligar o NetBIOS sobre TCP/IP"
+
+msgid "Security, not speed. The older cousin of LLMNR: Windows answers and asks for names over broadcast, on every adapter. The same trick works on it, and it also tells the network your PC's name. Set on every adapter, so a VPN or a second card doesn't bring it back."
+msgstr "Segurança, não velocidade. O primo mais velho do LLMNR: o Windows responde e pergunta nomes por broadcast, em todos os adaptadores. O mesmo truque funciona nele, e ele ainda conta o nome do seu PC para a rede. Vale para todos os adaptadores, para uma VPN ou uma segunda placa não trazerem ele de volta."
+
+msgid "Very old devices and Windows XP era shares that are browsed by name stop showing up."
+msgstr "Aparelhos muito antigos e compartilhamentos da época do Windows XP, achados pelo nome, deixam de aparecer."
+
+msgid "DNS over HTTPS"
+msgstr "DNS sobre HTTPS"
+
+msgid "Privacy, not speed. The DNS service you picked on the DNS tab gets its lookups over HTTPS, so the network and your provider can't read or change which sites you look up. Windows 11 only."
+msgstr "Privacidade, não velocidade. O serviço de DNS que você escolheu na aba DNS passa a receber as consultas por HTTPS, então a rede e o seu provedor não conseguem ler nem trocar quais sites você procura. Só no Windows 11."
+
+msgid "No plain fallback: if the HTTPS address can't be reached, names stop resolving until you undo this. Some public Wi-Fi sign-in pages need it off."
+msgstr "Sem volta para o modo comum: se o endereço HTTPS não responder, os nomes deixam de resolver até você desfazer isto. Algumas páginas de login de Wi-Fi público precisam dele desligado."
+
+msgid "Measuring ping during a download before the change, about 10 s..."
+msgstr "Medindo o ping durante um download antes da mudança, uns 10 s..."
+
+msgid "Before: {} during a download. Apply to measure again."
+msgstr "Antes: {} durante um download. Aplique para medir de novo."
+
+msgid "Before: {} during a download. Measuring again after the change..."
+msgstr "Antes: {} durante um download. Medindo de novo depois da mudança..."
+
+msgid "The test couldn't reach 1.1.1.1 or the speed test server."
+msgstr "O teste não conseguiu falar com o 1.1.1.1 ou com o servidor do teste de velocidade."
+
+msgid "During a download: {} before, {} after. Better on your network."
+msgstr "Durante um download: {} antes, {} depois. Melhor na sua rede."
+
+msgid "During a download: {} before, {} after. Worse on your network, undo it."
+msgstr "Durante um download: {} antes, {} depois. Pior na sua rede, desfaça."
+
+msgid "During a download: {} before, {} after. No difference beyond the usual noise, so undoing it costs nothing."
+msgstr "Durante um download: {} antes, {} depois. Nenhuma diferença além da variação normal, então desfazer não custa nada."
+
+msgid "Test first"
+msgstr "Testar antes"
+
+msgid "(hidden)"
+msgstr "(oculta)"
+
+msgid "2.4 GHz channels"
+msgstr "Canais de 2,4 GHz"
+
+msgid "5 GHz channels"
+msgstr "Canais de 5 GHz"
+
+msgid "Band"
+msgstr "Banda"
+
+msgid "Channel"
+msgstr "Canal"
+
+msgid "Channel {} is crowded. Channel {} is the quietest: set it in your router."
+msgstr "O canal {} está lotado. O canal {} é o mais tranquilo: escolha ele no seu roteador."
+
+msgid "Channel {} isn't crowded. Nothing to change."
+msgstr "O canal {} não está lotado. Nada para mudar."
+
+msgid "Connected"
+msgstr "Conectado"
+
+msgid "Listening to every Wi-Fi channel, about 4 s..."
+msgstr "Ouvindo todos os canais de Wi-Fi, uns 4 s..."
+
+msgid "Location settings"
+msgstr "Configurações de localização"
+
+msgid "No Wi-Fi adapter answered."
+msgstr "Nenhum adaptador Wi-Fi respondeu."
+
+msgid "Signal"
+msgstr "Sinal"
+
+msgid "The scan failed. Try again in a moment."
+msgstr "A varredura falhou. Tente de novo daqui a pouco."
+
+msgid "This PC isn't connected to Wi-Fi. These are the networks around it."
+msgstr "Este PC não está conectado ao Wi-Fi. Estas são as redes em volta dele."
+
+msgid "Weak: walls or distance cost speed and add lag."
+msgstr "Fraco: paredes ou distância custam velocidade e aumentam o atraso."
+
+msgid "Windows only shares Wi-Fi scans with apps while location access is on for desktop apps."
+msgstr "O Windows só passa as varreduras de Wi-Fi para os apps com o acesso à localização ligado para apps da área de trabalho."
+
+msgid "Your router also has a 5 GHz network, faster and less crowded. Join it if the signal reaches."
+msgstr "Seu roteador também tem uma rede de 5 GHz, mais rápida e menos lotada. Conecte nela se o sinal alcançar."
+
+msgid "{} on {}, channel {}, signal {} dBm."
+msgstr "{} em {}, canal {}, sinal {} dBm."
+
+msgid "2.4 GHz"
+msgstr "2,4 GHz"
+
+msgid "5 GHz"
+msgstr "5 GHz"
+
+msgid "6 GHz"
+msgstr "6 GHz"
+
+msgid "Scanning..."
+msgstr "Lendo..."
