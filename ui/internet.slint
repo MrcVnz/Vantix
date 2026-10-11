@@ -40,12 +40,22 @@ export struct DnsRow {
     uncached: string,
     failed: int,
     sent: int,
+    jitter: string,
     current: bool,
     best: bool,
     /// A public service Vantix can set.
     provider: bool,
     /// In use because Vantix set it, so it can be undone here.
     vantix: bool,
+    /// 0 queued, 1 testing, 2 done.
+    state: int,
+    /// Share of its queries sent, 0 to 1.
+    progress: float,
+    /// Place from the top. Rows keep their order in the model and slide to their
+    /// place when the ranking changes.
+    rank: int,
+    /// On the fastest row, how much quicker it is than the DNS in use.
+    faster: string,
 }
 
 export struct DiagRow {
@@ -109,7 +119,16 @@ export global Net {
     in property <int> dns-missed;
     /// The connection is cable, Wi-Fi or PPPoE, whose DNS Vantix can change.
     in property <bool> dns-settable;
+    /// While running: servers done, of how many, the share of all queries sent, and
+    /// about how long is left (empty until there's a rate to go by).
+    in property <int> dns-done;
+    in property <int> dns-total;
+    in property <float> dns-progress;
+    in property <string> dns-eta;
+    /// Queries per server, for "Testing 23/50".
+    in property <int> dns-queries;
     callback run-dns();
+    callback cancel-dns();
     /// Row index into `dns`.
     callback use-dns(int);
     callback undo-dns();
@@ -516,7 +535,113 @@ component BloatTab inherits ScrollView {
     }
 }
 
+/// One server of the DNS test: live while it runs, then its numbers and what to do.
+component DnsLine inherits Rectangle {
+    in property <DnsRow> item;
+    in property <int> index;
+
+    border-radius: 8px;
+    background: self.item.best && !Net.dns-running ? Theme.accent.with-alpha(0.07) : transparent;
+    animate background { duration: 300ms; }
+
+    HorizontalLayout {
+        spacing: 16px;
+        padding-left: 6px;
+        padding-right: 14px;
+
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 8px;
+            alignment: start;
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.item.name != "" ? root.item.name : root.item.address;
+                    color: root.item.state == 0 ? Theme.muted : Theme.text;
+                    font-weight: 600;
+                }
+                if root.item.name != "": Text {
+                    text: root.item.address;
+                    color: Theme.muted;
+                    font-size: 12px;
+                }
+            }
+            if root.item.current: VerticalLayout {
+                alignment: center;
+                Chip { text: @tr("In use"); tint: Theme.info; }
+            }
+            if root.item.best && !Net.dns-running: VerticalLayout {
+                alignment: center;
+                Chip {
+                    text: root.item.faster != "" ? @tr("Fastest, {} quicker than yours", root.item.faster) : @tr("Fastest");
+                    tint: Theme.accent;
+                }
+            }
+        }
+        Value { width: 96px; text: root.item.cached; color: root.item.state == 2 ? Theme.text : Theme.muted; }
+        Value { width: 96px; text: root.item.uncached; color: root.item.state == 2 ? Theme.text : Theme.muted; }
+        Value { width: 84px; text: root.item.jitter; color: root.item.state == 2 ? Theme.text : Theme.muted; }
+        Value {
+            width: 72px;
+            text: root.item.failed + " / " + root.item.sent;
+            color: root.item.failed > 1 ? Theme.bad : root.item.failed == 1 ? Theme.warn : Theme.muted;
+        }
+        HorizontalLayout {
+            width: 110px;
+            alignment: end;
+            if Net.dns-running: Text {
+                text: root.item.state == 0 ? @tr("Queued")
+                    : root.item.state == 1 ? @tr("Testing {}/{}", root.item.sent, Net.dns-queries)
+                    : @tr("Done");
+                color: root.item.state == 1 ? Theme.info : root.item.state == 2 ? Theme.accent : Theme.faint;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+            }
+            if !Net.dns-running && root.item.vantix: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Undo");
+                    tall: 32px;
+                    enabled: !Tweaks.busy;
+                    clicked => { Net.undo-dns(); }
+                }
+            }
+            if !Net.dns-running && !root.item.vantix && root.item.provider && !root.item.current && Net.dns-settable: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Use");
+                    tall: 32px;
+                    primary: root.item.best;
+                    enabled: !Tweaks.busy;
+                    clicked => { Net.use-dns(root.index); }
+                }
+            }
+        }
+    }
+
+    // Thin bar along the bottom while the server is being tested.
+    if Net.dns-running && root.item.state < 2: Rectangle {
+        x: 6px;
+        y: parent.height - 3px;
+        width: parent.width - 20px;
+        height: 2px;
+        border-radius: 1px;
+        background: Theme.background;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.item.progress;
+            border-radius: 1px;
+            background: Theme.info;
+            animate width { duration: 250ms; }
+        }
+    }
+}
+
 component DnsTab inherits Card {
+    property <length> row-height: 54px;
+
     pad: 14px;
 
     HorizontalLayout {
@@ -527,13 +652,28 @@ component DnsTab inherits Card {
             alignment: center;
             spacing: 4px;
             Text {
-                text: Net.dns-verdict == 1 ? @tr("The DNS you use now is as fast as the best one here.")
+                text: Net.dns-running ? (Net.dns-eta != ""
+                        ? @tr("{} of {} servers done, about {} left", Net.dns-done, Net.dns-total, Net.dns-eta)
+                        : @tr("{} of {} servers done", Net.dns-done, Net.dns-total))
+                    : Net.dns-verdict == 1 ? @tr("The DNS you use now is as fast as the best one here.")
                     : Net.dns-verdict == 2 ? @tr("{} answers {} faster than the DNS you use now.", Net.dns-best, Net.dns-gain)
                     : Net.dns-verdict == 3 ? @tr("The DNS you use now missed {} queries. {} answered every one.", Net.dns-missed, Net.dns-best)
                     : @tr("Times how fast each DNS server answers, with real queries sent straight to it.");
-                color: Net.dns-verdict == 1 ? Theme.accent : Net.dns-verdict >= 2 ? Theme.warn : Theme.text;
+                color: Net.dns-running ? Theme.text : Net.dns-verdict == 1 ? Theme.accent : Net.dns-verdict >= 2 ? Theme.warn : Theme.text;
                 font-weight: 600;
                 wrap: word-wrap;
+            }
+            if Net.dns-running: Rectangle {
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.background;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * Net.dns-progress;
+                    border-radius: 3px;
+                    background: Theme.accent;
+                    animate width { duration: 250ms; }
+                }
             }
             Text {
                 text: @tr("DNS only decides how fast a site or server starts loading. It doesn't change the ping inside a game.");
@@ -544,12 +684,16 @@ component DnsTab inherits Card {
         }
         VerticalLayout {
             alignment: center;
-            Button {
-                text: Net.dns-running ? @tr("Testing...") : @tr("Run benchmark");
+            if !Net.dns-running: Button {
+                text: @tr("Run benchmark");
                 icon: Icons.search;
-                primary: !Net.dns-running;
-                enabled: !Net.dns-running;
+                primary: true;
                 clicked => { Net.run-dns(); }
+            }
+            if Net.dns-running: Button {
+                text: @tr("Cancel");
+                icon: Icons.x;
+                clicked => { Net.cancel-dns(); }
             }
         }
     }
@@ -559,77 +703,24 @@ component DnsTab inherits Card {
         padding-left: 6px;
         padding-right: 14px;
         Heading { horizontal-stretch: 1; text: @tr("Server"); }
-        Heading { width: 110px; text: @tr("Cached names"); horizontal-alignment: right; }
-        Heading { width: 110px; text: @tr("New names"); horizontal-alignment: right; }
-        Heading { width: 90px; text: @tr("Missed"); horizontal-alignment: right; }
-        Rectangle { width: 96px; }
+        Heading { width: 96px; text: @tr("Cached names"); horizontal-alignment: right; }
+        Heading { width: 96px; text: @tr("New names"); horizontal-alignment: right; }
+        Heading { width: 84px; text: @tr("Jitter"); horizontal-alignment: right; }
+        Heading { width: 72px; text: @tr("Missed"); horizontal-alignment: right; }
+        Rectangle { width: 110px; }
     }
 
-    if Net.dns.length > 0: ListView {
-        vertical-stretch: 1;
-        for row[i] in Net.dns: HorizontalLayout {
-            spacing: 16px;
-            padding-left: 6px;
-            padding-right: 14px;
-            height: 50px;
-
-            HorizontalLayout {
-                horizontal-stretch: 1;
-                spacing: 8px;
-                alignment: start;
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 2px;
-                    Text {
-                        text: row.name != "" ? row.name : row.address;
-                        color: Theme.text;
-                        font-weight: 600;
-                    }
-                    if row.name != "": Text {
-                        text: row.address;
-                        color: Theme.muted;
-                        font-size: 12px;
-                    }
-                }
-                if row.current: VerticalLayout {
-                    alignment: center;
-                    Chip { text: @tr("In use"); tint: Theme.info; }
-                }
-                if row.best: VerticalLayout {
-                    alignment: center;
-                    Chip { text: @tr("Fastest"); tint: Theme.accent; }
-                }
-            }
-            Value { width: 110px; text: row.cached; }
-            Value { width: 110px; text: row.uncached; }
-            Value {
-                width: 90px;
-                text: row.failed + " / " + row.sent;
-                color: row.failed > 1 ? Theme.bad : row.failed == 1 ? Theme.warn : Theme.muted;
-            }
-            HorizontalLayout {
-                width: 96px;
-                alignment: end;
-                if row.vantix: VerticalLayout {
-                    alignment: center;
-                    Button {
-                        text: @tr("Undo");
-                        tall: 32px;
-                        enabled: !Tweaks.busy;
-                        clicked => { Net.undo-dns(); }
-                    }
-                }
-                if !row.vantix && row.provider && !row.current && Net.dns-settable: VerticalLayout {
-                    alignment: center;
-                    Button {
-                        text: @tr("Use");
-                        tall: 32px;
-                        primary: row.best;
-                        enabled: !Tweaks.busy;
-                        clicked => { Net.use-dns(i); }
-                    }
-                }
-            }
+    // Rows stay in the order they were tested and slide to their rank, so the reorder
+    // at the end is something you can watch instead of a jump.
+    if Net.dns.length > 0: Rectangle {
+        height: Net.dns.length * root.row-height;
+        for row[i] in Net.dns: DnsLine {
+            item: row;
+            index: i;
+            y: row.rank * root.row-height;
+            height: root.row-height - 4px;
+            width: parent.width;
+            animate y { duration: 450ms; easing: ease-in-out; }
         }
     }
 
@@ -641,7 +732,7 @@ component DnsTab inherits Card {
         wrap: word-wrap;
     }
 
-    if Net.dns.length == 0: Rectangle { vertical-stretch: 1; }
+    Rectangle { vertical-stretch: 1; }
 }
 
 component UsageTab inherits Card {

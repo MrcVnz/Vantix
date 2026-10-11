@@ -84,6 +84,10 @@ struct State {
     bloat: Option<Result<net::Bloat, net::BloatError>>,
     dns_running: bool,
     dns: Vec<net::Resolver>,
+    /// The servers in the order they were tested, which is the order of the rows.
+    dns_order: Vec<std::net::IpAddr>,
+    /// The run in progress, read by the tick.
+    dns_run: Option<Arc<net::DnsRun>>,
     /// The layered diagnosis runs on its own thread and only writes its state into the
     /// net module's statics, so the tick can read and show what's happening.
     diag_running: bool,
@@ -201,6 +205,8 @@ fn main() -> Result<(), slint::PlatformError> {
             bloat: None,
             dns_running: false,
             dns: Vec::new(),
+            dns_order: Vec::new(),
+            dns_run: None,
             diag_running: false,
             diag_again: false,
             traffic: None,
@@ -579,6 +585,11 @@ impl App {
         }));
         internet.on_run_bloat(bind(self, |app| app.run_bloat()));
         internet.on_run_dns(bind(self, |app| app.run_dns()));
+        internet.on_cancel_dns(bind(self, |app| {
+            if let Some(run) = &app.state.borrow().dns_run {
+                run.cancel();
+            }
+        }));
         internet.on_run_diagnose(bind(self, |app| app.run_diagnose()));
         internet.on_fix_diag(bind_with(self, |app, tweak: i32| {
             if (tweak as usize) < CATALOG.len() {
@@ -590,7 +601,12 @@ impl App {
             app.with_ui(|ui| ui.global::<Net>().set_tab(2));
         }));
         internet.on_use_dns(bind_with(self, |app, row: i32| {
-            let provider = app.state.borrow().dns.get(row as usize).and_then(|r| r.provider);
+            // Rows are in test order, not ranked, so the row names the server by address.
+            let provider = {
+                let state = app.state.borrow();
+                let address = state.dns_order.get(row as usize);
+                state.dns.iter().find(|r| Some(&r.address) == address).and_then(|r| r.provider)
+            };
             if let (Some(provider), Some(tweak)) = (provider, dns_tweak()) {
                 net::choose_dns(provider);
                 app.ask(Ask::Apply(tweak));
@@ -2262,6 +2278,9 @@ impl App {
             if self.state.borrow().bloat_running {
                 show_bloat_progress(ui);
             }
+            if self.state.borrow().dns_running {
+                self.show_dns(ui);
+            }
             // The diagnosis walks one layer at a time; the tick shows it happening.
             if tab == 5 && (self.state.borrow().diag_running || net::diag_running()) {
                 self.show_diagnose(ui);
@@ -2474,71 +2493,151 @@ impl App {
         internet.set_diagnose(ModelRc::new(VecModel::from(rows)));
     }
 
+    /// The benchmark runs on its own threads; the tick reads each server's progress from
+    /// the shared run and shows it while it walks.
     fn run_dns(self: &Rc<Self>) {
         if std::mem::replace(&mut self.state.borrow_mut().dns_running, true) {
             return;
         }
-        self.with_ui(|ui| ui.global::<Net>().set_dns_running(true));
-        self.run_job(net::dns_benchmark, |app, result| {
-            {
-                let mut state = app.state.borrow_mut();
-                state.dns_running = false;
-                state.dns = result.unwrap_or_default();
-            }
-            app.with_ui(|ui| app.show_dns(ui));
-        });
+        let run = Arc::new(net::DnsRun::new());
+        {
+            let mut state = self.state.borrow_mut();
+            state.dns_order = run.probes.iter().map(|probe| probe.address).collect();
+            state.dns_run = Some(run.clone());
+        }
+        self.with_ui(|ui| self.show_dns(ui));
+        self.run_job(
+            move || net::dns_benchmark(&run),
+            |app, result| {
+                {
+                    let mut state = app.state.borrow_mut();
+                    state.dns_running = false;
+                    state.dns_run = None;
+                    match result {
+                        // Cancelled before any server finished: the last results stay.
+                        Some(result) if result.is_empty() && !state.dns.is_empty() => {
+                            state.dns_order = state.dns.iter().map(|r| r.address).collect();
+                        }
+                        Some(result) => state.dns = result,
+                        None => state.dns.clear(),
+                    }
+                }
+                app.with_ui(|ui| app.show_dns(ui));
+            },
+        );
     }
 
     fn show_dns(&self, ui: &AppWindow) {
         let state = self.state.borrow();
         let internet = ui.global::<Net>();
-        let resolvers = &state.dns;
+        internet.set_dns_queries(net::DNS_QUERIES as i32);
+        internet.set_dns_settable(net::dns_adapter().is_some());
+        internet.set_dns_running(state.dns_running);
         // Read again rather than taken from the benchmark, which may predate a change.
         let in_use = net::current_dns();
         let is_current = |r: &net::Resolver| in_use.contains(&r.address);
         let changed = state.changes.iter().any(|c| c.id == net::DNS_TWEAK && !c.reset);
-        // Sorted best first, so the first of each kind is the one to compare.
-        let best = resolvers.first().filter(|r| r.reliable());
-        let current = resolvers.iter().find(|r| is_current(r));
-        let name = |r: &net::Resolver| if r.name.is_empty() { r.address.to_string() } else { r.name.clone() };
-        let verdict = match (best, current) {
-            (Some(best), Some(current)) if !current.reliable() => {
-                internet.set_dns_missed(current.failed as i32);
-                internet.set_dns_best(name(best).into());
-                3
-            }
-            (Some(best), Some(current)) => {
-                let gain = current.score().unwrap_or(0.0) - best.score().unwrap_or(0.0);
-                // A few ms either way is noise between runs, not a reason to switch.
-                if gain < 3.0 {
-                    1
-                } else {
+        let ms = |value: Option<f64>| value.map(format_ms).unwrap_or_else(|| "-".into());
+        let row = |r: &net::Resolver, rank: usize| DnsRow {
+            name: r.name.as_str().into(),
+            address: r.address.to_string().into(),
+            cached: ms(r.cached).into(),
+            uncached: ms(r.uncached).into(),
+            jitter: ms(r.jitter).into(),
+            failed: r.failed as i32,
+            sent: r.sent as i32,
+            current: is_current(r),
+            best: false,
+            provider: r.provider.is_some(),
+            vantix: changed && is_current(r) && r.provider.is_some(),
+            state: 2,
+            progress: 1.0,
+            rank: rank as i32,
+            faster: "".into(),
+        };
+
+        let rows: Vec<DnsRow> = if let Some(run) = &state.dns_run {
+            // Live: rows in the order they're tested, numbers as they come in.
+            let mut done = 0;
+            let mut sent = 0;
+            let rows = run
+                .probes
+                .iter()
+                .enumerate()
+                .map(|(i, probe)| {
+                    let resolver = probe.resolver();
+                    let stage = probe.state.load(Ordering::Relaxed);
+                    done += (stage == 2) as i32;
+                    sent += resolver.sent;
+                    DnsRow {
+                        state: stage as i32,
+                        progress: resolver.sent as f32 / net::DNS_QUERIES as f32,
+                        ..row(&resolver, i)
+                    }
+                })
+                .collect();
+            let total = run.probes.len();
+            internet.set_dns_done(done);
+            internet.set_dns_total(total as i32);
+            internet.set_dns_progress(sent as f32 / (total.max(1) as u32 * net::DNS_QUERIES) as f32);
+            let eta = run.eta().map(|secs| format!("{} s", secs.ceil() as u64));
+            internet.set_dns_eta(eta.unwrap_or_default().into());
+            rows
+        } else {
+            let resolvers = &state.dns;
+            // Sorted best first, so the first of each kind is the one to compare.
+            let best = resolvers.first().filter(|r| r.reliable());
+            let current = resolvers.iter().find(|r| is_current(r));
+            let name =
+                |r: &net::Resolver| if r.name.is_empty() { r.address.to_string() } else { r.name.clone() };
+            let mut faster = String::new();
+            let verdict = match (best, current) {
+                (Some(best), Some(current)) if !current.reliable() => {
+                    internet.set_dns_missed(current.failed as i32);
                     internet.set_dns_best(name(best).into());
-                    internet.set_dns_gain(format_ms(gain).into());
-                    2
+                    3
+                }
+                (Some(best), Some(current)) => {
+                    let gain = current.score().unwrap_or(0.0) - best.score().unwrap_or(0.0);
+                    // A few ms either way is noise between runs, not a reason to switch.
+                    if gain < 3.0 {
+                        1
+                    } else {
+                        faster = format_ms(gain);
+                        internet.set_dns_best(name(best).into());
+                        internet.set_dns_gain(faster.as_str().into());
+                        2
+                    }
+                }
+                _ => 0,
+            };
+            internet.set_dns_verdict(verdict);
+            // The model keeps the test order; each row's rank says where it slides to.
+            state
+                .dns_order
+                .iter()
+                .filter_map(|address| resolvers.iter().position(|r| r.address == *address))
+                .map(|rank| {
+                    let r = &resolvers[rank];
+                    let best = best.is_some_and(|b| b.address == r.address);
+                    DnsRow {
+                        best,
+                        faster: if best { faster.as_str().into() } else { "".into() },
+                        ..row(r, rank)
+                    }
+                })
+                .collect()
+        };
+        let model = internet.get_dns();
+        match model.as_any().downcast_ref::<VecModel<DnsRow>>() {
+            // Same rows with new numbers: keeping the model is what lets them slide.
+            Some(current) if current.row_count() == rows.len() => {
+                for (i, row) in rows.into_iter().enumerate() {
+                    current.set_row_data(i, row);
                 }
             }
-            _ => 0,
-        };
-        let rows: Vec<DnsRow> = resolvers
-            .iter()
-            .map(|r| DnsRow {
-                name: r.name.as_str().into(),
-                address: r.address.to_string().into(),
-                cached: r.cached.map(format_ms).unwrap_or_else(|| "-".into()).into(),
-                uncached: r.uncached.map(format_ms).unwrap_or_else(|| "-".into()).into(),
-                failed: r.failed as i32,
-                sent: r.sent as i32,
-                current: is_current(r),
-                best: best.is_some_and(|b| b.address == r.address),
-                provider: r.provider.is_some(),
-                vantix: changed && is_current(r) && r.provider.is_some(),
-            })
-            .collect();
-        internet.set_dns_settable(net::dns_adapter().is_some());
-        internet.set_dns_verdict(verdict);
-        internet.set_dns(ModelRc::new(VecModel::from(rows)));
-        internet.set_dns_running(state.dns_running);
+            _ => internet.set_dns(ModelRc::new(VecModel::from(rows))),
+        }
     }
 
     fn set_job(&self, state: JobState, detail: &str) {

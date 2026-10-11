@@ -1081,6 +1081,21 @@ msgstr "Mede a rapidez de cada servidor DNS com consultas reais enviadas direto 
 msgid "DNS only decides how fast a site or server starts loading. It doesn't change the ping inside a game."
 msgstr "O DNS só decide a rapidez com que um site ou servidor começa a carregar. Ele não muda o ping dentro do jogo."
 
+msgid "{} of {} servers done, about {} left"
+msgstr "{} de {} servidores prontos, falta cerca de {}"
+
+msgid "{} of {} servers done"
+msgstr "{} de {} servidores prontos"
+
+msgid "Queued"
+msgstr "Na fila"
+
+msgid "Testing {}/{}"
+msgstr "Testando {}/{}"
+
+msgid "Fastest, {} quicker than yours"
+msgstr "Mais rápido, {} à frente do seu"
+
 msgid "Run benchmark"
 msgstr "Testar"
 

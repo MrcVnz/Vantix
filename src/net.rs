@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, RandomState};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpStream, ToSocketAddrs, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -813,6 +813,8 @@ pub struct Resolver {
     pub cached: Option<f64>,
     /// Median time for names it has to look up, in ms.
     pub uncached: Option<f64>,
+    /// Mean difference between consecutive cached answers, in ms.
+    pub jitter: Option<f64>,
     pub failed: u32,
     pub sent: u32,
 }
@@ -829,27 +831,118 @@ impl Resolver {
     }
 }
 
-/// The servers in use and the public ones, fastest first. Takes a few seconds.
-pub fn dns_benchmark() -> Vec<Resolver> {
-    let mut resolvers = current_dns();
-    for provider in &PROVIDERS {
-        let address = IpAddr::V4(provider.v4[0]);
-        if !resolvers.contains(&address) {
-            resolvers.push(address);
+/// Queries each server gets: the names twice (to fill its cache, then timed) and half of
+/// them again under a random label it can't have cached.
+pub const DNS_QUERIES: u32 = DOMAINS.len() as u32 * 2 + DOMAINS.len() as u32 / 2;
+
+/// Where one server is in a benchmark run, written by its thread and read by the tick.
+pub struct DnsProbe {
+    pub address: IpAddr,
+    provider: Option<usize>,
+    /// 0 queued, 1 testing, 2 done.
+    pub state: AtomicU8,
+    pub sent: AtomicU32,
+    pub failed: AtomicU32,
+    started: Mutex<Option<Instant>>,
+    /// Timed answers so far: cached names, then new ones.
+    times: Mutex<(Vec<f64>, Vec<f64>)>,
+}
+
+impl DnsProbe {
+    /// What the server has shown so far; the final numbers once it's done.
+    pub fn resolver(&self) -> Resolver {
+        let (cached, uncached) = self.times.lock().unwrap().clone();
+        let jitter = (cached.len() > 1)
+            .then(|| cached.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f64>() / (cached.len() - 1) as f64);
+        Resolver {
+            provider: self.provider,
+            name: self.provider.map(|p| PROVIDERS[p].name.to_string()).unwrap_or_default(),
+            address: self.address,
+            cached: median(cached),
+            uncached: median(uncached),
+            jitter,
+            failed: self.failed.load(Ordering::Relaxed),
+            sent: self.sent.load(Ordering::Relaxed),
         }
     }
+}
+
+/// One benchmark: the servers in use first, then the public ones.
+pub struct DnsRun {
+    pub probes: Vec<DnsProbe>,
+    cancel: AtomicBool,
+}
+
+impl DnsRun {
+    pub fn new() -> Self {
+        let mut addresses = current_dns();
+        for provider in &PROVIDERS {
+            let address = IpAddr::V4(provider.v4[0]);
+            if !addresses.contains(&address) {
+                addresses.push(address);
+            }
+        }
+        let probes = addresses
+            .into_iter()
+            .map(|address| DnsProbe {
+                address,
+                provider: provider_of(address),
+                state: AtomicU8::new(0),
+                sent: AtomicU32::new(0),
+                failed: AtomicU32::new(0),
+                started: Mutex::new(None),
+                times: Mutex::new((Vec::new(), Vec::new())),
+            })
+            .collect();
+        Self { probes, cancel: AtomicBool::new(false) }
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Seconds left, from how fast each server has been going. They run side by side,
+    /// so the slowest one decides. `None` until every server has answered something.
+    pub fn eta(&self) -> Option<f64> {
+        let mut left: f64 = 0.0;
+        for probe in &self.probes {
+            if probe.state.load(Ordering::Relaxed) == 2 {
+                continue;
+            }
+            let sent = probe.sent.load(Ordering::Relaxed);
+            let elapsed = (*probe.started.lock().unwrap())?.elapsed().as_secs_f64();
+            if sent == 0 {
+                return None;
+            }
+            left = left.max(elapsed / sent as f64 * DNS_QUERIES.saturating_sub(sent) as f64);
+        }
+        Some(left)
+    }
+}
+
+/// Runs every server of `run` side by side, each on its own thread, and returns them
+/// fastest first. Takes a few seconds; a cancelled run returns only the servers that
+/// had finished.
+pub fn dns_benchmark(run: &DnsRun) -> Vec<Resolver> {
     let scope = connection_scope();
-    let mut results: Vec<Resolver> = std::thread::scope(|s| {
-        let jobs: Vec<_> =
-            resolvers.into_iter().map(|address| s.spawn(move || measure_resolver(address, scope))).collect();
-        jobs.into_iter().filter_map(|job| job.join().ok()).collect()
+    std::thread::scope(|s| {
+        for probe in &run.probes {
+            s.spawn(move || measure_resolver(probe, scope, &run.cancel));
+        }
     });
+    let mut results: Vec<Resolver> =
+        run.probes.iter().filter(|p| p.state.load(Ordering::Relaxed) == 2).map(DnsProbe::resolver).collect();
+    rank_resolvers(&mut results);
+    results
+}
+
+/// Reliable ones first, then by score.
+pub fn rank_resolvers(results: &mut [Resolver]) {
     results.sort_by(|a, b| {
         b.reliable()
             .cmp(&a.reliable())
             .then(a.score().unwrap_or(f64::MAX).total_cmp(&b.score().unwrap_or(f64::MAX)))
     });
-    results
 }
 
 /// Zone for link-local IPv6 resolvers, which only mean something on one interface.
@@ -859,45 +952,59 @@ fn connection_scope() -> u32 {
     index
 }
 
-fn measure_resolver(address: IpAddr, scope: u32) -> Resolver {
-    let provider = provider_of(address);
-    let name = provider.map(|p| PROVIDERS[p].name.to_string()).unwrap_or_default();
-    let mut resolver = Resolver { provider, name, address, cached: None, uncached: None, failed: 0, sent: 0 };
-    let target = match address {
+fn measure_resolver(probe: &DnsProbe, scope: u32, cancel: &AtomicBool) {
+    *probe.started.lock().unwrap() = Some(Instant::now());
+    probe.state.store(1, Ordering::Relaxed);
+    let target = match probe.address {
         IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80 => {
             SocketAddr::V6(SocketAddrV6::new(v6, 53, 0, scope))
         }
-        _ => SocketAddr::new(address, 53),
+        address => SocketAddr::new(address, 53),
     };
     let local: SocketAddr =
-        if address.is_ipv4() { "0.0.0.0:0".parse().unwrap() } else { "[::]:0".parse().unwrap() };
-    let Ok(socket) = UdpSocket::bind(local) else { return resolver };
-    if socket.connect(target).is_err() || socket.set_read_timeout(Some(Duration::from_secs(1))).is_err() {
-        return resolver;
-    }
-    let mut ask = |name: &str| {
-        resolver.sent += 1;
+        if probe.address.is_ipv4() { "0.0.0.0:0".parse().unwrap() } else { "[::]:0".parse().unwrap() };
+    let socket = UdpSocket::bind(local)
+        .ok()
+        .filter(|s| s.connect(target).is_ok() && s.set_read_timeout(Some(Duration::from_secs(1))).is_ok());
+    let Some(socket) = socket else {
+        probe.state.store(2, Ordering::Relaxed);
+        return;
+    };
+    let ask = |name: &str| {
         let time = lookup(&socket, name);
+        probe.sent.fetch_add(1, Ordering::Relaxed);
         if time.is_none() {
-            resolver.failed += 1;
+            probe.failed.fetch_add(1, Ordering::Relaxed);
         }
         time
     };
+    let stop = || cancel.load(Ordering::Relaxed);
     // The first round puts every name in the resolver's cache, the second is timed.
     for domain in DOMAINS {
+        if stop() {
+            return;
+        }
         ask(domain);
     }
-    let cached: Vec<f64> = DOMAINS.iter().filter_map(|domain| ask(domain)).collect();
+    for domain in DOMAINS {
+        if stop() {
+            return;
+        }
+        if let Some(ms) = ask(domain) {
+            probe.times.lock().unwrap().0.push(ms);
+        }
+    }
     // A random label under a real domain: no resolver has that cached, so it has to ask
     // the domain's own servers.
-    let uncached: Vec<f64> = DOMAINS
-        .iter()
-        .step_by(2)
-        .filter_map(|domain| ask(&format!("{:x}.{domain}", random() & 0xffff_ffff)))
-        .collect();
-    resolver.cached = median(cached);
-    resolver.uncached = median(uncached);
-    resolver
+    for domain in DOMAINS.iter().step_by(2) {
+        if stop() {
+            return;
+        }
+        if let Some(ms) = ask(&format!("{:x}.{domain}", random() & 0xffff_ffff)) {
+            probe.times.lock().unwrap().1.push(ms);
+        }
+    }
+    probe.state.store(2, Ordering::Relaxed);
 }
 
 // Setting the DNS servers, from the DNS tab. What was there before is saved per family,
@@ -2815,13 +2922,31 @@ mod tests {
     #[ignore]
     fn net_dns() {
         let start = Instant::now();
-        for r in dns_benchmark() {
+        for r in dns_benchmark(&DnsRun::new()) {
             println!(
-                "{:<12} {:<16} cached={:.1?} uncached={:.1?} failed={}/{}",
-                r.name, r.address, r.cached, r.uncached, r.failed, r.sent
+                "{:<12} {:<16} cached={:.1?} uncached={:.1?} jitter={:.1?} failed={}/{}",
+                r.name, r.address, r.cached, r.uncached, r.jitter, r.failed, r.sent
             );
         }
         println!("took {:?}", start.elapsed());
+    }
+
+    /// Cancels a run after a second: `cargo test net_dns_cancel -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn net_dns_cancel() {
+        let run = DnsRun::new();
+        let start = Instant::now();
+        let results = std::thread::scope(|s| {
+            let job = s.spawn(|| dns_benchmark(&run));
+            std::thread::sleep(Duration::from_secs(1));
+            println!("eta after 1 s: {:.1?}", run.eta());
+            run.cancel();
+            job.join().unwrap()
+        });
+        println!("stopped in {:?} with {} finished", start.elapsed(), results.len());
+        assert!(start.elapsed() < Duration::from_secs(3), "a cancel stops within a query timeout");
+        assert!(results.iter().all(|r| r.sent == DNS_QUERIES));
     }
 
     /// Downloads for 3 s while counting: `cargo test net_traffic -- --ignored --nocapture`
