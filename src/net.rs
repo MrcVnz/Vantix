@@ -2177,16 +2177,52 @@ fn set_provider() -> Option<usize> {
     provider_of(IpAddr::V4(first))
 }
 
-/// What `netsh dns show encryption` says about one address: (auto upgrade, UDP fallback),
-/// `None` when it isn't listed. The labels are translated, the yes/no values aren't.
-fn doh_entry(server: &str) -> Option<(bool, bool)> {
+/// One address in Windows' list of encrypted DNS servers.
+#[derive(Clone, Debug, PartialEq)]
+struct DohEntry {
+    template: String,
+    /// Queries to the address go over HTTPS.
+    auto: bool,
+    /// Plain DNS is tried when HTTPS fails.
+    fallback: bool,
+}
+
+/// What `netsh dns show encryption` says about one address, `None` when it isn't listed.
+/// The labels are translated, the template and the yes/no values aren't.
+fn doh_entry(server: &str) -> Option<DohEntry> {
     let out = tweaks::run("netsh.exe", &["dns", "show", "encryption", &format!("server={server}")]).ok()?;
     let values: Vec<&str> =
         out.lines().filter_map(|line| line.split_once(": ").map(|(_, value)| value.trim())).collect();
     match values[..] {
-        [_template, auto, fallback, ..] => Some((auto == "yes", fallback == "yes")),
+        [template, auto, fallback, ..] if template.starts_with("https://") => Some(DohEntry {
+            template: template.to_string(),
+            auto: auto == "yes",
+            fallback: fallback == "yes",
+        }),
         _ => None,
     }
+}
+
+/// Writes one address and reads it back: netsh exits with 0 even when it rejects the
+/// command, so its exit code says nothing. `set` needs the template too, or it's refused.
+fn write_doh(server: &str, entry: Option<&DohEntry>) -> windows::core::Result<()> {
+    let target = format!("server={server}");
+    match entry {
+        Some(entry) => {
+            let verb = if doh_entry(server).is_some() { "set" } else { "add" };
+            let template = format!("dohtemplate={}", entry.template);
+            let auto = format!("autoupgrade={}", if entry.auto { "yes" } else { "no" });
+            let fallback = format!("udpfallback={}", if entry.fallback { "yes" } else { "no" });
+            tweaks::run("netsh.exe", &["dns", verb, "encryption", &target, &template, &auto, &fallback])?;
+        }
+        None => {
+            tweaks::run("netsh.exe", &["dns", "delete", "encryption", &target])?;
+        }
+    }
+    if doh_entry(server).as_ref() != entry {
+        return Err(failure(&format!("Windows didn't take the DNS over HTTPS setting for {server}")));
+    }
+    Ok(())
 }
 
 fn doh_servers(provider: usize) -> Vec<String> {
@@ -2200,10 +2236,10 @@ pub fn shows_doh() -> bool {
 
 pub fn doh_on() -> windows::core::Result<bool> {
     let Some(provider) = set_provider() else { return Ok(false) };
-    Ok(doh_entry(&PROVIDERS[provider].v4[0].to_string()).is_some_and(|(auto, _)| auto))
+    Ok(doh_entry(&PROVIDERS[provider].v4[0].to_string()).is_some_and(|entry| entry.auto))
 }
 
-/// Saved as "address=auto,fallback|address=-", `-` for an address Vantix added.
+/// Saved as "address=template,auto,fallback|address=-", `-` for an address Vantix added.
 pub fn enable_doh() -> windows::core::Result<Option<String>> {
     enable_doh_for(set_provider().ok_or_else(|| failure("no public DNS service set"))?)
 }
@@ -2211,25 +2247,13 @@ pub fn enable_doh() -> windows::core::Result<Option<String>> {
 fn enable_doh_for(provider: usize) -> windows::core::Result<Option<String>> {
     let mut saved = Vec::new();
     for server in doh_servers(provider) {
-        let target = format!("server={server}");
-        let result = match doh_entry(&server) {
-            Some((auto, fallback)) => {
-                saved.push(format!("{server}={},{}", yes_no(auto), yes_no(fallback)));
-                tweaks::run(
-                    "netsh.exe",
-                    &["dns", "set", "encryption", &target, "autoupgrade=yes", "udpfallback=no"],
-                )
-            }
-            None => {
-                saved.push(format!("{server}=-"));
-                let template = format!("dohtemplate={}", PROVIDERS[provider].doh);
-                tweaks::run(
-                    "netsh.exe",
-                    &["dns", "add", "encryption", &target, &template, "autoupgrade=yes", "udpfallback=no"],
-                )
-            }
-        };
-        if let Err(e) = result {
+        let old = doh_entry(&server);
+        saved.push(match &old {
+            Some(e) => format!("{server}={},{},{}", e.template, yes_no(e.auto), yes_no(e.fallback)),
+            None => format!("{server}=-"),
+        });
+        let template = old.map_or_else(|| PROVIDERS[provider].doh.to_string(), |e| e.template);
+        if let Err(e) = write_doh(&server, Some(&DohEntry { template, auto: true, fallback: false })) {
             let _ = restore_doh(Some(&saved.join("|")));
             return Err(e);
         }
@@ -2244,16 +2268,19 @@ fn yes_no(on: bool) -> &'static str {
 
 pub fn restore_doh(previous: Option<&str>) -> windows::core::Result<()> {
     for (server, value) in previous.unwrap_or_default().split('|').filter_map(|pair| pair.split_once('=')) {
-        let target = format!("server={server}");
-        match value.split_once(',') {
-            Some((auto, fallback)) => {
-                let (auto, fallback) = (format!("autoupgrade={auto}"), format!("udpfallback={fallback}"));
-                tweaks::run("netsh.exe", &["dns", "set", "encryption", &target, &auto, &fallback])?;
+        // Addresses hold no commas and templates rarely do, so split from the right.
+        let entry = value.rsplitn(3, ',').collect::<Vec<_>>();
+        let entry = match entry[..] {
+            [fallback, auto, template] => {
+                Some(DohEntry { template: template.into(), auto: auto == "yes", fallback: fallback == "yes" })
             }
-            None => {
-                tweaks::run("netsh.exe", &["dns", "delete", "encryption", &target])?;
+            // Saved before the template was kept: the address was listed already.
+            [fallback, auto] => {
+                doh_entry(server).map(|e| DohEntry { auto: auto == "yes", fallback: fallback == "yes", ..e })
             }
-        }
+            _ => None,
+        };
+        write_doh(server, entry.as_ref())?;
     }
     let _ = flush_dns();
     Ok(())
@@ -2263,11 +2290,8 @@ pub fn restore_doh(previous: Option<&str>) -> windows::core::Result<()> {
 pub fn reset_doh() -> windows::core::Result<()> {
     let provider = set_provider().ok_or_else(|| failure("no public DNS service set"))?;
     for server in doh_servers(provider) {
-        if doh_entry(&server).is_some() {
-            tweaks::run(
-                "netsh.exe",
-                &["dns", "set", "encryption", &format!("server={server}"), "autoupgrade=no"],
-            )?;
+        if let Some(entry) = doh_entry(&server) {
+            write_doh(&server, Some(&DohEntry { auto: false, ..entry }))?;
         }
     }
     let _ = flush_dns();
@@ -3474,7 +3498,9 @@ mod tests {
             let before: Vec<_> = doh_servers(provider).iter().map(|s| doh_entry(s)).collect();
             let previous = enable_doh_for(provider).unwrap();
             println!("{}: saved {previous:?}", PROVIDERS[provider].name);
-            assert!(doh_servers(provider).iter().all(|s| doh_entry(s) == Some((true, false))));
+            assert!(
+                doh_servers(provider).iter().all(|s| doh_entry(s).is_some_and(|e| e.auto && !e.fallback))
+            );
             restore_doh(previous.as_deref()).unwrap();
             let after: Vec<_> = doh_servers(provider).iter().map(|s| doh_entry(s)).collect();
             assert_eq!(after, before);
@@ -3671,6 +3697,18 @@ mod tests {
                 notify_proxy_changed();
             }
         }
+        // WinINet bumps the blob's counter (bytes 4 to 8) on its own whenever it's told the
+        // proxy changed, so undo can't bring that part back; everything else must match.
+        let same = |mut saved: Saved| {
+            for (_, _, name, value, _) in &mut saved {
+                if *name == USER_SETTINGS
+                    && let Some(blob) = value.as_mut().filter(|b| b.len() >= 8)
+                {
+                    blob[4..8].fill(0);
+                }
+            }
+            saved
+        };
         let before = read();
         let guard = Guard(before.clone());
         let before_netsh = tweaks::run("netsh.exe", &["winhttp", "show", "proxy"]).unwrap_or_default();
@@ -3689,9 +3727,9 @@ mod tests {
         assert_eq!(flags & 6, 0, "blob has no manual proxy or script left");
         restore_proxy(previous.as_deref()).unwrap();
         // Undo puts back the fake proxy that was saved, not the original from before.
-        assert_eq!(read(), faked);
+        assert_eq!(same(read()), same(faked));
         drop(guard);
-        assert_eq!(read(), before);
+        assert_eq!(same(read()), same(before));
         let after_netsh = tweaks::run("netsh.exe", &["winhttp", "show", "proxy"]).unwrap_or_default();
         assert_eq!(after_netsh, before_netsh, "WinHTTP proxy must read the same after undo");
     }
