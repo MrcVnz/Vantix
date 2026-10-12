@@ -32,6 +32,8 @@ export global Live {
     in property <int> cores-total;
     in property <bool> has-wifi;
     in property <bool> has-hybrid-gpu;
+    /// Windows 10 throttles only on some processors, so efficiency mode does less there.
+    in property <bool> win10;
 
     /// Exe of the game being boosted, empty while there's none.
     in property <string> game;
@@ -235,7 +237,8 @@ export component GameModeCard inherits LiveCard {
         }
         Option {
             text: @tr("Background programs in efficiency mode");
-            detail: @tr("Launchers, browsers and updaters left in the background run on Windows' efficiency mode (EcoQoS). Controller and peripheral software, voice chat, recording, overlays and anti-cheats are left alone, and whatever you bring to the front runs at full speed.");
+            detail: @tr("Launchers, browsers and updaters left in the background run on Windows' efficiency mode (EcoQoS). Controller and peripheral software, voice chat, recording, overlays and anti-cheats are left alone, and whatever you bring to the front runs at full speed.")
+                + (Live.win10 ? " " + @tr("On Windows 10 it does less: Windows only slows them down on processors that support power throttling, mostly laptops.") : "");
             checked <=> Live.eco;
         }
         Option {

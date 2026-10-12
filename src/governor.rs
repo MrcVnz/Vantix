@@ -160,7 +160,8 @@ pub fn capabilities() -> Capabilities {
 pub fn stop() {
     let Some(shared) = SHARED.get() else { return };
     shared.stop.store(true, Ordering::Relaxed);
-    if let Some(thread) = shared.thread.lock().unwrap().take() {
+    // Also runs from the crash handler, where a poisoned lock must not panic again.
+    if let Some(thread) = shared.thread.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = thread.join();
     }
 }

@@ -418,6 +418,37 @@ component ServiceLine inherits Rectangle {
     }
 }
 
+component FilterTabs inherits Segmented {
+    width: 490px;
+    options: [@tr("All"), @tr("Windows"), @tr("Other people's"), @tr("Running"), @tr("With Windows")];
+    selected <=> Services.filter;
+    changed(i) => {
+        Services.open-row = -1;
+        Services.refilter();
+    }
+}
+
+component SearchBox inherits LineEdit {
+    horizontal-stretch: 1;
+    min-width: 180px;
+    placeholder-text: @tr("Search by name");
+    text <=> Services.search;
+    edited => {
+        Services.open-row = -1;
+        Services.refilter();
+    }
+}
+
+component SortTabs inherits Segmented {
+    width: 176px;
+    options: [@tr("By name"), @tr("By memory")];
+    selected <=> Services.sort;
+    changed(i) => {
+        Services.open-row = -1;
+        Services.refilter();
+    }
+}
+
 export component ServicesPage inherits VerticalLayout {
     padding: 32px;
     padding-top: 26px;
@@ -457,35 +488,24 @@ export component ServicesPage inherits VerticalLayout {
         }
     }
 
-    HorizontalLayout {
+    // The three need about 880px in a row; narrower, as at 1366x768 with the sidebar,
+    // the search and the sort go to a line of their own.
+    if root.width >= 960px: HorizontalLayout {
         spacing: Theme.gap;
-        Segmented {
-            width: 490px;
-            options: [@tr("All"), @tr("Windows"), @tr("Other people's"), @tr("Running"), @tr("With Windows")];
-            selected <=> Services.filter;
-            changed(i) => {
-                Services.open-row = -1;
-                Services.refilter();
-            }
+        FilterTabs {}
+        SearchBox {}
+        SortTabs {}
+    }
+    if root.width < 960px: VerticalLayout {
+        spacing: Theme.gap;
+        HorizontalLayout {
+            alignment: start;
+            FilterTabs {}
         }
-        LineEdit {
-            horizontal-stretch: 1;
-            min-width: 180px;
-            placeholder-text: @tr("Search by name");
-            text <=> Services.search;
-            edited => {
-                Services.open-row = -1;
-                Services.refilter();
-            }
-        }
-        Segmented {
-            width: 176px;
-            options: [@tr("By name"), @tr("By memory")];
-            selected <=> Services.sort;
-            changed(i) => {
-                Services.open-row = -1;
-                Services.refilter();
-            }
+        HorizontalLayout {
+            spacing: Theme.gap;
+            SearchBox {}
+            SortTabs {}
         }
     }
 

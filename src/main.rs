@@ -206,7 +206,79 @@ struct App {
     meter: Timer,
 }
 
-fn main() -> Result<(), slint::PlatformError> {
+/// Windows 10 1809. Older builds miss parts of what Vantix reads and changes, and
+/// nothing was tested on them.
+const MIN_BUILD: u32 = 17763;
+
+static MAIN_THREAD: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
+
+fn main() -> std::process::ExitCode {
+    let _ = MAIN_THREAD.set(std::thread::current().id());
+    std::panic::set_hook(Box::new(|info| {
+        let thread = std::thread::current();
+        // The message carries the file and line; a backtrace would be all <unknown> in a
+        // stripped release build.
+        let text = format!("panic on {}: {info}", thread.name().unwrap_or("a worker thread"));
+        // A worker's panic is caught where the work is waited on and shows as a failed
+        // job; only the window's own thread takes the whole app down.
+        if MAIN_THREAD.get() == Some(&thread.id()) {
+            crash(&text);
+        } else {
+            system::log_crash(&text);
+        }
+    }));
+
+    let build = boost::windows_build();
+    if build != 0 && build < MIN_BUILD {
+        let pt = portuguese(Settings::load().language);
+        system::message_box(
+            "Vantix",
+            if pt {
+                "O Vantix precisa do Windows 10 versão 1809 ou mais novo. Atualize o Windows pelo Windows Update e abra o Vantix de novo."
+            } else {
+                "Vantix needs Windows 10 version 1809 or newer. Update Windows through Windows Update and open Vantix again."
+            },
+        );
+        return std::process::ExitCode::FAILURE;
+    }
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => crash(&format!("the window couldn't be created: {e}")),
+    }
+}
+
+/// Puts back what the governor and the network traces changed, saves `text` to
+/// crash.log and says so in a plain message box, then ends the process. Never a
+/// silent exit: whoever opened Vantix sees what happened and where the details are.
+fn crash(text: &str) -> ! {
+    let log = system::log_crash(text);
+    shutdown();
+    let pt = portuguese(Settings::load().language);
+    let message = if pt {
+        format!(
+            "O Vantix encontrou um problema e precisou fechar.\n\nOs detalhes foram salvos em:\n{}\n\nSe acontecer de novo, envie esse arquivo ao relatar o problema.",
+            log.display()
+        )
+    } else {
+        format!(
+            "Vantix ran into a problem and had to close.\n\nThe details were saved to:\n{}\n\nIf it happens again, send that file along when reporting the problem.",
+            log.display()
+        )
+    };
+    system::message_box("Vantix", &message);
+    std::process::exit(1)
+}
+
+/// What has to happen before the process goes, however it goes.
+fn shutdown() {
+    // Puts back what ProBalance and the game mode changed, and ends the network traces,
+    // which would outlive the process.
+    governor::stop();
+    net::traffic_stop();
+    net::unwatch();
+}
+
+fn run() -> Result<(), slint::PlatformError> {
     if !system::single_instance() {
         return Ok(());
     }
@@ -298,11 +370,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let result = slint::run_event_loop_until_quit();
-    // Puts back what ProBalance and the game mode changed before the process goes, and
-    // ends the network traces, which would outlive the process.
-    governor::stop();
-    net::traffic_stop();
-    net::unwatch();
+    shutdown();
     result
 }
 
@@ -601,6 +669,7 @@ impl App {
         self.show_storage(&ui, None);
 
         let live = ui.global::<Live>();
+        live.set_win10(!boost::is_windows_11());
         show_live(&ui, &self.state.borrow().settings);
         live.on_changed(bind(self, |app| {
             app.with_ui(|ui| {

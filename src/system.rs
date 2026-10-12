@@ -67,6 +67,23 @@ pub fn log_error(what: &str, error: &dyn std::fmt::Display) {
     }
 }
 
+/// Appends a crash report to crash.log, next to vantix.log, and gives back its path.
+pub fn log_crash(text: &str) -> std::path::PathBuf {
+    let path = data_dir().join("crash.log");
+    let line = format!("{} Vantix {}\n{text}\n\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), env!("CARGO_PKG_VERSION"));
+    let _ = std::fs::create_dir_all(data_dir());
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+    path
+}
+
+/// A plain Windows message box, for when the window itself can't be counted on.
+pub fn message_box(title: &str, text: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MessageBoxW};
+    unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(title), MB_OK | MB_ICONERROR | MB_SETFOREGROUND) };
+}
+
 /// Returns false when another instance is already running, after asking it to show itself.
 pub fn single_instance() -> bool {
     unsafe {

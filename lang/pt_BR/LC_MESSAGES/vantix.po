@@ -2536,3 +2536,6 @@ msgstr "O Vantix não conseguiu ler o registro das mudanças que fez. Para não 
 
 msgid "Vantix couldn't save its record of this change. It can be undone until Vantix closes; after that, only a restore point covers it."
 msgstr "O Vantix não conseguiu salvar o registro desta mudança. Dá para desfazer até o Vantix fechar; depois disso, só um ponto de restauração cobre."
+
+msgid "On Windows 10 it does less: Windows only slows them down on processors that support power throttling, mostly laptops."
+msgstr "No Windows 10 o efeito é menor: o Windows só desacelera esses programas em processadores com controle de energia (power throttling), quase sempre notebooks."
