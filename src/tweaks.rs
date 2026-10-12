@@ -971,7 +971,45 @@ pub const CATALOG: &[Tweak] = &[
             reset: boost::reset_filter_delay,
         },
     },
+    Tweak {
+        id: "component-store-cleanup",
+        section: Section::Storage,
+        gain: Level::Medium,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: true,
+        on_plan: false,
+        kind: Kind::Action { run: clean_component_store },
+    },
+    Tweak {
+        id: "short-names-off",
+        section: Section::Storage,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: always,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Toggle {
+            read: boost::short_names_off,
+            apply: boost::disable_short_names,
+            revert: boost::restore_short_names,
+            reset: boost::reset_short_names,
+        },
+    },
 ];
+
+/// The cleanup Windows itself runs on a schedule: superseded system files out of WinSxS.
+/// DISM says 3010 when a restart would finish the job, which is still a success.
+fn clean_component_store() -> Result<()> {
+    match run("Dism.exe", &["/Online", "/Cleanup-Image", "/StartComponentCleanup", "/NoRestart"]) {
+        Err(error) if error.message().contains("(3010)") => Ok(()),
+        other => other.map(drop),
+    }
+}
 
 fn always() -> bool {
     true

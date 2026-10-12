@@ -4,9 +4,19 @@
 //! delete elsewhere) and skip anything in use instead of failing. They use std::fs::read_dir:
 //! a hand rolled FindFirstFileExW walk with large fetch measured no faster on 99k files.
 
+use std::collections::HashMap;
 use std::os::windows::fs::MetadataExt;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
+
+use windows::Win32::Devices::DeviceAndDriverInstallation::{
+    CM_Get_DevNode_PropertyW, CM_Get_Device_ID_List_SizeW, CM_Get_Device_ID_ListW, CM_LOCATE_DEVNODE_PHANTOM,
+    CM_Locate_DevNodeW, CR_SUCCESS, INF_STYLE_WIN4, INFCONTEXT, SetupCloseInfFile, SetupFindFirstLineW,
+    SetupGetStringFieldW, SetupOpenInfFileW,
+};
+use windows::Win32::Devices::Properties::{DEVPKEY_Device_DriverInfPath, DEVPROPTYPE};
 
 use windows::Win32::Foundation::{ERROR_SERVICE_NOT_ACTIVE, FILETIME};
 use windows::Win32::Storage::FileSystem::{
@@ -23,7 +33,19 @@ use windows::Win32::UI::Shell::{
     SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHERB_NOSOUND, SHEmptyRecycleBinW, SHQUERYRBINFO,
     SHQueryRecycleBinW,
 };
-use windows::core::{HSTRING, PCWSTR};
+use windows::core::{HSTRING, PCWSTR, w};
+
+use crate::reg;
+
+// The crate only has it behind two unrelated features.
+windows_link::link!("setupapi.dll" "system" fn SetupGetInfDriverStoreLocationW(
+    filename: PCWSTR,
+    alternate_platform: *const core::ffi::c_void,
+    locale: PCWSTR,
+    buffer: *mut u16,
+    size: u32,
+    required: *mut u32,
+) -> windows::core::BOOL);
 
 /// Order matches the rows in ui/storage.slint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,33 +56,59 @@ pub enum Category {
     DeliveryOptimization,
     CrashDumps,
     ErrorReports,
+    WindowsLogs,
     ShaderCache,
+    LauncherCaches,
+    GpuLeftovers,
+    OldDrivers,
+    WindowsOld,
     Thumbnails,
     BrowserCache,
+    OldDownloads,
+    DevCaches,
     RecycleBin,
 }
 
 impl Category {
-    pub const ALL: [Category; 10] = [
+    pub const ALL: [Category; 17] = [
         Category::UserTemp,
         Category::WindowsTemp,
         Category::UpdateCache,
         Category::DeliveryOptimization,
         Category::CrashDumps,
         Category::ErrorReports,
+        Category::WindowsLogs,
         Category::ShaderCache,
+        Category::LauncherCaches,
+        Category::GpuLeftovers,
+        Category::OldDrivers,
+        Category::WindowsOld,
         Category::Thumbnails,
         Category::BrowserCache,
+        Category::OldDownloads,
+        Category::DevCaches,
         Category::RecycleBin,
     ];
 
     /// Whether it starts selected. The rest have a visible cost (recompiles, rebuilds,
-    /// lost files) and stay opt-in.
+    /// lost files, no way back) and stay opt-in.
     pub fn selected_by_default(self) -> bool {
-        !matches!(
+        matches!(
             self,
-            Category::ShaderCache | Category::Thumbnails | Category::BrowserCache | Category::RecycleBin
+            Category::UserTemp
+                | Category::WindowsTemp
+                | Category::UpdateCache
+                | Category::DeliveryOptimization
+                | Category::CrashDumps
+                | Category::ErrorReports
+                | Category::WindowsLogs
+                | Category::GpuLeftovers
         )
+    }
+
+    /// People's own files go to the Recycle Bin instead of away for good.
+    fn recycles(self) -> bool {
+        self == Category::OldDownloads
     }
 
     /// Services holding these folders, stopped during the cleanup and started again after.
@@ -74,13 +122,19 @@ impl Category {
 
     /// Temp folders are in use by running installers and apps; only old files go.
     fn min_age(self) -> Option<Duration> {
-        matches!(self, Category::UserTemp | Category::WindowsTemp).then_some(Duration::from_secs(24 * 3600))
+        const DAY: u64 = 24 * 3600;
+        match self {
+            Category::UserTemp | Category::WindowsTemp => Some(Duration::from_secs(DAY)),
+            Category::OldDownloads => Some(Duration::from_secs(DOWNLOAD_DAYS * DAY)),
+            _ => None,
+        }
     }
 
-    /// Browsers lock and rewrite their cache while open.
+    /// Browsers and launchers lock and rewrite their cache while open.
     fn blocking_processes(self) -> &'static [&'static str] {
         match self {
             Category::BrowserCache => &["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "opera.exe"],
+            Category::LauncherCaches => &["steam.exe", "EpicGamesLauncher.exe"],
             _ => &[],
         }
     }
@@ -120,14 +174,28 @@ impl Category {
             .iter()
             .map(|dir| Target::contents(local.join(dir)))
             .collect(),
+            Category::WindowsLogs => [r"Logs\CBS", r"Logs\DISM", "Panther"]
+                .iter()
+                .map(|dir| Target::contents(windows.join(dir)))
+                .collect(),
+            Category::LauncherCaches => launcher_caches(&local),
+            Category::GpuLeftovers => {
+                let drive = PathBuf::from(format!("{}\\", system_drive()));
+                ["NVIDIA", "AMD"].iter().map(|dir| Target::contents(drive.join(dir))).collect()
+            }
             Category::Thumbnails => {
                 vec![Target::matching(local.join(r"Microsoft\Windows\Explorer"), "thumbcache_")]
             }
             Category::BrowserCache => browser_caches(&local),
-            Category::RecycleBin => Vec::new(),
+            Category::OldDownloads => crate::dupes::downloads().map(Target::contents).into_iter().collect(),
+            Category::DevCaches => dev_caches(&local),
+            Category::OldDrivers | Category::WindowsOld | Category::RecycleBin => Vec::new(),
         }
     }
 }
+
+/// Files in Downloads untouched for this long count as old.
+pub const DOWNLOAD_DAYS: u64 = 30;
 
 /// A folder whose contents get removed (the folder itself stays), a single file, or
 /// the files of a folder whose names start with a prefix.
@@ -154,13 +222,18 @@ impl Target {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Tally {
     pub bytes: u64,
     pub files: u64,
     /// Files that were in use or protected and stayed.
     pub skipped: u64,
+    /// The biggest things inside, largest first, for the row to list when it opens.
+    pub items: Vec<(String, u64)>,
 }
+
+/// How many of the biggest items a category lists.
+const ITEMS: usize = 8;
 
 pub enum Outcome {
     Done(Tally),
@@ -172,19 +245,55 @@ pub fn scan(category: Category) -> Outcome {
     if let Some(process) = running_blocker(category) {
         return Outcome::Blocked(process);
     }
-    if category == Category::RecycleBin {
-        return Outcome::Done(recycle_bin_size());
+    match category {
+        Category::RecycleBin => return Outcome::Done(recycle_bin_size()),
+        Category::OldDrivers => return Outcome::Done(old_drivers_tally()),
+        Category::WindowsOld => return Outcome::Done(windows_old_tally()),
+        _ => {}
     }
+    let targets = category.targets();
+    // One folder lists what's in it; several list themselves.
+    let several = targets.len() > 1;
     let mut tally = Tally::default();
+    let mut groups: HashMap<PathBuf, u64> = HashMap::new();
     let cutoff = category.min_age().map(cutoff);
-    for target in category.targets() {
-        visit(&target, cutoff, &mut |size, _| {
+    for target in &targets {
+        visit(target, cutoff, &mut |size, path| {
             tally.bytes += size;
             tally.files += 1;
+            let group = if several { target.path.clone() } else { first_level(&target.path, path) };
+            *groups.entry(group).or_default() += size;
             true
         });
     }
+    tally.items = biggest(groups.into_iter().map(|(path, size)| (shown(&path), size)));
     Outcome::Done(tally)
+}
+
+/// The child of `root` that `path` is under, or the file itself.
+fn first_level(root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(root)
+        .ok()
+        .and_then(|rest| rest.components().next())
+        .map_or_else(|| path.to_path_buf(), |first| root.join(first))
+}
+
+fn biggest(items: impl Iterator<Item = (String, u64)>) -> Vec<(String, u64)> {
+    let mut items: Vec<(String, u64)> = items.filter(|(_, size)| *size > 0).collect();
+    items.sort_by_key(|(_, size)| std::cmp::Reverse(*size));
+    items.truncate(ITEMS);
+    items
+}
+
+/// A path as the list shows it, with the profile folder as ~.
+fn shown(path: &Path) -> String {
+    let text = path.display().to_string();
+    match std::env::var("USERPROFILE") {
+        Ok(home) if !home.is_empty() && text.to_lowercase().starts_with(&home.to_lowercase()) => {
+            format!("~{}", &text[home.len()..])
+        }
+        _ => text,
+    }
 }
 
 pub fn clean(category: Category) -> Outcome {
@@ -200,14 +309,20 @@ pub fn clean(category: Category) -> Outcome {
             bytes: before.bytes.saturating_sub(after.bytes),
             files: before.files.saturating_sub(after.files),
             skipped: after.files,
+            items: Vec::new(),
         });
+    }
+    match category {
+        Category::OldDrivers => return Outcome::Done(clean_old_drivers()),
+        Category::WindowsOld => return Outcome::Done(clean_windows_old()),
+        _ => {}
     }
 
     let stopped: Vec<&str> = category.services().iter().copied().filter(|name| stop_service(name)).collect();
     let mut tally = Tally::default();
     let cutoff = category.min_age().map(cutoff);
     for target in category.targets() {
-        clean_target(&target, cutoff, &mut tally);
+        clean_target(&target, cutoff, category.recycles(), &mut tally);
     }
     for name in stopped {
         start_service(name);
@@ -215,9 +330,10 @@ pub fn clean(category: Category) -> Outcome {
     Outcome::Done(tally)
 }
 
-fn clean_target(target: &Target, cutoff: Option<u64>, tally: &mut Tally) {
+fn clean_target(target: &Target, cutoff: Option<u64>, recycle: bool, tally: &mut Tally) {
     visit(target, cutoff, &mut |size, path| {
-        if delete_file(path) {
+        let gone = if recycle { crate::dupes::recycle_file(path) } else { delete_file(path) };
+        if gone {
             tally.bytes += size;
             tally.files += 1;
         } else {
@@ -242,6 +358,293 @@ pub fn system_drive_space() -> (u64, u64) {
 
 fn env_path(name: &str) -> PathBuf {
     std::env::var_os(name).map(PathBuf::from).unwrap_or_default()
+}
+
+fn system_drive() -> String {
+    std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into())
+}
+
+/// Steam's and Epic's web and download caches, and Steam's shader cache. Game files,
+/// saves and logins live elsewhere.
+fn launcher_caches(local: &Path) -> Vec<Target> {
+    let mut targets = vec![Target::contents(local.join(r"Steam\htmlcache"))];
+    let steam = reg::get_string(reg::HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath").ok().flatten();
+    if let Some(steam) = steam.map(|path| PathBuf::from(path.replace('/', "\\"))) {
+        for dir in [r"appcache\htmlcache", r"appcache\httpcache", "depotcache", r"steamapps\shadercache"] {
+            targets.push(Target::contents(steam.join(dir)));
+        }
+    }
+    // Epic keeps one webcache folder per engine version, named webcache_4430 and so on.
+    let saved = local.join(r"EpicGamesLauncher\Saved");
+    for dir in subdirs(&saved) {
+        if dir.file_name().is_some_and(|name| name.to_string_lossy().to_lowercase().starts_with("webcache")) {
+            targets.push(Target::contents(dir));
+        }
+    }
+    targets
+}
+
+/// Download caches of package managers. Everything in them comes back from the
+/// internet on the next build or install.
+fn dev_caches(local: &Path) -> Vec<Target> {
+    let home = env_path("USERPROFILE");
+    let roaming = env_path("APPDATA");
+    vec![
+        Target::contents(local.join("npm-cache")),
+        Target::contents(roaming.join("npm-cache")),
+        Target::contents(local.join(r"pip\Cache")),
+        Target::contents(local.join(r"Yarn\Cache")),
+        Target::contents(local.join(r"NuGet\v3-cache")),
+        Target::contents(local.join("go-build")),
+        Target::contents(home.join(r".cargo\registry\cache")),
+        Target::contents(home.join(r".cargo\registry\src")),
+        Target::contents(home.join(r".gradle\caches")),
+    ]
+}
+
+// Old driver packages. Windows keeps every driver version it ever installed in the
+// driver store. A package goes only when a newer one of the same driver is there and no
+// device uses it, plugged in or not: a printer that's off still needs its driver.
+
+struct Package {
+    /// The name Windows published it under, like oem12.inf.
+    inf: String,
+    folder: PathBuf,
+    label: String,
+}
+
+fn old_drivers() -> Vec<Package> {
+    let used = drivers_in_use();
+    let inf_dir = env_path("SystemRoot").join("INF");
+    let Ok(entries) = std::fs::read_dir(&inf_dir) else { return Vec::new() };
+    // Family is the original INF name with its provider and class.
+    let mut families: HashMap<String, Vec<(Vec<u32>, bool, Package)>> = HashMap::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if !name.starts_with("oem") || !name.ends_with(".inf") {
+            continue;
+        }
+        let (Some(folder), Some(info)) = (store_folder(&name), inf_version(&entry.path())) else { continue };
+        let original = folder.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let original = original.split(".inf").next().unwrap_or_default().to_string();
+        let family = format!("{original}|{}|{}", info.provider, info.class).to_lowercase();
+        let label = format!("{} {} {} ({})", info.provider, info.class, info.version_text, info.date);
+        let in_use = used.contains(&name);
+        families.entry(family).or_default().push((info.version, in_use, Package { inf: name, folder, label }));
+    }
+    // The newest of a family always stays, and so does anything newer than what a device
+    // uses: the user may have rolled back on purpose.
+    let mut old = Vec::new();
+    for packages in families.into_values() {
+        let newest = packages.iter().map(|(version, ..)| version.clone()).max().unwrap_or_default();
+        let in_use = packages.iter().filter(|(_, used, _)| *used).map(|(version, ..)| version.clone()).max();
+        for (version, used, package) in packages {
+            let older = match &in_use {
+                Some(in_use) => version < *in_use,
+                None => version < newest,
+            };
+            if !used && older {
+                old.push(package);
+            }
+        }
+    }
+    old
+}
+
+/// The published INF names of every device's driver, plugged in now or not.
+fn drivers_in_use() -> Vec<String> {
+    let mut used = Vec::new();
+    let mut len = 0u32;
+    unsafe {
+        if CM_Get_Device_ID_List_SizeW(&mut len, PCWSTR::null(), Default::default()) != CR_SUCCESS {
+            return used;
+        }
+        let mut buffer = vec![0u16; len as usize];
+        if CM_Get_Device_ID_ListW(PCWSTR::null(), &mut buffer, Default::default()) != CR_SUCCESS {
+            return used;
+        }
+        for id in buffer.split(|&c| c == 0).filter(|id| !id.is_empty()) {
+            let mut node = 0u32;
+            let id = HSTRING::from_wide(id);
+            if CM_Locate_DevNodeW(&mut node, &id, CM_LOCATE_DEVNODE_PHANTOM) != CR_SUCCESS {
+                continue;
+            }
+            let mut kind = DEVPROPTYPE::default();
+            let mut text = [0u16; 64];
+            let mut size = (text.len() * 2) as u32;
+            if CM_Get_DevNode_PropertyW(
+                node,
+                &DEVPKEY_Device_DriverInfPath,
+                &mut kind,
+                Some(text.as_mut_ptr().cast()),
+                &mut size,
+                0,
+            ) == CR_SUCCESS
+            {
+                let end = text.iter().position(|&c| c == 0).unwrap_or(text.len());
+                used.push(String::from_utf16_lossy(&text[..end]).to_lowercase());
+            }
+        }
+    }
+    used.sort();
+    used.dedup();
+    used
+}
+
+/// Where the driver store keeps a published package.
+fn store_folder(inf: &str) -> Option<PathBuf> {
+    let mut buffer = [0u16; 520];
+    let name = HSTRING::from(inf);
+    let found = unsafe {
+        SetupGetInfDriverStoreLocationW(
+            PCWSTR(name.as_ptr()),
+            std::ptr::null(),
+            PCWSTR::null(),
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            std::ptr::null_mut(),
+        )
+    };
+    if !found.as_bool() {
+        return None;
+    }
+    let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    let path = PathBuf::from(String::from_utf16_lossy(&buffer[..end]));
+    path.parent().map(Path::to_path_buf)
+}
+
+struct InfVersion {
+    provider: String,
+    class: String,
+    version: Vec<u32>,
+    version_text: String,
+    /// As yyyy-mm-dd, so it sorts.
+    date: String,
+}
+
+fn inf_version(path: &Path) -> Option<InfVersion> {
+    unsafe {
+        let inf = SetupOpenInfFileW(&HSTRING::from(path.as_os_str()), PCWSTR::null(), INF_STYLE_WIN4, None);
+        if inf.is_null() || inf as isize == -1 {
+            return None;
+        }
+        let field = |key: PCWSTR, index: u32| -> Option<String> {
+            let mut context = INFCONTEXT::default();
+            SetupFindFirstLineW(inf, w!("Version"), key, &mut context).ok()?;
+            let mut buffer = [0u16; 256];
+            SetupGetStringFieldW(&context, index, Some(&mut buffer), None).ok()?;
+            let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+            Some(String::from_utf16_lossy(&buffer[..end]).trim().to_string())
+        };
+        let provider = field(w!("Provider"), 1).unwrap_or_default();
+        let class = field(w!("Class"), 1).unwrap_or_default();
+        let date = field(w!("DriverVer"), 1).unwrap_or_default();
+        let version_text = field(w!("DriverVer"), 2).unwrap_or_default();
+        SetupCloseInfFile(inf);
+        let version = version_text.split('.').map(|part| part.trim().parse().unwrap_or(0)).collect();
+        // DriverVer dates are mm/dd/yyyy.
+        let parts: Vec<&str> = date.split('/').collect();
+        let date = match parts[..] {
+            [month, day, year] => format!("{year}-{month:0>2}-{day:0>2}"),
+            _ => date,
+        };
+        Some(InfVersion { provider, class, version, version_text, date })
+    }
+}
+
+fn folder_size(path: &Path) -> u64 {
+    let mut size = 0;
+    walk(path, None, None, &mut |bytes, _| {
+        size += bytes;
+        true
+    });
+    size
+}
+
+fn old_drivers_tally() -> Tally {
+    let mut tally = Tally::default();
+    let mut items = Vec::new();
+    for package in old_drivers() {
+        let size = folder_size(&package.folder);
+        tally.bytes += size;
+        tally.files += 1;
+        items.push((package.label, size));
+    }
+    tally.items = biggest(items.into_iter());
+    tally
+}
+
+/// pnputil without /force refuses a package a device still uses, which is the last
+/// guard under the checks above.
+fn clean_old_drivers() -> Tally {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut tally = Tally::default();
+    for package in old_drivers() {
+        let size = folder_size(&package.folder);
+        let deleted = Command::new(env_path("SystemRoot").join(r"System32\pnputil.exe"))
+            .args(["/delete-driver", &package.inf])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if deleted && !package.folder.exists() {
+            tally.bytes += size;
+            tally.files += 1;
+        } else {
+            tally.skipped += 1;
+        }
+    }
+    tally
+}
+
+// The previous Windows after an upgrade, and the setup files of the upgrade itself.
+// Their files belong to TrustedInstaller, so Disk Cleanup's own handlers remove them.
+
+const UPGRADE_FOLDERS: [&str; 3] = ["Windows.old", "$WINDOWS.~BT", "$WINDOWS.~WS"];
+const UPGRADE_HANDLERS: [&str; 3] = ["Previous Installations", "Temporary Setup Files", "Windows ESD installation files"];
+const VOLUME_CACHES: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches";
+/// Disk Cleanup runs the handlers that carry this number in their StateFlags.
+const SAGE_RUN: u32 = 6587;
+
+fn upgrade_folders() -> Vec<PathBuf> {
+    let drive = PathBuf::from(format!("{}\\", system_drive()));
+    UPGRADE_FOLDERS.iter().map(|name| drive.join(name)).filter(|path| path.is_dir()).collect()
+}
+
+fn windows_old_tally() -> Tally {
+    let mut tally = Tally::default();
+    let mut items = Vec::new();
+    for folder in upgrade_folders() {
+        let size = folder_size(&folder);
+        tally.bytes += size;
+        tally.files += 1;
+        items.push((shown(&folder), size));
+    }
+    tally.items = biggest(items.into_iter());
+    tally
+}
+
+fn clean_windows_old() -> Tally {
+    let before = windows_old_tally();
+    if before.files == 0 {
+        return before;
+    }
+    let flag = format!("StateFlags{SAGE_RUN:04}");
+    for handler in UPGRADE_HANDLERS {
+        let _ = reg::set_dword(reg::HKEY_LOCAL_MACHINE, &format!(r"{VOLUME_CACHES}\{handler}"), &flag, 2);
+    }
+    let _ = Command::new(env_path("SystemRoot").join(r"System32\cleanmgr.exe"))
+        .arg(format!("/sagerun:{SAGE_RUN}"))
+        .status();
+    for handler in UPGRADE_HANDLERS {
+        let _ = reg::delete_value(reg::HKEY_LOCAL_MACHINE, &format!(r"{VOLUME_CACHES}\{handler}"), &flag);
+    }
+    let after = windows_old_tally();
+    Tally {
+        bytes: before.bytes.saturating_sub(after.bytes),
+        files: before.files - after.files,
+        skipped: after.files,
+        items: Vec::new(),
+    }
 }
 
 /// Every profile's cache folders for the Chromium browsers and Firefox. Only caches:
@@ -291,7 +694,7 @@ fn recycle_bin_size() -> Tally {
     unsafe {
         let _ = SHQueryRecycleBinW(PCWSTR::null(), &mut info);
     }
-    Tally { bytes: info.i64Size as u64, files: info.i64NumItems as u64, skipped: 0 }
+    Tally { bytes: info.i64Size as u64, files: info.i64NumItems as u64, ..Default::default() }
 }
 
 /// Files last written before this FILETIME value are old enough to go.
@@ -342,7 +745,10 @@ fn walk(
             // Prefix filtering only applies to the top level files.
             prefix.is_some() || walk(&path, cutoff, None, f)
         } else {
-            let old_enough = cutoff.is_none_or(|limit| meta.last_write_time() < limit);
+            // Files unpacked from an archive keep its old dates, but their creation time is
+            // when they landed here; the newer of the two decides.
+            let touched = meta.last_write_time().max(meta.creation_time());
+            let old_enough = cutoff.is_none_or(|limit| touched < limit);
             let wanted = prefix
                 .is_none_or(|p| entry.file_name().to_string_lossy().to_ascii_lowercase().starts_with(p));
             !(old_enough && wanted) || f(meta.len(), &path)
@@ -448,7 +854,7 @@ mod tests {
         assert!(made.status.success(), "mklink failed");
 
         let mut tally = Tally::default();
-        clean_target(&Target::contents(target.clone()), None, &mut tally);
+        clean_target(&Target::contents(target.clone()), None, false, &mut tally);
 
         assert_eq!(tally.files, 2);
         assert!(victim.join("keep.txt").exists(), "followed the junction");
@@ -471,7 +877,10 @@ mod tests {
                         t.bytes >> 20,
                         t.files,
                         started.elapsed()
-                    )
+                    );
+                    for (name, size) in &t.items {
+                        println!("    {:>8} KB  {name}", size >> 10);
+                    }
                 }
                 Outcome::Blocked(p) => println!("{category:?}: blocked by {p}"),
             }

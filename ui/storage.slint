@@ -4,6 +4,12 @@ import { Tweaks, TweakList } from "tweaks.slint";
 
 export enum RowState { idle, scanning, ready, blocked, cleaning, done }
 
+/// One of the biggest things inside a category.
+export struct CleanupEntry {
+    name: string,
+    size: string,
+}
+
 /// One cleanup category; the order matches disk::Category::ALL.
 export struct CleanupRow {
     state: RowState,
@@ -14,6 +20,34 @@ export struct CleanupRow {
     blocker: string,
     freed: string,
     skipped: int,
+    items: [CleanupEntry],
+}
+
+/// A physical disk and what it says about its health.
+export struct DriveRow {
+    model: string,
+    /// 0 NVMe, 1 SATA, 2 USB, 3 other.
+    bus: int,
+    /// 1 SSD, 0 hard drive, -1 unknown.
+    ssd: int,
+    size: string,
+    letters: string,
+    /// 0 healthy, 1 worth watching, 2 back it up now, 3 unknown.
+    verdict: int,
+    /// 0 NVMe log, 1 SMART, 2 USB bridge keeps it, 3 no answer.
+    report: int,
+    temperature: string,
+    used: string,
+    spare: string,
+    written: string,
+    hours: string,
+    unsafe-shutdowns: string,
+    /// Media errors on NVMe; reallocated, pending and uncorrectable sectors on SATA.
+    errors: string,
+    errors-bad: bool,
+    /// 1 on, 0 off, -1 unknown.
+    write-cache: int,
+    aligned: int,
 }
 
 export global Storage {
@@ -26,10 +60,17 @@ export global Storage {
     in property <[CleanupRow]> rows;
     in property <bool> busy;
     in property <string> selected-total;
-    /// Cleanup or tweaks, kept while the page itself comes and goes.
+    /// Cleanup, tweaks or drives, kept while the page itself comes and goes.
     in-out property <int> tab;
+    /// The row whose biggest items are shown, -1 for none.
+    in-out property <int> open-row: -1;
+    in property <[DriveRow]> drives;
+    in property <bool> drives-reading;
+    /// TRIM for every SSD: 1 on, 0 off, -1 unknown.
+    in property <int> trim: -1;
 
     callback analyze();
+    callback read-drives();
     callback clean();
     callback toggled(int, bool);
 }
@@ -62,13 +103,19 @@ component CleanupItem inherits Rectangle {
     in property <string> cost;
     callback toggled(bool);
 
+    in property <bool> open;
+    callback opened();
+
     property <bool> enabled: root.item.state != RowState.blocked && root.item.state != RowState.cleaning;
+    property <bool> listed: root.item.items.length > 0 && root.item.state == RowState.ready;
+    property <length> head: root.cost == "" ? 58px : 74px;
 
-    height: root.cost == "" ? 58px : 74px;
     border-radius: Theme.radius-small;
-    background: area.has-hover && root.enabled ? Theme.raised : transparent;
+    background: (area.has-hover || root.open) && root.enabled ? Theme.raised : transparent;
 
+    VerticalLayout {
     HorizontalLayout {
+        height: root.head;
         padding-left: 12px;
         padding-right: 14px;
         spacing: 14px;
@@ -135,20 +182,221 @@ component CleanupItem inherits Rectangle {
                 font-size: 12px;
             }
         }
+
+        // Room for the chevron, which sits over the row's own click area.
+        Rectangle { width: 28px; }
+    }
+
+    if root.open && root.listed: VerticalLayout {
+        padding-left: 44px;
+        padding-right: 56px;
+        padding-bottom: 12px;
+        spacing: 4px;
+        for entry in root.item.items: HorizontalLayout {
+            spacing: 12px;
+            Text {
+                text: entry.name;
+                color: Theme.muted;
+                font-size: 12px;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            Text {
+                text: entry.size;
+                color: Theme.text;
+                font-size: 12px;
+                horizontal-alignment: right;
+            }
+        }
+    }
     }
 
     area := TouchArea {
+        y: 0;
+        height: root.head;
         enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.toggled(!root.item.selected); }
     }
+
+    if root.listed: Rectangle {
+        x: parent.width - 42px;
+        y: (root.head - 28px) / 2;
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
+        background: chevron.has-hover ? Theme.hover : transparent;
+        Icon {
+            data: root.open ? Icons.up : Icons.down;
+            size: 15px;
+            tint: Theme.muted;
+        }
+        chevron := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.opened(); }
+        }
+    }
+}
+
+component Fact inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <color> tint: Theme.muted;
+
+    spacing: 8px;
+    Text {
+        width: 150px;
+        text: root.label;
+        color: Theme.faint;
+        font-size: 12.5px;
+    }
+    Text {
+        text: root.value;
+        color: root.tint;
+        font-size: 12.5px;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+}
+
+component DriveCard inherits Card {
+    in property <DriveRow> item;
+    property <bool> nvme: root.item.report == 0;
+    property <bool> smart: root.item.report <= 1;
+    property <color> tint: root.item.verdict == 0 ? Theme.accent
+        : root.item.verdict == 1 ? Theme.warn
+        : root.item.verdict == 2 ? Theme.bad : Theme.muted;
+
+    pad: 18px;
+
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Icon { data: Icons.drive; tint: Theme.muted; size: 18px; }
+        }
+        Text {
+            text: root.item.model != "" ? root.item.model : @tr("Disk");
+            color: Theme.text;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        VerticalLayout {
+            alignment: center;
+            Chip {
+                text: root.item.verdict == 0 ? @tr("Healthy")
+                    : root.item.verdict == 1 ? @tr("Worth watching")
+                    : root.item.verdict == 2 ? @tr("Back it up now")
+                    : @tr("Health unknown");
+                tint: root.tint;
+            }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 6px;
+        Fact {
+            label: @tr("Type");
+            value: (root.item.bus == 0 ? @tr("NVMe") : root.item.bus == 1 ? @tr("SATA") : root.item.bus == 2 ? @tr("USB") : @tr("Other"))
+                + (root.item.ssd == 1 ? @tr(" SSD") : root.item.ssd == 0 ? @tr(" hard drive") : "")
+                + " · " + root.item.size
+                + (root.item.letters != "" ? " · " + root.item.letters : "");
+        }
+        if root.item.report == 2: Fact {
+            label: @tr("Health data");
+            value: @tr("The USB enclosure keeps it to itself");
+        }
+        if root.item.report == 3: Fact {
+            label: @tr("Health data");
+            value: @tr("The drive didn't answer");
+        }
+        if root.smart && root.item.temperature != "": Fact { label: @tr("Temperature"); value: root.item.temperature; }
+        if root.nvme: Fact {
+            label: @tr("Life used");
+            value: root.item.used;
+            tint: root.item.verdict >= 1 && root.item.verdict <= 2 ? Theme.warn : Theme.muted;
+        }
+        if root.nvme: Fact { label: @tr("Spare left"); value: root.item.spare; }
+        if root.nvme: Fact { label: @tr("Written so far"); value: root.item.written; }
+        if root.smart && root.item.hours != "": Fact { label: @tr("Powered on"); value: root.item.hours; }
+        if root.nvme: Fact { label: @tr("Unsafe shutdowns"); value: root.item.unsafe-shutdowns; }
+        if root.smart && root.item.errors != "": Fact {
+            label: root.nvme ? @tr("Media errors") : @tr("Bad sectors");
+            value: root.item.errors;
+            tint: root.item.errors-bad ? Theme.bad : Theme.muted;
+        }
+        if root.item.ssd == 1 && Storage.trim >= 0: Fact {
+            label: @tr("TRIM");
+            value: Storage.trim == 1 ? @tr("On") : @tr("Off");
+            tint: Storage.trim == 1 ? Theme.muted : Theme.warn;
+        }
+        if root.item.write-cache >= 0: Fact {
+            label: @tr("Write cache");
+            value: root.item.write-cache == 1 ? @tr("On") : @tr("Off");
+        }
+        if root.item.aligned >= 0: Fact {
+            label: @tr("Partition alignment");
+            value: root.item.aligned == 1 ? @tr("Aligned") : @tr("Off the 4 KB boundary");
+            tint: root.item.aligned == 1 ? Theme.muted : Theme.warn;
+        }
+    }
+
+    if root.item.verdict == 2 || (root.item.ssd == 1 && Storage.trim == 0) || root.item.aligned == 0: VerticalLayout {
+        spacing: 6px;
+        if root.item.verdict == 2: Text {
+            text: @tr("The drive reports damage it can't hide any more. Copy what matters off it now and plan a replacement.");
+            color: Theme.bad;
+            font-size: 12.5px;
+            wrap: word-wrap;
+        }
+        if root.item.ssd == 1 && Storage.trim == 0: Text {
+            text: @tr("TRIM is off, so SSDs slow down on writes as they fill up. Something turned it off on purpose; run \"fsutil behavior set DisableDeleteNotify 0\" to turn it back on.");
+            color: Theme.warn;
+            font-size: 12.5px;
+            wrap: word-wrap;
+        }
+        if root.item.aligned == 0: Text {
+            text: @tr("A partition starts off the 4 KB boundary, so each write touches two blocks. Only an old partitioning tool does this; fixing it means moving the partition with a partition manager.");
+            color: Theme.warn;
+            font-size: 12.5px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component DrivesTab inherits VerticalLayout {
+    spacing: 12px;
+
+    init => { Storage.read-drives(); }
+
+    for drive in Storage.drives: DriveCard { item: drive; }
+    if Storage.drives.length == 0: Card {
+        Text {
+            text: Storage.drives-reading ? @tr("Asking the drives...") : @tr("No disk answered.");
+            color: Theme.muted;
+        }
+    }
+    Text {
+        text: @tr("What the drives report about themselves. Life used is the maker's own estimate; a drive can go past 100% and keep working, but it's out of what the maker promised.");
+        color: Theme.faint;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    Rectangle { vertical-stretch: 1; }
 }
 
 export component StoragePage inherits VerticalLayout {
+    /// Opens another page: 10 Disk space, 11 Duplicates.
+    callback go(int);
+
     property <[string]> titles: [
         @tr("Temporary files"), @tr("Windows temporary files"), @tr("Windows Update downloads"),
         @tr("Delivery Optimization cache"), @tr("Crash dumps"), @tr("Error reports"),
-        @tr("Shader cache"), @tr("Thumbnails"), @tr("Browser cache"), @tr("Recycle Bin"),
+        @tr("Windows logs"), @tr("Shader cache"), @tr("Game launcher caches"),
+        @tr("Graphics driver installer leftovers"), @tr("Old driver packages"), @tr("Previous Windows installation"),
+        @tr("Thumbnails"), @tr("Browser cache"), @tr("Old downloads"), @tr("Developer caches"), @tr("Recycle Bin"),
     ];
     property <[string]> details: [
         @tr("Left behind by apps and installers, older than a day."),
@@ -157,16 +405,29 @@ export component StoragePage inherits VerticalLayout {
         @tr("Update pieces shared with other PCs."),
         @tr("Diagnostic files written when something crashed."),
         @tr("Windows Error Reporting queue and archive."),
+        @tr("Servicing, DISM and setup logs."),
         @tr("DirectX, NVIDIA, AMD and Intel shader caches."),
+        @tr("Steam and Epic web caches, Steam's download manifests and shader cache."),
+        @tr("What the NVIDIA and AMD installers unpacked to C:\\NVIDIA and C:\\AMD."),
+        @tr("Older versions of drivers that have a newer one installed and no device uses."),
+        @tr("Windows.old and the setup files of the last upgrade."),
         @tr("Explorer thumbnail database."),
         @tr("Chrome, Edge, Brave and Firefox cache only."),
+        @tr("Files in Downloads untouched for 30 days. Open the row to see them."),
+        @tr("npm, pip, Yarn, NuGet, Go, Cargo and Gradle download caches."),
         @tr("Everything currently in the Recycle Bin."),
     ];
     property <[string]> costs: [
-        "", "", "", "", "", "",
+        "", "", "", "", "", "", "",
         @tr("Games rebuild shaders on the next launch and may stutter for a bit."),
+        @tr("Steam's store pages load slower once, and games rebuild shaders on the next launch."),
+        "",
+        @tr("Going back to one of those driver versions means downloading it again."),
+        @tr("You can no longer go back to the previous version of Windows."),
         @tr("Explorer rebuilds thumbnails when you open folders."),
         @tr("Pages load slower until the cache refills. Logins and history stay."),
+        @tr("They go to the Recycle Bin; empty it to free the space."),
+        @tr("The next build or install downloads those packages again."),
         @tr("Deleted files can no longer be restored."),
     ];
 
@@ -189,7 +450,8 @@ export component StoragePage inherits VerticalLayout {
             Text {
                 text: Storage.tab == 0
                     ? @tr("Finds space taken by caches and leftovers. Nothing is deleted until you choose.")
-                    : @tr("Windows settings that take up drive space. Each one shows what it gives and what it costs.");
+                    : Storage.tab == 1 ? @tr("Windows settings that take up drive space. Each one shows what it gives and what it costs.")
+                    : @tr("How each disk is doing, from what it reports about itself.");
                 color: Theme.muted;
                 wrap: word-wrap;
             }
@@ -197,8 +459,8 @@ export component StoragePage inherits VerticalLayout {
         VerticalLayout {
             alignment: center;
             Segmented {
-                width: 240px;
-                options: [@tr("Cleanup"), @tr("Tweaks")];
+                width: 330px;
+                options: [@tr("Cleanup"), @tr("Tweaks"), @tr("Drives")];
                 selected <=> Storage.tab;
             }
         }
@@ -258,8 +520,28 @@ export component StoragePage inherits VerticalLayout {
                     tint: Theme.accent;
                 }
             }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Disk space");
+                    icon: Icons.pie;
+                    tall: 34px;
+                    clicked => { root.go(10); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Duplicates");
+                    icon: Icons.copy;
+                    tall: 34px;
+                    clicked => { root.go(11); }
+                }
+            }
         }
     }
+
+    if Storage.tab == 2: DrivesTab { vertical-stretch: 1; }
 
     if Storage.tab == 1: TweakList {
         vertical-stretch: 1;
@@ -305,7 +587,9 @@ export component StoragePage inherits VerticalLayout {
                 title: root.titles[i];
                 detail: root.details[i];
                 cost: root.costs[i];
+                open: Storage.open-row == i;
                 toggled(on) => { Storage.toggled(i, on); }
+                opened => { Storage.open-row = Storage.open-row == i ? -1 : i; }
             }
         }
     }

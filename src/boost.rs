@@ -962,6 +962,21 @@ pub fn reset_filter_keys() -> Result<()> {
     set_filter_keys(f)
 }
 
+// 8.3 names: NTFS gives every new file a second, DOS style name like PROGRA~1. 1 turns
+// that off on every volume; 2, the default, leaves it to each volume.
+dword_tweak!(
+    short_names_off,
+    disable_short_names,
+    restore_short_names,
+    reset_short_names,
+    HKEY_LOCAL_MACHINE,
+    r"SYSTEM\CurrentControlSet\Control\FileSystem",
+    "NtfsDisable8dot3NameCreation",
+    1,
+    |value| value == Some(1),
+    Some(2)
+);
+
 // Slow Keys (a key only counts after being held a while) and Bounce Keys (a key pressed
 // again soon after is ignored) are the "ignore brief or repeated keystrokes" part of
 // Filter Keys. While it's on, either one delays or drops presses.

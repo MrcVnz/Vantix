@@ -88,6 +88,10 @@ pub fn default_folders() -> Vec<PathBuf> {
     .collect()
 }
 
+pub fn downloads() -> Option<PathBuf> {
+    known_folder(&FOLDERID_Downloads).filter(|path| path.is_dir())
+}
+
 fn known_folder(id: &GUID) -> Option<PathBuf> {
     unsafe {
         let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
@@ -292,23 +296,25 @@ pub fn recycle(copies: &[Copy]) -> Vec<PathBuf> {
         .filter(|c| {
             readable(&c.path).is_some_and(|m| m.len() == c.size && m.modified().ok() == Some(c.modified))
         })
-        .filter(|c| {
-            // The path, then the extra null that ends the list.
-            let from: Vec<u16> = c.path.as_os_str().encode_wide().chain([0, 0]).collect();
-            let mut operation = SHFILEOPSTRUCTW {
-                wFunc: FO_DELETE,
-                pFrom: PCWSTR(from.as_ptr()),
-                // A drive without a Recycle Bin, such as a USB stick, would delete for
-                // good; Windows asks first then.
-                fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING).0
-                    as u16,
-                ..Default::default()
-            };
-            let _ = unsafe { SHFileOperationW(&mut operation) };
-            !c.path.exists()
-        })
+        .filter(|c| recycle_file(&c.path))
         .map(|c| c.path.clone())
         .collect()
+}
+
+/// Moves one file to the Recycle Bin and says whether it's gone from where it was.
+pub fn recycle_file(path: &Path) -> bool {
+    // The path, then the extra null that ends the list.
+    let from: Vec<u16> = path.as_os_str().encode_wide().chain([0, 0]).collect();
+    let mut operation = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: PCWSTR(from.as_ptr()),
+        // A drive without a Recycle Bin, such as a USB stick, would delete for good;
+        // Windows asks first then.
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING).0 as u16,
+        ..Default::default()
+    };
+    let _ = unsafe { SHFileOperationW(&mut operation) };
+    !path.exists()
 }
 
 #[cfg(test)]

@@ -39,6 +39,7 @@ features = [
     "Win32_Security_Cryptography",
     "Win32_Security_Cryptography_Catalog",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_IscsiDisc",
     "Win32_System_Com",
     "Win32_System_Diagnostics_Etw",
     "Win32_System_Diagnostics_ToolHelp",

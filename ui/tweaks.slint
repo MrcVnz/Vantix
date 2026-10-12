@@ -131,6 +131,8 @@ export global TweakText {
         @tr("DNS over HTTPS"),
         @tr("Don't let Windows turn off the keyboard and mouse"),
         @tr("Turn off Slow Keys and Bounce Keys"),
+        @tr("Clean up the component store"),
+        @tr("Stop creating 8.3 short names"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -187,6 +189,8 @@ export global TweakText {
         @tr("Privacy, not speed. The DNS service you picked on the DNS tab gets its lookups over HTTPS, so the network and your provider can't read or change which sites you look up. Windows 11 only."),
         @tr("Windows may put an idle keyboard or mouse to sleep, and the USB hub it hangs on, so the first key or movement after a pause can be lost while it wakes up. This unticks \"Allow the computer to turn off this device to save power\" in Device Manager for every keyboard, mouse and hub on the way. Takes effect at once."),
         @tr("Filter Keys is on with Slow Keys or Bounce Keys set: Windows ignores a key until it has been held a while, or when it's pressed again soon after. In a game that means late or lost presses. This sets both to zero and leaves the rest of Filter Keys as it is."),
+        @tr("After each update Windows keeps the old versions of the system files it replaced, in WinSxS. This has DISM remove the ones newer updates made obsolete, the same cleanup Windows runs on its own schedule. Takes several minutes."),
+        @tr("NTFS writes a second, DOS style name like PROGRA~1 for every new file, which costs a little time in folders with many files. The gain is small and mostly shows in huge folders. Names that already exist stay."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -243,6 +247,8 @@ export global TweakText {
         @tr("No plain fallback: if the HTTPS address can't be reached, names stop resolving until you undo this. Some public Wi-Fi sign-in pages need it off."),
         @tr("A little more battery use on laptops."),
         @tr("If you set them on purpose to type more comfortably, undo this here."),
+        @tr("Updates older than the latest ones can no longer be uninstalled."),
+        @tr("Very old installers that depend on short names can fail."),
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }

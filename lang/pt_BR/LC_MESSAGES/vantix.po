@@ -2283,3 +2283,180 @@ msgstr "Um pouco mais de consumo de bateria em notebooks."
 
 msgid "If you set them on purpose to type more comfortably, undo this here."
 msgstr "Se você ligou de propósito para digitar com mais conforto, desfaça aqui."
+
+msgid "Healthy"
+msgstr "Saudável"
+
+msgid "Worth watching"
+msgstr "Vale acompanhar"
+
+msgid "Back it up now"
+msgstr "Faça backup agora"
+
+msgid "Health unknown"
+msgstr "Saúde desconhecida"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "NVMe"
+msgstr "NVMe"
+
+msgid "SATA"
+msgstr "SATA"
+
+msgid "Other"
+msgstr "Outro"
+
+msgid " SSD"
+msgstr " SSD"
+
+msgid " hard drive"
+msgstr " HD"
+
+msgid "Health data"
+msgstr "Dados de saúde"
+
+msgid "The USB enclosure keeps it to itself"
+msgstr "O case USB não repassa"
+
+msgid "The drive didn't answer"
+msgstr "O disco não respondeu"
+
+msgid "Temperature"
+msgstr "Temperatura"
+
+msgid "Life used"
+msgstr "Vida usada"
+
+msgid "Spare left"
+msgstr "Reserva restante"
+
+msgid "Written so far"
+msgstr "Gravado até agora"
+
+msgid "Powered on"
+msgstr "Tempo ligado"
+
+msgid "Unsafe shutdowns"
+msgstr "Desligamentos inseguros"
+
+msgid "Media errors"
+msgstr "Erros de mídia"
+
+msgid "Bad sectors"
+msgstr "Setores ruins"
+
+msgid "TRIM"
+msgstr "TRIM"
+
+msgid "Write cache"
+msgstr "Cache de gravação"
+
+msgid "Partition alignment"
+msgstr "Alinhamento das partições"
+
+msgid "Aligned"
+msgstr "Alinhadas"
+
+msgid "Off the 4 KB boundary"
+msgstr "Fora do limite de 4 KB"
+
+msgid "The drive reports damage it can't hide any more. Copy what matters off it now and plan a replacement."
+msgstr "O disco relata danos que não consegue mais esconder. Copie o que importa agora e planeje a troca."
+
+msgid "TRIM is off, so SSDs slow down on writes as they fill up. Something turned it off on purpose; run \"fsutil behavior set DisableDeleteNotify 0\" to turn it back on."
+msgstr "O TRIM está desligado, então os SSDs ficam mais lentos para gravar conforme enchem. Algo desligou de propósito; rode \"fsutil behavior set DisableDeleteNotify 0\" para religar."
+
+msgid "A partition starts off the 4 KB boundary, so each write touches two blocks. Only an old partitioning tool does this; fixing it means moving the partition with a partition manager."
+msgstr "Uma partição começa fora do limite de 4 KB, então cada gravação mexe em dois blocos. Só uma ferramenta de partição antiga faz isso; para corrigir, é preciso mover a partição com um gerenciador de partições."
+
+msgid "Asking the drives..."
+msgstr "Perguntando aos discos..."
+
+msgid "No disk answered."
+msgstr "Nenhum disco respondeu."
+
+msgid "What the drives report about themselves. Life used is the maker's own estimate; a drive can go past 100% and keep working, but it's out of what the maker promised."
+msgstr "O que os discos dizem sobre si mesmos. A vida usada é a estimativa do próprio fabricante; um disco pode passar de 100% e continuar funcionando, mas já está fora do que o fabricante prometeu."
+
+msgid "Windows logs"
+msgstr "Logs do Windows"
+
+msgid "Game launcher caches"
+msgstr "Cache dos launchers de jogos"
+
+msgid "Graphics driver installer leftovers"
+msgstr "Restos do instalador do driver de vídeo"
+
+msgid "Old driver packages"
+msgstr "Pacotes de drivers antigos"
+
+msgid "Previous Windows installation"
+msgstr "Instalação anterior do Windows"
+
+msgid "Old downloads"
+msgstr "Downloads antigos"
+
+msgid "Developer caches"
+msgstr "Cache de desenvolvimento"
+
+msgid "Servicing, DISM and setup logs."
+msgstr "Logs de manutenção, do DISM e da instalação."
+
+msgid "Steam and Epic web caches, Steam's download manifests and shader cache."
+msgstr "Cache web da Steam e da Epic, manifestos de download e cache de shaders da Steam."
+
+msgid "What the NVIDIA and AMD installers unpacked to C:\\NVIDIA and C:\\AMD."
+msgstr "O que os instaladores da NVIDIA e da AMD descompactaram em C:\\NVIDIA e C:\\AMD."
+
+msgid "Older versions of drivers that have a newer one installed and no device uses."
+msgstr "Versões antigas de drivers que já têm uma mais nova instalada e que nenhum dispositivo usa."
+
+msgid "Windows.old and the setup files of the last upgrade."
+msgstr "O Windows.old e os arquivos de instalação da última atualização de versão."
+
+msgid "Files in Downloads untouched for 30 days. Open the row to see them."
+msgstr "Arquivos em Downloads sem uso há 30 dias. Abra a linha para ver quais."
+
+msgid "npm, pip, Yarn, NuGet, Go, Cargo and Gradle download caches."
+msgstr "Cache de download do npm, pip, Yarn, NuGet, Go, Cargo e Gradle."
+
+msgid "Steam's store pages load slower once, and games rebuild shaders on the next launch."
+msgstr "As páginas da loja da Steam carregam mais devagar uma vez, e os jogos recriam os shaders na próxima abertura."
+
+msgid "Going back to one of those driver versions means downloading it again."
+msgstr "Voltar para uma dessas versões do driver exige baixá-la de novo."
+
+msgid "You can no longer go back to the previous version of Windows."
+msgstr "Não dá mais para voltar à versão anterior do Windows."
+
+msgid "They go to the Recycle Bin; empty it to free the space."
+msgstr "Eles vão para a Lixeira; esvazie-a para liberar o espaço."
+
+msgid "The next build or install downloads those packages again."
+msgstr "O próximo build ou instalação baixa esses pacotes de novo."
+
+msgid "How each disk is doing, from what it reports about itself."
+msgstr "Como está cada disco, pelo que ele relata sobre si mesmo."
+
+msgid "Drives"
+msgstr "Discos"
+
+msgid "Clean up the component store"
+msgstr "Limpar o armazenamento de componentes"
+
+msgid "Stop creating 8.3 short names"
+msgstr "Parar de criar nomes curtos 8.3"
+
+msgid "After each update Windows keeps the old versions of the system files it replaced, in WinSxS. This has DISM remove the ones newer updates made obsolete, the same cleanup Windows runs on its own schedule. Takes several minutes."
+msgstr "Depois de cada atualização, o Windows guarda no WinSxS as versões antigas dos arquivos de sistema que substituiu. Isto faz o DISM remover as que atualizações mais novas deixaram obsoletas, a mesma limpeza que o Windows roda por conta própria. Leva vários minutos."
+
+msgid "NTFS writes a second, DOS style name like PROGRA~1 for every new file, which costs a little time in folders with many files. The gain is small and mostly shows in huge folders. Names that already exist stay."
+msgstr "O NTFS grava um segundo nome no estilo DOS, como PROGRA~1, para cada arquivo novo, o que custa um pouco de tempo em pastas com muitos arquivos. O ganho é pequeno e aparece mais em pastas enormes. Os nomes que já existem ficam."
+
+msgid "Updates older than the latest ones can no longer be uninstalled."
+msgstr "Atualizações mais antigas que as últimas não podem mais ser desinstaladas."
+
+msgid "Very old installers that depend on short names can fail."
+msgstr "Instaladores muito antigos que dependem de nomes curtos podem falhar."

@@ -5,6 +5,7 @@ mod disk;
 mod dupes;
 mod etw;
 mod governor;
+mod health;
 mod input;
 mod memory;
 mod monitor;
@@ -570,6 +571,7 @@ impl App {
 
         let storage = ui.global::<Storage>();
         storage.on_analyze(bind(self, |app| app.analyze_storage()));
+        storage.on_read_drives(bind(self, |app| app.read_drives()));
         storage.on_clean(bind(self, |app| app.clean_storage()));
         storage.on_toggled({
             let app = Rc::downgrade(self);
@@ -1292,6 +1294,15 @@ impl App {
                             row.state = RowState::Ready;
                             row.size = format_bytes(tally.bytes).into();
                             row.files = tally.files as i32;
+                            let items: Vec<CleanupEntry> = tally
+                                .items
+                                .iter()
+                                .map(|(name, size)| CleanupEntry {
+                                    name: name.as_str().into(),
+                                    size: format_bytes(*size).into(),
+                                })
+                                .collect();
+                            row.items = ModelRc::new(VecModel::from(items));
                         }
                         Some(disk::Outcome::Blocked(process)) => {
                             row.state = RowState::Blocked;
@@ -1316,6 +1327,24 @@ impl App {
         storage.set_selected_total(if any_scanned { format_bytes(selected).into() } else { "".into() });
         drop(state);
         self.show_drive(ui);
+    }
+
+    /// Asks every disk for its health, a few milliseconds each.
+    fn read_drives(self: &Rc<Self>) {
+        self.with_ui(|ui| ui.global::<Storage>().set_drives_reading(true));
+        self.run_job(
+            || (health::drives(), health::trim_on()),
+            |app, result| {
+                app.with_ui(|ui| {
+                    let storage = ui.global::<Storage>();
+                    storage.set_drives_reading(false);
+                    let Some((drives, trim)) = result else { return };
+                    storage.set_trim(trim.map_or(-1, i32::from));
+                    let rows: Vec<DriveRow> = drives.iter().map(drive_row).collect();
+                    storage.set_drives(ModelRc::new(VecModel::from(rows)));
+                });
+            },
+        );
     }
 
     fn show_drive(&self, ui: &AppWindow) {
@@ -3075,6 +3104,64 @@ const FOLDER_ROWS: usize = 100;
 const DUP_GROUPS: usize = 100;
 /// Ping targets the user can add, on top of the router and Cloudflare.
 const MAX_HOSTS: usize = 5;
+
+fn drive_row(drive: &health::Drive) -> DriveRow {
+    use health::{Bus, Report, Verdict};
+    let flag = |value: Option<bool>| value.map_or(-1, i32::from);
+    let mut row = DriveRow {
+        model: drive.model.as_str().into(),
+        bus: match drive.bus {
+            Bus::Nvme => 0,
+            Bus::Sata => 1,
+            Bus::Usb => 2,
+            Bus::Other => 3,
+        },
+        ssd: flag(drive.ssd),
+        size: format_bytes(drive.size).into(),
+        letters: drive.letters.as_str().into(),
+        verdict: match drive.verdict() {
+            Verdict::Good => 0,
+            Verdict::Watch => 1,
+            Verdict::Bad => 2,
+            Verdict::Unknown => 3,
+        },
+        write_cache: flag(drive.write_cache),
+        aligned: flag(drive.aligned),
+        ..Default::default()
+    };
+    match &drive.report {
+        Report::Nvme(n) => {
+            row.report = 0;
+            row.temperature = format!("{} °C", n.temperature).into();
+            row.used = format!("{}%", n.used).into();
+            row.spare = format!("{}%", n.spare).into();
+            // Drives write terabytes over their life, past what format_bytes goes up to.
+            let tb = n.written as f64 / (1u64 << 40) as f64;
+            row.written = if tb >= 1.0 {
+                format!("{tb:.1} TB").into()
+            } else {
+                format_bytes(n.written as u64).into()
+            };
+            row.hours = format!("{} h", n.hours).into();
+            row.unsafe_shutdowns = n.unsafe_shutdowns.to_string().into();
+            row.errors = n.media_errors.to_string().into();
+            row.errors_bad = n.media_errors > 0;
+        }
+        Report::Ata(a) => {
+            row.report = 1;
+            row.temperature = a.temperature.map(|t| format!("{t} °C")).unwrap_or_default().into();
+            row.hours = a.hours.map(|h| format!("{h} h")).unwrap_or_default().into();
+            let bad = [a.reallocated, a.pending, a.uncorrectable];
+            if bad.iter().any(Option::is_some) {
+                row.errors = bad.iter().map(|n| n.unwrap_or(0)).sum::<u64>().to_string().into();
+            }
+            row.errors_bad = a.pending.unwrap_or(0) > 0 || a.uncorrectable.unwrap_or(0) > 0;
+        }
+        Report::Bridge => row.report = 2,
+        Report::Unavailable => row.report = 3,
+    }
+    row
+}
 
 /// A tweak's place in the catalog, or -1, for the pages that start one by its index.
 fn tweak_index(id: &str) -> i32 {
