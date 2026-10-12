@@ -14,9 +14,12 @@ use windows::Wdk::Graphics::Direct3D::{
     D3DKMTQueryAdapterInfo, KMTQAITYPE_ADAPTERREGISTRYINFO, KMTQAITYPE_ADAPTERTYPE,
     KMTQAITYPE_DRIVERVERSION, KMTQAITYPE_GETSEGMENTSIZE,
 };
-use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
+use windows::Wdk::System::SystemInformation::{
+    NtQuerySystemInformation, SYSTEM_INFORMATION_CLASS, SystemProcessInformation,
+};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::NetworkManagement::IpHelper::{GetIfEntry2, MIB_IF_ROW2};
+use windows::Win32::Storage::FileSystem::{GetLogicalDrives, QueryDosDeviceW};
 use windows::Win32::System::Performance::{
     PDH_FMT, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
     PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
@@ -424,6 +427,8 @@ struct ProcessEntry {
     base_priority: i32,
     pid: usize,
     parent: usize,
+    handle_count: u32,
+    session: u32,
 }
 
 /// One process, as the enumeration hands it over.
@@ -437,12 +442,25 @@ pub struct Raw {
     pub cpu_time: u64,
     /// Private working set, what Task Manager calls Memory.
     pub memory: u64,
+    /// With the pid, what tells a process from a later one that got the same id.
+    pub created: u64,
+    pub session: u32,
+    /// Base priority: 8 is Normal, 6 Below Normal, 13 High.
+    pub priority: i32,
 }
 
 /// Every process but Vantix itself, in one call.
 pub fn process_list() -> Vec<Raw> {
+    thread_local! {
+        // Kept between calls and grown to what the list needs: a fresh buffer every
+        // second cost more than the read itself.
+        static BUFFER: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    BUFFER.with_borrow_mut(read_processes)
+}
+
+fn read_processes(buffer: &mut Vec<u64>) -> Vec<Raw> {
     const INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
-    let mut buffer: Vec<u64> = vec![0; 256 * 1024];
     loop {
         let mut needed = 0u32;
         let status = unsafe {
@@ -453,8 +471,9 @@ pub fn process_list() -> Vec<Raw> {
                 &mut needed,
             )
         };
+        // An empty buffer gets the mismatch too, with the size.
         if status.0 == INFO_LENGTH_MISMATCH {
-            buffer = vec![0; needed as usize / 8 + 16 * 1024];
+            *buffer = vec![0; needed as usize / 8 + 16 * 1024];
             continue;
         }
         if status.is_err() {
@@ -478,6 +497,9 @@ pub fn process_list() -> Vec<Raw> {
                 },
                 cpu_time: (entry.user_time + entry.kernel_time) as u64,
                 memory: entry.private_working_set.max(0) as u64,
+                created: entry.create_time as u64,
+                session: entry.session,
+                priority: entry.base_priority,
             });
         }
         if entry.next == 0 {
@@ -486,6 +508,77 @@ pub fn process_list() -> Vec<Raw> {
         offset += entry.next as usize;
     }
     list
+}
+
+/// Full path of a process's exe without opening it, so anti-cheat protected games and
+/// service processes are covered too.
+pub fn image_path(pid: u32) -> Option<String> {
+    const INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
+    // SYSTEM_PROCESS_ID_INFORMATION: the pid, then a UNICODE_STRING the caller provides.
+    #[repr(C)]
+    struct IdInfo {
+        pid: usize,
+        length: u16,
+        capacity: u16,
+        buffer: *mut u16,
+    }
+    let mut buffer = vec![0u16; 1024];
+    loop {
+        let mut info =
+            IdInfo { pid: pid as usize, length: 0, capacity: (buffer.len() * 2) as u16, buffer: buffer.as_mut_ptr() };
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SYSTEM_INFORMATION_CLASS(0x58),
+                (&raw mut info).cast(),
+                size_of::<IdInfo>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if status.0 == INFO_LENGTH_MISMATCH && usize::from(info.capacity) > buffer.len() * 2 {
+            buffer = vec![0; usize::from(info.capacity) / 2];
+            continue;
+        }
+        if status.is_err() || info.length == 0 {
+            return None;
+        }
+        return Some(dos_path(&String::from_utf16_lossy(&buffer[..usize::from(info.length) / 2])));
+    }
+}
+
+/// \Device\HarddiskVolume3\Games\x.exe as C:\Games\x.exe. Paths on a volume with no
+/// letter stay as they are.
+fn dos_path(nt: &str) -> String {
+    static DEVICES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+    if let Some(rest) = nt.strip_prefix(r"\Device\Mup\") {
+        return format!(r"\\{rest}");
+    }
+    let find = |devices: &[(String, String)]| {
+        devices.iter().find_map(|(device, letter)| {
+            nt.strip_prefix(device.as_str()).filter(|rest| rest.starts_with('\\')).map(|rest| format!("{letter}{rest}"))
+        })
+    };
+    let mut devices = DEVICES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(path) = find(&devices) {
+        return path;
+    }
+    // A drive mounted since the last look.
+    *devices = drive_devices();
+    find(&devices).unwrap_or_else(|| nt.to_string())
+}
+
+fn drive_devices() -> Vec<(String, String)> {
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u8)
+        .filter(|i| mask & (1 << i) != 0)
+        .filter_map(|i| {
+            let letter = format!("{}:", char::from(b'A' + i));
+            let mut target = [0u16; 512];
+            let len = unsafe { QueryDosDeviceW(&HSTRING::from(&letter), Some(&mut target)) } as usize;
+            let device = String::from_utf16_lossy(&target[..len]);
+            let device = device.split('\0').next().unwrap_or_default();
+            (!device.is_empty()).then(|| (device.to_string(), letter))
+        })
+        .collect()
 }
 
 fn programs(times: &mut HashMap<u32, u64>, gpu: &HashMap<u32, f32>, elapsed: f64, threads: u32) -> Vec<Program> {
@@ -1063,6 +1156,35 @@ mod tests {
 
     /// Private memory of the sampler alone, without the UI:
     /// `cargo test monitor_memory -- --ignored --nocapture`
+    /// The path read without opening a process matches the one Windows gives for an open
+    /// handle, for every process that can be opened.
+    #[test]
+    fn image_path_without_opening() {
+        let (mut same, mut closed) = (0, 0);
+        for entry in process_list() {
+            let opened = with_process(entry.pid, PROCESS_QUERY_LIMITED_INFORMATION, |handle| {
+                let mut path = [0u16; 1024];
+                let mut len = path.len() as u32;
+                unsafe { QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(path.as_mut_ptr()), &mut len) }
+                    .ok()
+                    .map(|()| String::from_utf16_lossy(&path[..len as usize]))
+            });
+            match opened.flatten() {
+                Some(path) => {
+                    assert_eq!(image_path(entry.pid).as_deref(), Some(path.as_str()), "{}", entry.name);
+                    same += 1;
+                }
+                None => {
+                    if image_path(entry.pid).is_some() {
+                        closed += 1;
+                    }
+                }
+            }
+        }
+        assert!(same > 10);
+        println!("{same} match, {closed} more read without a handle");
+    }
+
     #[test]
     #[ignore]
     fn monitor_memory() {

@@ -41,6 +41,7 @@ features = [
     "Win32_Storage_FileSystem",
     "Win32_Storage_IscsiDisc",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_Diagnostics_Etw",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
@@ -67,6 +68,7 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ]
 

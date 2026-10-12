@@ -36,19 +36,19 @@ use windows::Win32::System::SystemInformation::{
     SYSTEM_CPU_SET_INFORMATION, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
 };
 use windows::Win32::System::Threading::{
-    BELOW_NORMAL_PRIORITY_CLASS, GetExitCodeProcess, GetPriorityClass, GetProcessInformation, GetProcessTimes,
+    BELOW_NORMAL_PRIORITY_CLASS, GetPriorityClass, GetProcessInformation, GetProcessTimes,
     GetSystemTimes,
-    HIGH_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, OpenProcess, OpenThread, PROCESS_NAME_WIN32, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+    HIGH_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, OpenProcess, OpenThread, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
     PROCESS_POWER_THROTTLING_STATE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
-    PROCESS_SET_LIMITED_INFORMATION, ProcessPowerThrottling, QueryFullProcessImageNameW, SetPriorityClass,
+    PROCESS_SET_LIMITED_INFORMATION, ProcessPowerThrottling, SetPriorityClass,
     SetProcessDefaultCpuSets, SetProcessInformation, SetThreadSelectedCpuSets, THREAD_SET_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, WS_CAPTION,
 };
-use windows::core::{GUID, HSTRING, PWSTR};
+use windows::core::{GUID, HSTRING};
 
-use crate::memory;
+use crate::{memory, monitor};
 use crate::reg::{self, HKEY_CURRENT_USER};
 use crate::settings::{GameMode, data_dir};
 
@@ -263,10 +263,12 @@ const GAME_TICKS: u32 = 3;
 const STANDBY_FLOOR: u64 = 1 << 30;
 const SERVICES: [&str; 2] = ["WSearch", "DoSvc"];
 
+/// What the process list says about one process. A handle is only opened to act on it.
 struct Process {
-    handle: HANDLE,
+    pid: u32,
     created: u64,
     cpu: u64,
+    priority: i32,
     name: String,
     /// Lowercased full path, empty when it couldn't be read.
     path: String,
@@ -275,18 +277,72 @@ struct Process {
     session: u32,
     hot: u32,
     calm: u32,
+    handle: Option<HANDLE>,
+    /// Opening it failed, so it isn't tried again every second.
+    denied: bool,
+}
+
+/// Normal priority class, as the process list reports it.
+const NORMAL_BASE: i32 = 8;
+
+impl Process {
+    fn new(entry: monitor::Raw) -> Self {
+        let image = monitor::image_path(entry.pid).unwrap_or_default();
+        Process {
+            pid: entry.pid,
+            created: entry.created,
+            cpu: entry.cpu_time,
+            priority: entry.priority,
+            name: entry.name,
+            path: image.to_lowercase(),
+            image,
+            session: entry.session,
+            hot: 0,
+            calm: 0,
+            handle: None,
+            denied: false,
+        }
+    }
+
+    /// Opens the process the first time it's needed. A handle that turns out to be a
+    /// later process with the same id is thrown away.
+    fn handle(&mut self) -> Option<HANDLE> {
+        if self.handle.is_none() && !self.denied {
+            unsafe {
+                let access =
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION | PROCESS_SET_LIMITED_INFORMATION;
+                match OpenProcess(access, false, self.pid)
+                    .or_else(|_| OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, self.pid))
+                {
+                    Ok(handle) if created(handle) == Some(self.created) => self.handle = Some(handle),
+                    Ok(handle) => {
+                        let _ = CloseHandle(handle);
+                    }
+                    Err(_) => self.denied = true,
+                }
+            }
+        }
+        self.handle
+    }
+
+    fn close(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+        }
+    }
 }
 
 impl Drop for Process {
     fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.handle);
-        }
+        self.close();
     }
 }
 
 struct Game {
     pid: u32,
+    created: u64,
     name: String,
     /// The game's own folder: helpers in it (anti-cheat, crash reporter, launcher UI) are
     /// part of the game and never slowed down.
@@ -303,8 +359,9 @@ struct Governor {
     system: (u64, u64),
     restrained: HashSet<u32>,
     efficient: HashSet<u32>,
-    /// Processes that can't be opened, so they aren't tried again every second.
-    blocked: HashSet<u32>,
+    /// Left out of efficiency mode during this game: already there by their own choice,
+    /// or it couldn't be set. Looked at again now and then.
+    eco_skip: HashSet<u32>,
     candidate: Option<(u32, u32)>,
     game: Option<Game>,
     last: Option<LastGame>,
@@ -347,7 +404,6 @@ impl Governor {
             self.release_all();
             self.end_game();
             self.processes.clear();
-            self.blocked.clear();
             self.system = (0, 0);
             return;
         }
@@ -367,7 +423,8 @@ impl Governor {
         }
         // Gone, or just marked as not a game.
         if let Some(game) = &self.game
-            && (!alive(self.processes.get(&game.pid).map(|p| p.handle)) || listed(&config.never, &game.name))
+            && (!self.processes.get(&game.pid).is_some_and(|p| p.created == game.created)
+                || listed(&config.never, &game.name))
         {
             self.end_game();
         }
@@ -379,54 +436,48 @@ impl Governor {
         }
     }
 
-    /// Refreshes every process's CPU time and returns how busy the whole CPU was since
-    /// the last tick, from 0 to 1.
+    /// Refreshes every process from one read of the process list and returns how busy
+    /// the whole CPU was since the last tick, from 0 to 1. Nothing is opened here.
     fn sample(&mut self) -> f64 {
-        let mut seen = HashSet::new();
-        let mut running = HashSet::new();
-        memory::for_each_process(|entry| {
-            let pid = entry.th32ProcessID;
-            running.insert(pid);
-            // Services and other sessions are never acted on, so they aren't tracked.
-            if pid == 0 || pid == 4 || self.blocked.contains(&pid) || session_of(pid) != self.session {
-                return;
-            }
-            seen.insert(pid);
-            let fresh = match self.processes.get(&pid) {
-                Some(process) => times(process.handle).is_none_or(|(created, _)| created != process.created),
-                None => true,
-            };
-            if fresh {
-                match open(pid, memory::exe_name(entry)) {
-                    Some(process) => {
-                        self.processes.insert(pid, process);
-                    }
-                    None => {
-                        self.blocked.insert(pid);
-                    }
-                }
-            }
-        });
-        self.blocked.retain(|pid| running.contains(pid));
-        self.processes.retain(|pid, _| seen.contains(pid));
-        self.restrained.retain(|pid| seen.contains(pid));
-        self.efficient.retain(|pid| seen.contains(pid));
-
+        let list = monitor::process_list();
         let (idle, total) = system_times();
         let (last_idle, last_total) = std::mem::replace(&mut self.system, (idle, total));
         let elapsed = total.saturating_sub(last_total);
-        if elapsed == 0 || last_total == 0 {
-            for process in self.processes.values_mut() {
-                process.cpu = times(process.handle).map_or(0, |(_, cpu)| cpu);
+        let measured = elapsed > 0 && last_total > 0;
+
+        let mut seen = HashSet::with_capacity(list.len());
+        for entry in list {
+            // The System process.
+            if entry.pid == 4 {
+                continue;
             }
-            return 0.0;
+            seen.insert(entry.pid);
+            match self.processes.get_mut(&entry.pid) {
+                Some(process) if process.created == entry.created => {
+                    if measured {
+                        let share = entry.cpu_time.saturating_sub(process.cpu) as f64 / elapsed as f64;
+                        process.hot = if share >= HOG { process.hot + 1 } else { 0 };
+                        process.calm = if share < CALM { process.calm + 1 } else { 0 };
+                    }
+                    process.cpu = entry.cpu_time;
+                    process.priority = entry.priority;
+                }
+                _ => {
+                    // New, or a later process that got the id of one that ended.
+                    self.restrained.remove(&entry.pid);
+                    self.efficient.remove(&entry.pid);
+                    self.eco_skip.remove(&entry.pid);
+                    self.processes.insert(entry.pid, Process::new(entry));
+                }
+            }
         }
-        for process in self.processes.values_mut() {
-            let cpu = times(process.handle).map_or(process.cpu, |(_, cpu)| cpu);
-            let share = cpu.saturating_sub(process.cpu) as f64 / elapsed as f64;
-            process.cpu = cpu;
-            process.hot = if share >= HOG { process.hot + 1 } else { 0 };
-            process.calm = if share < CALM { process.calm + 1 } else { 0 };
+        self.processes.retain(|pid, _| seen.contains(pid));
+        self.restrained.retain(|pid| seen.contains(pid));
+        self.efficient.retain(|pid| seen.contains(pid));
+        self.eco_skip.retain(|pid| seen.contains(pid));
+
+        if !measured {
+            return 0.0;
         }
         1.0 - idle.saturating_sub(last_idle) as f64 / elapsed as f64
     }
@@ -450,9 +501,10 @@ impl Governor {
                 }
             } else if busy >= BUSY
                 && process.hot >= HOT_TICKS
+                && process.priority == NORMAL_BASE
+                && !process.denied
                 && pid != foreground
                 && !self.exempt(pid, process)
-                && unsafe { GetPriorityClass(process.handle) } == NORMAL_PRIORITY_CLASS.0
             {
                 restrain.push(pid);
             }
@@ -461,9 +513,19 @@ impl Governor {
             self.release(pid);
         }
         for pid in restrain {
-            let handle = self.processes[&pid].handle;
-            if unsafe { SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS) }.is_ok() {
-                self.restrained.insert(pid);
+            let process = self.processes.get_mut(&pid).unwrap();
+            let Some(handle) = process.handle() else { continue };
+            unsafe {
+                if GetPriorityClass(handle) != NORMAL_PRIORITY_CLASS.0 {
+                    continue;
+                }
+                if SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS).is_ok() {
+                    self.restrained.insert(pid);
+                } else {
+                    // Opened for reading only; it would fail the same way every second.
+                    process.denied = true;
+                    process.close();
+                }
             }
         }
     }
@@ -471,10 +533,10 @@ impl Governor {
     /// Back to Normal, unless something else changed the priority in the meantime.
     fn release(&mut self, pid: u32) {
         self.restrained.remove(&pid);
-        if let Some(process) = self.processes.get(&pid) {
+        if let Some(handle) = self.processes.get(&pid).and_then(|p| p.handle) {
             unsafe {
-                if GetPriorityClass(process.handle) == BELOW_NORMAL_PRIORITY_CLASS.0 {
-                    let _ = SetPriorityClass(process.handle, NORMAL_PRIORITY_CLASS);
+                if GetPriorityClass(handle) == BELOW_NORMAL_PRIORITY_CLASS.0 {
+                    let _ = SetPriorityClass(handle, NORMAL_PRIORITY_CLASS);
                 }
             }
         }
@@ -491,23 +553,19 @@ impl Governor {
     /// lists come first: a game marked by hand counts in a window too.
     fn detect_game(&mut self, foreground: u32, config: &Config, capabilities: &Capabilities) {
         let fullscreen = foreground != 0 && fullscreen_foreground();
-        let candidate = self
-            .processes
-            .get(&foreground)
-            .filter(|process| {
-                process.session == self.session
-                    && !listed(&config.never, &process.name)
-                    && (listed(&config.always, &process.name)
-                        || fullscreen
-                            && !process.path.is_empty()
-                            && !process.path.starts_with(&self.windows)
-                            && !listed(NOT_GAMES, &process.name))
-            })
-            .map(|process| (process.handle, process.name.clone(), process.image.clone()));
-        let Some((handle, name, image)) = candidate else {
+        let candidate = self.processes.get(&foreground).is_some_and(|process| {
+            process.session == self.session
+                && !listed(&config.never, &process.name)
+                && (listed(&config.always, &process.name)
+                    || fullscreen
+                        && !process.path.is_empty()
+                        && !process.path.starts_with(&self.windows)
+                        && !listed(NOT_GAMES, &process.name))
+        });
+        if !candidate {
             self.candidate = None;
             return;
-        };
+        }
         let ticks = match self.candidate {
             Some((pid, ticks)) if pid == foreground => ticks + 1,
             _ => 1,
@@ -517,19 +575,15 @@ impl Governor {
             return;
         }
         self.candidate = None;
-        self.begin_game(foreground, handle, name, image, config.game, capabilities);
+        self.begin_game(foreground, config.game, capabilities);
     }
 
-    fn begin_game(
-        &mut self,
-        pid: u32,
-        handle: HANDLE,
-        name: String,
-        image: String,
-        config: GameMode,
-        capabilities: &Capabilities,
-    ) {
-        let path = image.to_lowercase();
+    fn begin_game(&mut self, pid: u32, config: GameMode, capabilities: &Capabilities) {
+        let Some(process) = self.processes.get_mut(&pid) else { return };
+        let (created, name, image, path) =
+            (process.created, process.name.clone(), process.image.clone(), process.path.clone());
+        // An anti-cheat can refuse the handle; the boosts that don't need one still run.
+        let handle = process.handle();
         // At least two levels deep, like D:\Games\Name\, or a library root would cover
         // every other program in it.
         let folder = path
@@ -539,6 +593,7 @@ impl Governor {
             .unwrap_or_default();
         let mut game = Game {
             pid,
+            created,
             name,
             folder,
             raised: false,
@@ -546,7 +601,9 @@ impl Governor {
             services: Vec::new(),
             wifi: Vec::new(),
         };
-        if config.priority {
+        if config.priority
+            && let Some(handle) = handle
+        {
             unsafe {
                 if GetPriorityClass(handle) == NORMAL_PRIORITY_CLASS.0 {
                     game.raised = SetPriorityClass(handle, HIGH_PRIORITY_CLASS).is_ok();
@@ -556,6 +613,7 @@ impl Governor {
         }
         if config.cores
             && let Some(cores) = &capabilities.cores
+            && let Some(handle) = handle
         {
             game.cores = pin(pid, handle, Some(&cores.ids));
         }
@@ -608,16 +666,24 @@ impl Governor {
                 if let Some(process) = self.processes.get(&pid)
                     && in_front(process)
                 {
-                    eco(process.handle, false);
+                    if let Some(handle) = process.handle {
+                        eco(handle, false);
+                    }
                     self.efficient.remove(&pid);
                 }
+            }
+            // A program can drop its own efficiency mode later on.
+            if self.ticks.is_multiple_of(30) {
+                self.eco_skip.clear();
             }
             let targets: Vec<u32> = self
                 .processes
                 .iter()
                 .filter(|&(&pid, process)| {
                     !in_front(process)
+                        && !process.denied
                         && !self.efficient.contains(&pid)
+                        && !self.eco_skip.contains(&pid)
                         && !self.exempt(pid, process)
                         && !process.path.is_empty()
                         && !process.path.starts_with(&self.windows)
@@ -627,9 +693,17 @@ impl Governor {
             for pid in targets {
                 // Browsers and others put their own idle processes in efficiency mode; those
                 // are left as they are, so ending the game doesn't undo their choice.
-                let handle = self.processes[&pid].handle;
-                if !eco_set(handle).unwrap_or(true) && eco(handle, true) {
-                    self.efficient.insert(pid);
+                let process = self.processes.get_mut(&pid).unwrap();
+                match process.handle() {
+                    Some(handle) if !eco_set(handle).unwrap_or(true) && eco(handle, true) => {
+                        self.efficient.insert(pid);
+                    }
+                    _ => {
+                        self.eco_skip.insert(pid);
+                        if !self.restrained.contains(&pid) {
+                            process.close();
+                        }
+                    }
                 }
             }
         } else {
@@ -648,9 +722,10 @@ impl Governor {
     }
 
     fn end_eco(&mut self) {
+        self.eco_skip.clear();
         for pid in std::mem::take(&mut self.efficient) {
-            if let Some(process) = self.processes.get(&pid) {
-                eco(process.handle, false);
+            if let Some(handle) = self.processes.get(&pid).and_then(|p| p.handle) {
+                eco(handle, false);
             }
         }
     }
@@ -661,17 +736,18 @@ impl Governor {
         if let Some(last) = &mut self.last {
             last.ended = Some(Local::now());
         }
-        if let Some(process) = self.processes.get(&game.pid)
-            && alive(Some(process.handle))
+        // Still running: the handle opened when it started is still held.
+        if let Some(handle) =
+            self.processes.get(&game.pid).filter(|p| p.created == game.created).and_then(|p| p.handle)
         {
             unsafe {
-                if game.raised && GetPriorityClass(process.handle) == HIGH_PRIORITY_CLASS.0 {
-                    let _ = SetPriorityClass(process.handle, NORMAL_PRIORITY_CLASS);
+                if game.raised && GetPriorityClass(handle) == HIGH_PRIORITY_CLASS.0 {
+                    let _ = SetPriorityClass(handle, NORMAL_PRIORITY_CLASS);
                 }
-                let _ = D3DKMTSetProcessSchedulingPriorityClass(process.handle, D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL);
+                let _ = D3DKMTSetProcessSchedulingPriorityClass(handle, D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL);
             }
             if game.cores {
-                pin(game.pid, process.handle, None);
+                pin(game.pid, handle, None);
             }
         }
         put_back(&game.services, &game.wifi);
@@ -682,34 +758,15 @@ fn listed(list: &[impl AsRef<str>], name: &str) -> bool {
     list.iter().any(|entry| entry.as_ref().eq_ignore_ascii_case(name))
 }
 
-fn open(pid: u32, name: String) -> Option<Process> {
-    unsafe {
-        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION | PROCESS_SET_LIMITED_INFORMATION;
-        let handle = OpenProcess(access, false, pid).or_else(|_| OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)).ok()?;
-        let Some((created, cpu)) = times(handle) else {
-            let _ = CloseHandle(handle);
-            return None;
-        };
-        let mut path = [0u16; 1024];
-        let mut len = path.len() as u32;
-        let image = match QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(path.as_mut_ptr()), &mut len) {
-            Ok(()) => String::from_utf16_lossy(&path[..len as usize]),
-            Err(_) => String::new(),
-        };
-        let path = image.to_lowercase();
-        Some(Process { handle, created, cpu, name, path, image, session: session_of(pid), hot: 0, calm: 0 })
-    }
-}
-
 fn filetime(time: FILETIME) -> u64 {
     u64::from(time.dwHighDateTime) << 32 | u64::from(time.dwLowDateTime)
 }
 
-/// Creation time and kernel plus user time, in 100 ns units.
-fn times(handle: HANDLE) -> Option<(u64, u64)> {
+/// Creation time, in 100 ns units.
+fn created(handle: HANDLE) -> Option<u64> {
     let (mut created, mut exited, mut kernel, mut user) = Default::default();
     unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) }.ok()?;
-    Some((filetime(created), filetime(kernel) + filetime(user)))
+    Some(filetime(created))
 }
 
 /// Idle and total time of all cores, in 100 ns units. Kernel time includes idle time.
@@ -721,11 +778,6 @@ fn system_times() -> (u64, u64) {
     }
 }
 
-fn alive(handle: Option<HANDLE>) -> bool {
-    const STILL_ACTIVE: u32 = 259;
-    let mut code = 0;
-    handle.is_some_and(|handle| unsafe { GetExitCodeProcess(handle, &mut code) }.is_ok() && code == STILL_ACTIVE)
-}
 
 fn session_of(pid: u32) -> u32 {
     let mut session = u32::MAX;
@@ -1175,6 +1227,15 @@ mod tests {
         }
     }
 
+    fn eco_of(pid: u32) -> Option<bool> {
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let on = eco_set(handle);
+            let _ = CloseHandle(handle);
+            on
+        }
+    }
+
     fn priority(pid: u32) -> u32 {
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).unwrap();
@@ -1235,11 +1296,9 @@ mod tests {
         governor.sample();
         let search_before = with_service("WSearch", service_running);
         let own_eco: Vec<u32> =
-            governor.processes.iter().filter(|(_, p)| eco_set(p.handle) == Some(true)).map(|(&pid, _)| pid).collect();
-        let process = &governor.processes[&pid];
-        let (handle, name, image) = (process.handle, process.name.clone(), process.image.clone());
+            governor.processes.keys().copied().filter(|&pid| eco_of(pid) == Some(true)).collect();
         let config = GameMode { enabled: true, ..Default::default() };
-        governor.begin_game(pid, handle, name, image, config, &Capabilities::default());
+        governor.begin_game(pid, config, &Capabilities::default());
         governor.during_game(0, config);
 
         let raised = priority(pid);
@@ -1251,7 +1310,7 @@ mod tests {
         std::thread::sleep(Duration::from_secs(2));
         let restored = priority(pid);
         let own_eco_kept = own_eco.iter().all(|pid| {
-            governor.processes.get(pid).is_none_or(|p| eco_set(p.handle) == Some(true))
+            !governor.processes.contains_key(pid) || eco_of(*pid) != Some(false)
         });
         let search_after = with_service("WSearch", service_running);
         drop(fake);
@@ -1286,10 +1345,8 @@ mod tests {
         let mut governor = governor();
         governor.sample();
         let search_before = with_service("WSearch", service_running);
-        let process = &governor.processes[&pid];
-        let (handle, name, image) = (process.handle, process.name.clone(), process.image.clone());
         let config = GameMode { enabled: true, priority: false, cores: false, ..Default::default() };
-        governor.begin_game(pid, handle, name, image, config, &Capabilities::default());
+        governor.begin_game(pid, config, &Capabilities::default());
         let journal = load_leftovers().services;
         let search_during = with_service("WSearch", service_running);
         // The crash: the session is dropped without end_game.

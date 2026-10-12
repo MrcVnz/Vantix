@@ -228,7 +228,63 @@ pub fn register_notifications() -> Result<()> {
     let key = format!(r"Software\Classes\AppUserModelId\{APP_ID}");
     reg::set_string(reg::HKEY_CURRENT_USER, &key, "DisplayName", "Vantix")?;
     reg::set_string(reg::HKEY_CURRENT_USER, &key, "IconUri", &icon.to_string_lossy())?;
+    // Windows 10 drops toasts from an unpackaged app unless a Start menu shortcut
+    // carries its AppUserModelID; 11 is fine with the registry key alone.
+    if !crate::boost::is_windows_11()
+        && let Err(e) = start_menu_shortcut()
+    {
+        log_error("start menu shortcut", &e);
+    }
     unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_ID)) }
+}
+
+fn shortcut_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("APPDATA")?;
+    Some(std::path::PathBuf::from(base).join(r"Microsoft\Windows\Start Menu\Programs\Vantix.lnk"))
+}
+
+/// Writes Vantix.lnk in the user's Start menu, pointing at this exe and tagged with
+/// APP_ID. Left alone when it already points here.
+fn start_menu_shortcut() -> Result<()> {
+    use windows::Win32::Foundation::PROPERTYKEY;
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+    use windows::Win32::System::Com::{IPersistFile, STGM_READ};
+    use windows::Win32::System::Variant::VT_LPWSTR;
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    // System.AppUserModel.ID, from propkey.h.
+    const APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
+        fmtid: windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
+        pid: 5,
+    };
+
+    let (Some(lnk), Ok(exe)) = (shortcut_path(), std::env::current_exe()) else { return Ok(()) };
+    let lnk = HSTRING::from(lnk.as_os_str());
+    let exe = HSTRING::from(exe.as_os_str());
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        let file: IPersistFile = link.cast()?;
+        if file.Load(&lnk, STGM_READ).is_ok() {
+            let mut target = [0u16; 1024];
+            if link.GetPath(&mut target, std::ptr::null_mut(), 0).is_ok() {
+                let len = target.iter().position(|&c| c == 0).unwrap_or(target.len());
+                if String::from_utf16_lossy(&target[..len]).eq_ignore_ascii_case(&exe.to_string_lossy()) {
+                    return Ok(());
+                }
+            }
+        }
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        link.SetPath(&exe)?;
+        let store: IPropertyStore = link.cast()?;
+        // The string stays ours: SetValue copies it, so no PropVariantClear.
+        let id: Vec<u16> = APP_ID.encode_utf16().chain([0]).collect();
+        let mut value = PROPVARIANT::default();
+        (*value.Anonymous.Anonymous).vt = VT_LPWSTR;
+        (*value.Anonymous.Anonymous).Anonymous.pwszVal = windows::core::PWSTR(id.as_ptr() as *mut u16);
+        store.SetValue(&APP_USER_MODEL_ID, &value)?;
+        store.Commit()?;
+        link.cast::<IPersistFile>()?.Save(&lnk, true)
+    }
 }
 
 /// Raises a toast, logging any failure. Returns whether Windows accepted it.
@@ -316,6 +372,9 @@ pub fn autostart_enabled() -> bool {
 pub fn unregister_all() {
     let _ = set_autostart(false);
     let _ = reg::delete_tree(reg::HKEY_CURRENT_USER, &format!(r"Software\Classes\AppUserModelId\{APP_ID}"));
+    if let Some(lnk) = shortcut_path() {
+        let _ = std::fs::remove_file(lnk);
+    }
 }
 
 pub(crate) fn task_service() -> Result<ITaskService> {
