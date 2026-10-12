@@ -251,7 +251,7 @@ fn start_menu_shortcut() -> Result<()> {
     use windows::Win32::System::Com::{IPersistFile, STGM_READ};
     use windows::Win32::System::Variant::VT_LPWSTR;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
-    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::Win32::UI::Shell::{IShellLinkW, SHStrDupW, ShellLink};
     // System.AppUserModel.ID, from propkey.h.
     const APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
         fmtid: windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
@@ -276,11 +276,11 @@ fn start_menu_shortcut() -> Result<()> {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
         link.SetPath(&exe)?;
         let store: IPropertyStore = link.cast()?;
-        // The string stays ours: SetValue copies it, so no PropVariantClear.
-        let id: Vec<u16> = APP_ID.encode_utf16().chain([0]).collect();
+        // Dropping a PROPVARIANT clears it, which frees the string with CoTaskMemFree, so
+        // the string has to come from the COM allocator.
         let mut value = PROPVARIANT::default();
         (*value.Anonymous.Anonymous).vt = VT_LPWSTR;
-        (*value.Anonymous.Anonymous).Anonymous.pwszVal = windows::core::PWSTR(id.as_ptr() as *mut u16);
+        (*value.Anonymous.Anonymous).Anonymous.pwszVal = SHStrDupW(&HSTRING::from(APP_ID))?;
         store.SetValue(&APP_USER_MODEL_ID, &value)?;
         store.Commit()?;
         link.cast::<IPersistFile>()?.Save(&lnk, true)
@@ -401,6 +401,29 @@ fn current_user() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Writes the Windows 10 Start menu shortcut under a scratch APPDATA a few times. A
+    /// string from the wrong allocator in the property value crashed the process here:
+    /// `cargo test start_menu_shortcut -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn start_menu_shortcut_round_trip() {
+        let dir = std::env::temp_dir().join("vantix-shortcut-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(r"Microsoft\Windows\Start Menu\Programs")).unwrap();
+        unsafe { std::env::set_var("APPDATA", &dir) };
+        init_com();
+        let lnk = shortcut_path().unwrap();
+        for _ in 0..3 {
+            let _ = std::fs::remove_file(&lnk);
+            start_menu_shortcut().unwrap();
+            assert!(lnk.exists());
+        }
+        let written = std::fs::metadata(&lnk).unwrap().modified().unwrap();
+        start_menu_shortcut().unwrap();
+        assert_eq!(std::fs::metadata(&lnk).unwrap().modified().unwrap(), written, "rewritten though it points here");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Creates and removes a real logon task: `cargo test autostart -- --ignored --nocapture`
     #[test]

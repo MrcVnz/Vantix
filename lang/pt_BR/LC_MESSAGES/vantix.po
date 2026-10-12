@@ -830,14 +830,10 @@ msgstr "Observando. Nada precisa ser segurado agora."
 msgid "Real-time game mode"
 msgstr "Modo jogo em tempo real"
 
-msgid "Boost the game in fullscreen"
-msgstr "Turbinar o jogo em tela cheia"
+msgid "Boost games automatically"
+msgstr "Turbinar jogos automaticamente"
 
-msgid "Vantix spots a game when it fills the screen for a few seconds, and puts everything back when the game closes."
-msgstr "O Vantix reconhece um jogo quando ele ocupa a tela inteira por alguns segundos, e volta tudo ao normal quando o jogo fecha."
 
-msgid "Waiting for a game in fullscreen."
-msgstr "Esperando um jogo em tela cheia."
 
 msgid "Boosting {}. Background programs in efficiency mode: {}."
 msgstr "Turbinando {}. Programas em segundo plano no modo de eficiência: {}."
@@ -2539,3 +2535,30 @@ msgstr "O Vantix não conseguiu salvar o registro desta mudança. Dá para desfa
 
 msgid "On Windows 10 it does less: Windows only slows them down on processors that support power throttling, mostly laptops."
 msgstr "No Windows 10 o efeito é menor: o Windows só desacelera esses programas em processadores com controle de energia (power throttling), quase sempre notebooks."
+
+msgid "Latest actions"
+msgstr "Últimas ações"
+
+msgid "held back now"
+msgstr "segurado agora"
+
+msgid "held back for {} s"
+msgstr "segurado por {} s"
+
+msgid "held back for {} min"
+msgstr "segurado por {} min"
+
+msgid "Vantix spots a game when it fills the screen for a few seconds, or in a window when Windows already knows it as a game, and puts everything back when the game closes."
+msgstr "O Vantix reconhece um jogo quando ele ocupa a tela por alguns segundos, ou em janela quando o Windows já o conhece como jogo, e devolve tudo quando o jogo fecha."
+
+msgid "Waiting for a game."
+msgstr "Esperando um jogo."
+
+msgid "Open log"
+msgstr "Abrir log"
+
+msgid "The game refused the priority change, likely its anti-cheat. The other boosts still run."
+msgstr "O jogo recusou a mudança de prioridade, provavelmente pelo anti-cheat. Os outros reforços continuam."
+
+msgid "The game refused the priority change, likely its anti-cheat."
+msgstr "O jogo recusou a mudança de prioridade, provavelmente pelo anti-cheat."

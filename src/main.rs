@@ -712,6 +712,12 @@ impl App {
             let Some(name) = governor::status().game else { return };
             app.change_game_lists(|settings| mark_game(settings, &name, false));
         }));
+        live.on_open_log(|| {
+            let log = settings::data_dir().join("game-mode.log");
+            if log.exists() {
+                let _ = std::process::Command::new("explorer.exe").arg(log).spawn();
+            }
+        });
 
         let startup = ui.global::<Startup>();
         startup.on_refresh(bind(self, |app| app.refresh_startup()));
@@ -1023,6 +1029,17 @@ impl App {
             let live = ui.global::<Live>();
             live.set_game(status.game.unwrap_or_default().into());
             live.set_last(status.last.as_ref().map(last_game_row).unwrap_or_default());
+            let actions: Vec<ActionRow> = status
+                .actions
+                .iter()
+                .map(|action| ActionRow {
+                    time: action.at.format("%H:%M").to_string().into(),
+                    name: action.name.strip_suffix(".exe").unwrap_or(&action.name).into(),
+                    seconds: action.seconds.unwrap_or(0) as i32,
+                    ongoing: action.seconds.is_none(),
+                })
+                .collect();
+            live.set_actions(ModelRc::new(VecModel::from(actions)));
             live.set_restrained(status.restrained as i32);
             live.set_efficient(status.efficient as i32);
         });
@@ -3805,6 +3822,7 @@ fn last_game_row(last: &governor::LastGame) -> LastGameRow {
         to: last.ended.map(time).unwrap_or_default().into(),
         priority: last.priority,
         cores: last.cores,
+        blocked: last.blocked,
         services: last.services as i32,
         wifi: last.wifi,
         efficient: last.efficient as i32,

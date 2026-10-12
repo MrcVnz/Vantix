@@ -9,9 +9,20 @@ export struct LastGameRow {
     to: string,
     priority: bool,
     cores: bool,
+    /// The game refused the priority and core changes, as anti-cheats do.
+    blocked: bool,
     services: int,
     wifi: bool,
     efficient: int,
+}
+
+/// A program ProBalance held back.
+export struct ActionRow {
+    time: string,
+    name: string,
+    /// How long, while `ongoing` is false.
+    seconds: int,
+    ongoing: bool,
 }
 
 /// ProBalance and the real-time game mode: what runs while Vantix is open.
@@ -40,6 +51,8 @@ export global Live {
     in property <int> restrained;
     in property <int> efficient;
     in property <LastGameRow> last;
+    /// What ProBalance did lately, newest first.
+    in property <[ActionRow]> actions;
     /// Exe names marked by hand as always a game, and never.
     in property <[string]> always;
     in property <[string]> never;
@@ -50,6 +63,8 @@ export global Live {
     callback remove-game(bool, int);
     /// Puts the game being boosted on the never list, which ends the boost.
     callback not-a-game();
+    /// Opens game-mode.log.
+    callback open-log();
 }
 
 /// One of the hand made lists: a title, the names and a way to add one.
@@ -164,6 +179,37 @@ export component ProBalanceCard inherits LiveCard {
         text: Live.restrained == 0 ? @tr("Watching. Nothing needs holding back right now.")
             : @tr("Holding back {n} program right now." | "Holding back {n} programs right now." % Live.restrained);
     }
+    if Live.probalance && Live.actions.length > 0: VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Latest actions");
+            color: Theme.muted;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        for action in Live.actions: HorizontalLayout {
+            spacing: 10px;
+            Text {
+                text: action.time;
+                color: Theme.muted;
+                font-size: 12px;
+            }
+            Text {
+                text: action.name;
+                color: Theme.text;
+                font-size: 12px;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: action.ongoing ? @tr("held back now")
+                    : action.seconds < 60 ? @tr("held back for {} s", action.seconds)
+                    : @tr("held back for {} min", Math.round(action.seconds / 60));
+                color: Theme.muted;
+                font-size: 12px;
+            }
+        }
+    }
 }
 
 export component GameModeCard inherits LiveCard {
@@ -185,8 +231,8 @@ export component GameModeCard inherits LiveCard {
         }
     }
     Toggle {
-        text: @tr("Boost the game in fullscreen");
-        detail: @tr("Vantix spots a game when it fills the screen for a few seconds, and puts everything back when the game closes.");
+        text: @tr("Boost games automatically");
+        detail: @tr("Vantix spots a game when it fills the screen for a few seconds, or in a window when Windows already knows it as a game, and puts everything back when the game closes.");
         checked <=> Live.game-mode;
         toggled => { Live.changed(); }
     }
@@ -195,7 +241,7 @@ export component GameModeCard inherits LiveCard {
         Status {
             horizontal-stretch: 1;
             vertical-alignment: center;
-            text: Live.game == "" ? @tr("Waiting for a game in fullscreen.")
+            text: Live.game == "" ? @tr("Waiting for a game.")
                 : Live.efficient > 0 ? @tr("Boosting {}. Background programs in efficiency mode: {}.", Live.game, Live.efficient)
                 : @tr("Boosting {}.", Live.game);
         }
@@ -204,6 +250,17 @@ export component GameModeCard inherits LiveCard {
             tall: 28px;
             clicked => { Live.not-a-game(); }
         }
+        Button {
+            text: @tr("Open log");
+            tall: 28px;
+            clicked => { Live.open-log(); }
+        }
+    }
+    if Live.game-mode && Live.game != "" && Live.last.blocked: Text {
+        color: Theme.muted;
+        font-size: 12px;
+        wrap: word-wrap;
+        text: @tr("The game refused the priority change, likely its anti-cheat. The other boosts still run.");
     }
     if Live.game-mode && Live.game == "" && Live.last.name != "": Text {
         color: Theme.muted;
@@ -211,6 +268,7 @@ export component GameModeCard inherits LiveCard {
         wrap: word-wrap;
         text: @tr("Last game: {} from {} to {}.", Live.last.name, Live.last.from, Live.last.to)
             + (Live.last.priority ? " " + @tr("High priority.") : "")
+            + (Live.last.blocked ? " " + @tr("The game refused the priority change, likely its anti-cheat.") : "")
             + (Live.last.cores ? " " + @tr("Kept on the fast cores.") : "")
             + (Live.last.services > 0 ? " " + @tr("{n} service paused." | "{n} services paused." % Live.last.services) : "")
             + (Live.last.wifi ? " " + @tr("Wi-Fi scans off.") : "")

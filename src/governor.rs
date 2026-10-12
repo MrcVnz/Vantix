@@ -4,7 +4,7 @@
 //! turned off and when Vantix exits. What would outlive a crash (stopped services, Wi-Fi
 //! scanning off) is also written to game.json and undone on the next start.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -73,6 +73,17 @@ pub struct Status {
     /// Background processes in efficiency mode for the game.
     pub efficient: usize,
     pub last: Option<LastGame>,
+    /// What ProBalance did lately, newest first.
+    pub actions: Vec<Action>,
+}
+
+/// A program ProBalance held back.
+#[derive(Clone)]
+pub struct Action {
+    pub name: String,
+    pub at: DateTime<Local>,
+    /// How long it was held back; `None` while it still is.
+    pub seconds: Option<u64>,
 }
 
 /// The latest game found, so the user can see what game mode did with it.
@@ -82,8 +93,11 @@ pub struct LastGame {
     pub started: DateTime<Local>,
     /// `None` while it's still running.
     pub ended: Option<DateTime<Local>>,
+    /// What really happened, not what was asked for.
     pub priority: bool,
     pub cores: bool,
+    /// The game refused to be changed, as anti-cheats do: no priority, no cores.
+    pub blocked: bool,
     pub services: usize,
     pub wifi: bool,
     /// The most background programs in efficiency mode at once.
@@ -171,6 +185,9 @@ pub fn stop() {
 
 const BUSY: f64 = 0.75;
 const HOG: f64 = 0.08;
+/// During a game the bar is lower: half the CPU counts as busy, and a process using a
+/// whole logical core (or HOG, if that's less) counts as hogging it.
+const BUSY_IN_GAME: f64 = 0.5;
 const CALM: f64 = 0.02;
 /// Seconds a process has to stay over HOG, and then under CALM, before anything changes.
 const HOT_TICKS: u32 = 2;
@@ -230,6 +247,12 @@ const EXEMPT: &[&str] = &[
     "faceit.exe",
 ];
 
+/// Windows background work that runs as a service and competes with a game: indexing,
+/// updates and telemetry. Held back during a game only; everything else outside the
+/// user's session is left alone.
+const BACKGROUND_SERVICES: &[&str] =
+    &["searchindexer.exe", "mousocoreworker.exe", "compattelrunner.exe", "tiworker.exe"];
+
 /// Programs that often run fullscreen without being games.
 const NOT_GAMES: &[&str] = &[
     "chrome.exe",
@@ -259,6 +282,12 @@ const NOT_GAMES: &[&str] = &[
 /// Seconds a fullscreen window has to stay in front before it counts as a game, so a
 /// quick fullscreen flash doesn't start anything.
 const GAME_TICKS: u32 = 3;
+/// Seconds between reads of the games Windows knows.
+const KNOWN_TICKS: u64 = 60;
+/// Lines kept in game-mode.log.
+const LOG_LINES: usize = 300;
+/// ProBalance actions kept for the card.
+const ACTIONS: usize = 5;
 /// Standby is only purged when free memory is this low and standby holds at least this.
 const STANDBY_FLOOR: u64 = 1 << 30;
 const SERVICES: [&str; 2] = ["WSearch", "DoSvc"];
@@ -357,7 +386,9 @@ struct Game {
 struct Governor {
     processes: HashMap<u32, Process>,
     system: (u64, u64),
-    restrained: HashSet<u32>,
+    /// Held back by ProBalance, and since when.
+    restrained: HashMap<u32, DateTime<Local>>,
+    actions: VecDeque<Action>,
     efficient: HashSet<u32>,
     /// Left out of efficiency mode during this game: already there by their own choice,
     /// or it couldn't be set. Looked at again now and then.
@@ -369,28 +400,25 @@ struct Governor {
     me: u32,
     session: u32,
     windows: String,
+    /// Logical processors, for what one whole core is worth.
+    threads: f64,
+    /// Lowercased exe paths of the games Windows recognized (Game Bar's list), and the
+    /// tick they were read on.
+    known: HashSet<String>,
+    known_at: Option<u64>,
+    /// Foreground pid, fullscreen and verdict last written to the log, so it only gets a
+    /// line when something changes.
+    front: Option<(u32, bool, bool)>,
+    log: Option<VecDeque<String>>,
 }
 
 fn run() {
     let shared = SHARED.get().unwrap();
-    let mut governor = Governor {
-        me: std::process::id(),
-        session: session_of(std::process::id()),
-        windows: format!(
-            "{}\\",
-            std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()).to_lowercase()
-        ),
-        ..Default::default()
-    };
+    let mut governor = Governor::new();
     while !shared.stop.load(Ordering::Relaxed) {
         let config = shared.config.lock().unwrap().clone();
         governor.tick(&config, &shared.capabilities);
-        *shared.status.lock().unwrap() = Status {
-            game: governor.game.as_ref().map(|game| game.name.clone()),
-            restrained: governor.restrained.len(),
-            efficient: governor.efficient.len(),
-            last: governor.last.clone(),
-        };
+        *shared.status.lock().unwrap() = governor.status();
         std::thread::sleep(Duration::from_secs(1));
     }
     governor.release_all();
@@ -398,6 +426,63 @@ fn run() {
 }
 
 impl Governor {
+    fn new() -> Self {
+        Governor {
+            me: std::process::id(),
+            session: session_of(std::process::id()),
+            windows: format!(
+                "{}\\",
+                std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()).to_lowercase()
+            ),
+            threads: std::thread::available_parallelism().map_or(1, |n| n.get()) as f64,
+            ..Default::default()
+        }
+    }
+
+    fn status(&self) -> Status {
+        let mut actions: Vec<Action> = self
+            .restrained
+            .iter()
+            .map(|(pid, &at)| Action {
+                name: self.processes.get(pid).map(|p| p.name.clone()).unwrap_or_default(),
+                at,
+                seconds: None,
+            })
+            .collect();
+        actions.sort_by_key(|action| std::cmp::Reverse(action.at));
+        actions.extend(self.actions.iter().cloned());
+        actions.truncate(ACTIONS);
+        Status {
+            game: self.game.as_ref().map(|game| game.name.clone()),
+            restrained: self.restrained.len(),
+            efficient: self.efficient.len(),
+            last: self.last.clone(),
+            actions,
+        }
+    }
+
+    /// Adds a line to game-mode.log, which keeps the last LOG_LINES: what was in front,
+    /// why it was or wasn't taken for a game, and what each boost managed.
+    fn note(&mut self, text: &str) {
+        let path = data_dir().join("game-mode.log");
+        let lines = self.log.get_or_insert_with(|| {
+            std::fs::read_to_string(&path).map(|text| text.lines().map(str::to_string).collect()).unwrap_or_default()
+        });
+        lines.push_back(format!("{} {text}", Local::now().format("%Y-%m-%d %H:%M:%S")));
+        while lines.len() > LOG_LINES {
+            lines.pop_front();
+        }
+        let mut out = String::with_capacity(lines.len() * 80);
+        for line in lines.iter() {
+            out.push_str(line);
+            out.push_str("\r\n");
+        }
+        let _ = std::fs::create_dir_all(data_dir());
+        if let Err(e) = std::fs::write(&path, out) {
+            crate::system::log_error("write game-mode.log", &e);
+        }
+    }
+
     fn tick(&mut self, config: &Config, capabilities: &Capabilities) {
         // Both off is the default: nothing is measured and no process is kept open.
         if !config.probalance && !config.game.enabled {
@@ -445,6 +530,7 @@ impl Governor {
         let elapsed = total.saturating_sub(last_total);
         let measured = elapsed > 0 && last_total > 0;
 
+        let (_, hog) = self.limits();
         let mut seen = HashSet::with_capacity(list.len());
         for entry in list {
             // The System process.
@@ -456,7 +542,7 @@ impl Governor {
                 Some(process) if process.created == entry.created => {
                     if measured {
                         let share = entry.cpu_time.saturating_sub(process.cpu) as f64 / elapsed as f64;
-                        process.hot = if share >= HOG { process.hot + 1 } else { 0 };
+                        process.hot = if share >= hog { process.hot + 1 } else { 0 };
                         process.calm = if share < CALM { process.calm + 1 } else { 0 };
                     }
                     process.cpu = entry.cpu_time;
@@ -472,7 +558,7 @@ impl Governor {
             }
         }
         self.processes.retain(|pid, _| seen.contains(pid));
-        self.restrained.retain(|pid| seen.contains(pid));
+        self.restrained.retain(|pid, _| seen.contains(pid));
         self.efficient.retain(|pid| seen.contains(pid));
         self.eco_skip.retain(|pid| seen.contains(pid));
 
@@ -482,9 +568,20 @@ impl Governor {
         1.0 - idle.saturating_sub(last_idle) as f64 / elapsed as f64
     }
 
+    /// When the CPU counts as busy and a process as hogging it, as shares of the whole
+    /// CPU. During a game a process using one whole logical core is already a hog.
+    fn limits(&self) -> (f64, f64) {
+        match self.game {
+            Some(_) if self.threads > 0.0 => (BUSY_IN_GAME, HOG.min(1.0 / self.threads)),
+            Some(_) => (BUSY_IN_GAME, HOG),
+            None => (BUSY, HOG),
+        }
+    }
+
     fn exempt(&self, pid: u32, process: &Process) -> bool {
         pid == self.me
             || process.session != self.session
+                && !(self.game.is_some() && listed(BACKGROUND_SERVICES, &process.name))
             || listed(EXEMPT, &process.name)
             || self.game.as_ref().is_some_and(|game| {
                 game.pid == pid || !game.folder.is_empty() && process.path.starts_with(&game.folder)
@@ -492,14 +589,15 @@ impl Governor {
     }
 
     fn balance(&mut self, busy: f64, foreground: u32) {
+        let (busy_bar, _) = self.limits();
         let mut restrain = Vec::new();
         let mut release = Vec::new();
         for (&pid, process) in &self.processes {
-            if self.restrained.contains(&pid) {
+            if self.restrained.contains_key(&pid) {
                 if process.calm >= CALM_TICKS || pid == foreground || self.exempt(pid, process) {
                     release.push(pid);
                 }
-            } else if busy >= BUSY
+            } else if busy >= busy_bar
                 && process.hot >= HOT_TICKS
                 && process.priority == NORMAL_BASE
                 && !process.denied
@@ -519,12 +617,15 @@ impl Governor {
                 if GetPriorityClass(handle) != NORMAL_PRIORITY_CLASS.0 {
                     continue;
                 }
+                let name = process.name.clone();
                 if SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS).is_ok() {
-                    self.restrained.insert(pid);
+                    self.restrained.insert(pid, Local::now());
+                    self.note(&format!("ProBalance: held back {name} ({pid})"));
                 } else {
                     // Opened for reading only; it would fail the same way every second.
                     process.denied = true;
                     process.close();
+                    self.note(&format!("ProBalance: {name} ({pid}) refused a lower priority"));
                 }
             }
         }
@@ -532,37 +633,83 @@ impl Governor {
 
     /// Back to Normal, unless something else changed the priority in the meantime.
     fn release(&mut self, pid: u32) {
-        self.restrained.remove(&pid);
-        if let Some(handle) = self.processes.get(&pid).and_then(|p| p.handle) {
+        let Some(since) = self.restrained.remove(&pid) else { return };
+        let Some(process) = self.processes.get(&pid) else { return };
+        if let Some(handle) = process.handle {
             unsafe {
                 if GetPriorityClass(handle) == BELOW_NORMAL_PRIORITY_CLASS.0 {
                     let _ = SetPriorityClass(handle, NORMAL_PRIORITY_CLASS);
                 }
             }
         }
+        let seconds = (Local::now() - since).num_seconds().max(0) as u64;
+        let name = process.name.clone();
+        self.note(&format!("ProBalance: let go of {name} ({pid}) after {seconds} s"));
+        self.actions.push_front(Action { name, at: since, seconds: Some(seconds) });
+        self.actions.truncate(ACTIONS);
     }
 
     fn release_all(&mut self) {
-        for pid in self.restrained.clone() {
+        for pid in self.restrained.keys().copied().collect::<Vec<_>>() {
             self.release(pid);
         }
     }
 
-    /// A game is a window that covers its whole monitor and stays in front, from a
-    /// program outside the Windows folder that isn't a browser or player. The user's own
-    /// lists come first: a game marked by hand counts in a window too.
+    /// Whether the program in front is a game, and why or why not, in this order: the
+    /// never list, the always list, then what's never a game (Windows itself, browsers,
+    /// players), then the games Windows knows, which count in a window too, and last a
+    /// window that covers the whole monitor.
+    fn verdict(&self, process: &Process, fullscreen: bool, config: &Config) -> Result<&'static str, &'static str> {
+        if process.session != self.session {
+            return Err("runs outside this session");
+        }
+        if listed(&config.never, &process.name) {
+            return Err("on the never list");
+        }
+        if listed(&config.always, &process.name) {
+            return Ok("on the always list");
+        }
+        if process.path.is_empty() {
+            return Err("its path couldn't be read");
+        }
+        if process.path.starts_with(&self.windows) {
+            return Err("part of Windows");
+        }
+        if listed(NOT_GAMES, &process.name) {
+            return Err("a browser, player or launcher");
+        }
+        if self.known.contains(&process.path) {
+            return Ok("known to Windows");
+        }
+        if fullscreen {
+            return Ok("fullscreen");
+        }
+        Err("in a window and not a game Windows knows")
+    }
+
+    /// A game has to stay in front for GAME_TICKS seconds; `verdict` says what counts.
     fn detect_game(&mut self, foreground: u32, config: &Config, capabilities: &Capabilities) {
+        if self.known_at.is_none_or(|at| self.ticks >= at + KNOWN_TICKS) {
+            self.known = known_games();
+            self.known_at = Some(self.ticks);
+        }
         let fullscreen = foreground != 0 && fullscreen_foreground();
-        let candidate = self.processes.get(&foreground).is_some_and(|process| {
-            process.session == self.session
-                && !listed(&config.never, &process.name)
-                && (listed(&config.always, &process.name)
-                    || fullscreen
-                        && !process.path.is_empty()
-                        && !process.path.starts_with(&self.windows)
-                        && !listed(NOT_GAMES, &process.name))
+        let verdict = self.processes.get(&foreground).map(|process| {
+            (process.name.clone(), self.verdict(process, fullscreen, config))
         });
-        if !candidate {
+        let Some((name, verdict)) = verdict else {
+            self.candidate = None;
+            return;
+        };
+        if self.front != Some((foreground, fullscreen, verdict.is_ok())) {
+            self.front = Some((foreground, fullscreen, verdict.is_ok()));
+            let window = if fullscreen { "fullscreen" } else { "window" };
+            self.note(&match verdict {
+                Ok(why) => format!("front: {name} ({foreground}), {window}: game, {why}"),
+                Err(why) => format!("front: {name} ({foreground}), {window}: not a game, {why}"),
+            });
+        }
+        if verdict.is_err() {
             self.candidate = None;
             return;
         }
@@ -601,21 +748,40 @@ impl Governor {
             services: Vec::new(),
             wifi: Vec::new(),
         };
-        if config.priority
-            && let Some(handle) = handle
-        {
-            unsafe {
-                if GetPriorityClass(handle) == NORMAL_PRIORITY_CLASS.0 {
-                    game.raised = SetPriorityClass(handle, HIGH_PRIORITY_CLASS).is_ok();
+        self.note(&format!("game: {} ({pid}) {image}", game.name));
+        let mut blocked = false;
+        if config.priority {
+            match handle {
+                Some(handle) => unsafe {
+                    if GetPriorityClass(handle) == NORMAL_PRIORITY_CLASS.0 {
+                        game.raised = SetPriorityClass(handle, HIGH_PRIORITY_CLASS).is_ok();
+                        blocked = !game.raised;
+                        self.note(if game.raised { "  priority: high" } else { "  priority: refused by the game" });
+                    } else {
+                        self.note("  priority: left as the game set it");
+                    }
+                    let gpu = D3DKMTSetProcessSchedulingPriorityClass(handle, D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH);
+                    self.note(if gpu.is_ok() { "  GPU priority: high" } else { "  GPU priority: refused" });
+                },
+                None => {
+                    blocked = true;
+                    self.note("  priority: the game can't be opened, likely its anti-cheat");
                 }
-                let _ = D3DKMTSetProcessSchedulingPriorityClass(handle, D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH);
             }
         }
         if config.cores
             && let Some(cores) = &capabilities.cores
-            && let Some(handle) = handle
         {
-            game.cores = pin(pid, handle, Some(&cores.ids));
+            match handle {
+                Some(handle) => {
+                    game.cores = pin(pid, handle, Some(&cores.ids));
+                    self.note(if game.cores { "  cores: kept on the fast ones" } else { "  cores: refused" });
+                }
+                None => {
+                    blocked = true;
+                    self.note("  cores: the game can't be opened");
+                }
+            }
         }
         // Written down before each change, so a crash in the middle still leaves the way
         // back; without a record that can be saved, the change isn't made at all.
@@ -640,15 +806,23 @@ impl Governor {
                 }
             }
         }
+        if config.services {
+            self.note(&format!("  services paused: {}", if game.services.is_empty() { "none".into() } else { game.services.join(", ") }));
+        }
+        if config.wifi && !game.wifi.is_empty() {
+            self.note(&format!("  Wi-Fi scans off on {} adapter(s)", game.wifi.len()));
+        }
         if config.gpu && capabilities.hybrid_gpu {
             prefer_dedicated_gpu(&image);
+            self.note("  dedicated GPU preferred");
         }
         self.last = Some(LastGame {
             name: game.name.clone(),
             started: Local::now(),
             ended: None,
-            priority: config.priority,
+            priority: game.raised,
             cores: game.cores,
+            blocked,
             services: game.services.len(),
             wifi: !game.wifi.is_empty(),
             efficient: 0,
@@ -700,7 +874,7 @@ impl Governor {
                     }
                     _ => {
                         self.eco_skip.insert(pid);
-                        if !self.restrained.contains(&pid) {
+                        if !self.restrained.contains_key(&pid) {
                             process.close();
                         }
                     }
@@ -736,6 +910,7 @@ impl Governor {
         if let Some(last) = &mut self.last {
             last.ended = Some(Local::now());
         }
+        self.note(&format!("game over: {}, everything put back", game.name));
         // Still running: the handle opened when it started is still held.
         if let Some(handle) =
             self.processes.get(&game.pid).filter(|p| p.created == game.created).and_then(|p| p.handle)
@@ -752,6 +927,18 @@ impl Governor {
         }
         put_back(&game.services, &game.wifi);
     }
+}
+
+/// Exe paths of the games Game Bar recognized, lowercased. Windows keeps them per user
+/// and they count as games even in a window.
+fn known_games() -> HashSet<String> {
+    const STORE: &str = r"System\GameConfigStore\Children";
+    reg::subkeys(HKEY_CURRENT_USER, STORE)
+        .iter()
+        .filter_map(|child| reg::get_string(HKEY_CURRENT_USER, &format!(r"{STORE}\{child}"), "MatchedExeFullPath").ok().flatten())
+        .filter(|path| !path.is_empty())
+        .map(|path| path.to_lowercase())
+        .collect()
 }
 
 fn listed(list: &[impl AsRef<str>], name: &str) -> bool {
@@ -1219,12 +1406,7 @@ mod tests {
     }
 
     fn governor() -> Governor {
-        Governor {
-            me: std::process::id(),
-            session: session_of(std::process::id()),
-            windows: format!("{}\\", std::env::var("SystemRoot").unwrap().to_lowercase()),
-            ..Default::default()
-        }
+        Governor::new()
     }
 
     fn eco_of(pid: u32) -> Option<bool> {
@@ -1251,6 +1433,10 @@ mod tests {
     #[test]
     #[ignore]
     fn probalance_round_trip() {
+        let scratch = std::env::temp_dir().join("vantix-probalance-test");
+        std::fs::create_dir_all(scratch.join("Vantix")).unwrap();
+        // Keeps game-mode.log out of the real data folder.
+        unsafe { std::env::set_var("APPDATA", &scratch) };
         let threads = std::thread::available_parallelism().unwrap().get().saturating_sub(1).max(2);
         let hog = powershell(&format!(
             "1..{threads} | % {{ $r = [runspacefactory]::CreateRunspace(); $r.Open(); \
@@ -1263,7 +1449,7 @@ mod tests {
         let mut held = false;
         for _ in 0..15 {
             governor.tick(&on, &Capabilities::default());
-            if governor.restrained.contains(&pid) {
+            if governor.restrained.contains_key(&pid) {
                 held = true;
                 break;
             }
@@ -1443,6 +1629,82 @@ mod tests {
         assert!(governor.game.is_none(), "still boosting after marking it not a game");
         assert!(governor.last.as_ref().unwrap().ended.is_some());
         println!("{name}: never skipped, always taken in a window, marked not a game and let go");
+    }
+
+    /// A copy of cmd.exe outside the Windows folder stands in for a game Windows knows:
+    /// taken in a window, and when it can't be opened the boosts that need a handle are
+    /// reported as blocked instead of claimed:
+    /// `cargo test known_game_in_a_window -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn known_game_in_a_window() {
+        let scratch = std::env::temp_dir().join("vantix-known-test");
+        std::fs::create_dir_all(scratch.join("Vantix")).unwrap();
+        unsafe { std::env::set_var("APPDATA", &scratch) };
+        let exe = scratch.join("knowngame.exe");
+        std::fs::copy(crate::tweaks::system_tool("cmd.exe"), &exe).unwrap();
+        let fake = Spawned(
+            Command::new(&exe)
+                .args(["/c", "ping -n 60 127.0.0.1 >nul"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .unwrap(),
+        );
+        let pid = fake.0.id();
+        let mut governor = governor();
+        governor.sample();
+        let off = GameMode {
+            enabled: true,
+            priority: true,
+            cores: false,
+            eco: false,
+            services: false,
+            standby: false,
+            wifi: false,
+            gpu: false,
+        };
+        let config = Config { game: off, ..Default::default() };
+        governor.known_at = Some(0);
+        for _ in 0..GAME_TICKS {
+            governor.detect_game(pid, &config, &Capabilities::default());
+        }
+        assert!(governor.game.is_none(), "taken in a window without being known");
+
+        governor.known = HashSet::from([exe.to_string_lossy().to_lowercase()]);
+        // As an anti-cheat would: the handle is refused.
+        governor.processes.get_mut(&pid).unwrap().denied = true;
+        for _ in 0..GAME_TICKS {
+            governor.detect_game(pid, &config, &Capabilities::default());
+        }
+        assert_eq!(governor.game.as_ref().map(|game| game.pid), Some(pid), "known game not taken");
+        let last = governor.last.clone().unwrap();
+        assert!(last.blocked && !last.priority, "blocked priority reported as done");
+        assert_eq!(priority(pid), NORMAL_PRIORITY_CLASS.0);
+        governor.end_game();
+        drop(fake);
+        let log = std::fs::read_to_string(scratch.join("Vantix").join("game-mode.log")).unwrap();
+        assert!(log.contains("not a game, in a window") && log.contains("game, known to Windows"));
+        assert!(log.contains("can't be opened"));
+        println!("{log}");
+    }
+
+    #[test]
+    fn probalance_limits_in_a_game() {
+        let mut governor = Governor { threads: 16.0, ..Default::default() };
+        assert_eq!(governor.limits(), (BUSY, HOG));
+        governor.game = Some(Game {
+            pid: 1,
+            created: 0,
+            name: String::new(),
+            folder: String::new(),
+            raised: false,
+            cores: false,
+            services: Vec::new(),
+            wifi: Vec::new(),
+        });
+        assert_eq!(governor.limits(), (BUSY_IN_GAME, 1.0 / 16.0));
+        governor.threads = 4.0;
+        assert_eq!(governor.limits(), (BUSY_IN_GAME, HOG));
     }
 
     #[test]
