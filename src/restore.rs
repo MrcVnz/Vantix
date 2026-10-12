@@ -158,18 +158,23 @@ fn set_point(description: &str) -> Result<u32> {
 }
 
 fn connect() -> Result<IWbemServices> {
+    wmi(r"ROOT\DEFAULT")
+}
+
+/// A WMI connection to `namespace`, ready for calls that need impersonation.
+pub(crate) fn wmi(namespace: &str) -> Result<IWbemServices> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let locator: IWbemLocator = CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER)?;
         let none = BSTR::new();
-        let wmi = locator.ConnectServer(&BSTR::from(r"ROOT\DEFAULT"), &none, &none, &none, 0, &none, None)?;
+        let wmi = locator.ConnectServer(&BSTR::from(namespace), &none, &none, &none, 0, &none, None)?;
         impersonate(&wmi)?;
         Ok(wmi)
     }
 }
 
 /// WMI refuses System Restore calls (WBEM_E_ACCESS_DENIED) unless the proxy impersonates.
-fn impersonate(proxy: impl Param<IUnknown>) -> Result<()> {
+pub(crate) fn impersonate(proxy: impl Param<IUnknown>) -> Result<()> {
     unsafe {
         CoSetProxyBlanket(
             proxy,
@@ -202,7 +207,7 @@ fn get_u32(object: &IWbemClassObject, name: &str) -> Option<u32> {
     read(object, name, |inner| (inner.vt == VT_I4).then_some(unsafe { inner.Anonymous.lVal } as u32))
 }
 
-fn read<T>(
+pub(crate) fn read<T>(
     object: &IWbemClassObject,
     name: &str,
     f: impl FnOnce(&windows::Win32::System::Variant::VARIANT_0_0) -> Option<T>,

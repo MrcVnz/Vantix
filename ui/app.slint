@@ -12,10 +12,11 @@ import { Monitor, MonitorPage, ProgramRow, Feature, GpuCard } from "monitor.slin
 import { Services, ServicesPage, ServiceRow } from "services.slint";
 import { Space, SpacePage, SpaceRow } from "space.slint";
 import { Dupes, DupesPage, DupRow } from "dupes.slint";
+import { Input, InputPage, InputDevice } from "input.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Feature, GpuCard, Services, ServiceRow, Space, SpaceRow, Dupes, DupRow, Theme }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Feature, GpuCard, Services, ServiceRow, Space, SpaceRow, Dupes, DupRow, Input, InputDevice, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -478,12 +479,9 @@ export component AppWindow inherits Window {
                 }
                 if root.page == 6: s6 := PageScroll {
                     needs: p6.min-height;
-                    p6 := SectionPage {
+                    p6 := InputPage {
                         width: s6.visible-width;
                         height: s6.content-height;
-                        title: @tr("Input");
-                        subtitle: @tr("Mouse and keyboard behavior that gets in the way during games.");
-                        rows: Tweaks.input;
                     }
                 }
                 if root.page == 7: s7 := PageScroll {

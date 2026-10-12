@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Deserialize;
-use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::Foundation::{CloseHandle, ERROR_SERVICE_ALREADY_RUNNING, ERROR_SERVICE_NOT_ACTIVE};
 use windows::Win32::Security::Cryptography::Catalog::{
     CATALOG_INFO, CryptCATAdminAcquireContext2, CryptCATAdminCalcHashFromFileHandle2,
     CryptCATAdminEnumCatalogFromHash, CryptCATAdminReleaseCatalogContext, CryptCATAdminReleaseContext,
@@ -30,12 +30,13 @@ use windows::Win32::Security::Cryptography::{
 };
 use windows::Win32::System::Services::{
     ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle, ControlService,
-    ENUM_SERVICE_STATUS_PROCESSW, ENUM_SERVICE_TYPE, EnumServicesStatusExW, OpenSCManagerW, OpenServiceW,
+    ENUM_SERVICE_STATUS_PROCESSW, ENUM_SERVICE_STATUSW, ENUM_SERVICE_TYPE, EnumDependentServicesW,
+    EnumServicesStatusExW, OpenSCManagerW, OpenServiceW,
     QUERY_SERVICE_CONFIGW, QueryServiceConfig2W, QueryServiceConfigW, QueryServiceStatusEx, SC_ENUM_PROCESS_INFO,
     SC_HANDLE, SC_MANAGER_CONNECT, SC_MANAGER_ENUMERATE_SERVICE, SC_STATUS_PROCESS_INFO, SERVICE_AUTO_START,
     SERVICE_BOOT_START, SERVICE_CHANGE_CONFIG, SERVICE_CONFIG, SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
     SERVICE_CONFIG_DESCRIPTION, SERVICE_CONFIG_FAILURE_ACTIONS, SERVICE_CONFIG_TRIGGER_INFO,
-    SERVICE_CONTROL_STOP, SERVICE_FAILURE_ACTIONSW,
+    SERVICE_ACTIVE, SERVICE_CONTROL_STOP, SERVICE_ENUMERATE_DEPENDENTS, SERVICE_FAILURE_ACTIONSW,
     SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DEMAND_START, SERVICE_DESCRIPTIONW, SERVICE_DISABLED,
     SERVICE_DRIVER, SERVICE_ERROR, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_START,
     SERVICE_STATE_ALL, SERVICE_STATUS, SERVICE_STATUS_PROCESS, SERVICE_STOP,
@@ -398,29 +399,44 @@ pub fn set_start(name: &str, start: Start) -> Result<Start> {
 
 /// Starts or stops a service now and waits for it to get there. Gives back the state it
 /// really ended in, which isn't always the one asked for: plenty of services are set to
-/// start themselves again, and come back within the second.
+/// start themselves again, and come back within the second. Stopping one stops the
+/// services that need it first, since Windows refuses to stop it while they run.
 pub fn run(name: &str, on: bool) -> Result<bool> {
     // Starting one again is harmless; stopping the ones Windows needs is not.
     if !on && blocked(name).is_some() {
         return Err(Error::from(windows::Win32::Foundation::E_ACCESSDENIED));
     }
+    if !on {
+        let needing = dependents(name)?;
+        if needing.iter().any(|other| blocked(other).is_some()) {
+            return Err(Error::from(windows::Win32::Foundation::E_ACCESSDENIED));
+        }
+        for other in &needing {
+            with_service(other, SERVICE_STOP | SERVICE_QUERY_STATUS, |handle| unsafe {
+                let mut status = SERVICE_STATUS::default();
+                // One that stopped on its own meanwhile is fine.
+                let _ = ControlService(handle, SERVICE_CONTROL_STOP, &mut status);
+                settle(handle, false);
+                Ok(())
+            })?;
+        }
+    }
     let access = if on { SERVICE_START | SERVICE_QUERY_STATUS } else { SERVICE_STOP | SERVICE_QUERY_STATUS };
     with_service(name, access, |handle| unsafe {
         if on {
-            StartServiceW(handle, None)?;
+            match StartServiceW(handle, None) {
+                Err(error) if error.code() == ERROR_SERVICE_ALREADY_RUNNING.to_hresult() => return Ok(true),
+                result => result?,
+            }
         } else {
             let mut status = SERVICE_STATUS::default();
-            ControlService(handle, SERVICE_CONTROL_STOP, &mut status)?;
-        }
-        // Up to ten seconds: a service that stops slowly is still doing it.
-        let mut state = !on;
-        for _ in 0..50 {
-            std::thread::sleep(Duration::from_millis(200));
-            state = running(handle).unwrap_or(!on);
-            if state == on {
-                break;
+            match ControlService(handle, SERVICE_CONTROL_STOP, &mut status) {
+                // Already stopped, by the services that needed it or on its own.
+                Err(error) if error.code() == ERROR_SERVICE_NOT_ACTIVE.to_hresult() => return Ok(false),
+                result => result?,
             }
         }
+        let mut state = settle(handle, on);
         // It got where it was asked to go; a service that starts itself again may have
         // come back already, and the row has to say so.
         if state == on {
@@ -428,6 +444,44 @@ pub fn run(name: &str, on: bool) -> Result<bool> {
             state = running(handle).unwrap_or(state);
         }
         Ok(state)
+    })
+}
+
+/// Waits up to ten seconds for a service to be running or stopped: one that stops slowly
+/// is still doing it. Gives back where it is.
+fn settle(handle: SC_HANDLE, on: bool) -> bool {
+    let mut state = !on;
+    for _ in 0..50 {
+        std::thread::sleep(Duration::from_millis(200));
+        state = running(handle).unwrap_or(!on);
+        if state == on {
+            break;
+        }
+    }
+    state
+}
+
+/// The running services that need this one, in the order they can be stopped: Windows
+/// lists the ones furthest down the chain first.
+fn dependents(name: &str) -> Result<Vec<String>> {
+    with_service(name, SERVICE_ENUMERATE_DEPENDENTS, |handle| unsafe {
+        let (mut needed, mut count) = (0u32, 0u32);
+        if EnumDependentServicesW(handle, SERVICE_ACTIVE, None, 0, &mut needed, &mut count).is_ok() {
+            return Ok(Vec::new());
+        }
+        // Aligned for the struct, which a Vec<u8> wouldn't be.
+        let mut buffer: Vec<u64> = vec![0; needed as usize / 8 + 1];
+        EnumDependentServicesW(
+            handle,
+            SERVICE_ACTIVE,
+            Some(buffer.as_mut_ptr().cast()),
+            (buffer.len() * 8) as u32,
+            &mut needed,
+            &mut count,
+        )?;
+        let items = buffer.as_ptr().cast::<ENUM_SERVICE_STATUSW>();
+        let items = std::slice::from_raw_parts(items, count as usize);
+        Ok(items.iter().map(|item| text(item.lpServiceName)).filter(|n| !n.is_empty()).collect())
     })
 }
 
@@ -938,7 +992,7 @@ const ESSENTIAL: [&str; 22] = [
     "systemeventsbroker",
     "coremessagingregistrar",
     "usermanager",
-    "statrepository",
+    "staterepository",
 ];
 
 /// Anti-cheat, which is never touched: a game can refuse to start, or ban the account,
@@ -1086,6 +1140,29 @@ mod tests {
         // the call refuses what it should.
         assert!(run("VantixServiceThatIsntThere", true).is_err());
         assert!(sc(&["delete", NAME]).status.success(), "the test service is still there");
+    }
+
+    /// Stops a real pair for a few seconds and starts both again: the Network Connection
+    /// Broker, which the Connected Devices Platform needs. Windows refuses the stop while
+    /// the dependent runs, so this is what checks that run() stops it first.
+    /// `cargo test stop_with_dependents -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn stop_with_dependents() {
+        let needing = dependents("NcbService").expect("can't read the dependents");
+        if !needing.iter().any(|name| name.eq_ignore_ascii_case("CDPSvc")) {
+            println!("CDPSvc isn't running here, nothing to check: {needing:?}");
+            return;
+        }
+        // Windows refuses with "dependent services running" unless run() stops CDPSvc first.
+        // Something may start NcbService again within the second; that's the Ok(true)
+        // the Monitor row reports as "Windows started it again", not a failure.
+        let stopped = run("NcbService", false).expect("stopping failed");
+        println!("NcbService {}", if stopped { "came back by itself" } else { "stopped" });
+        assert!(run("NcbService", true).expect("starting NcbService again failed"));
+        assert!(run("CDPSvc", true).expect("starting CDPSvc again failed"));
+        // Already stopped counts as stopped, not as an error.
+        assert_eq!(run("PrintNotify", false).ok(), Some(false));
     }
 
     /// `cargo test services_list -- --ignored --nocapture`

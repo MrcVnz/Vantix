@@ -577,9 +577,10 @@ pub enum EndOutcome {
     /// Windows protects the process: antivirus and anti-cheat run this way, and so does
     /// anything whose end would take the PC down with it.
     Protected,
-    /// A service owns it, so the service manager starts it again. Holds the service's
-    /// display name.
-    Service(String),
+    /// A service owns it, so the service manager starts it again. Holds the display name
+    /// of the first service and the names of every service in the process, which is what
+    /// Stop service needs.
+    Service { display: String, names: Vec<String> },
     /// Something started it again, by the name of the process that did.
     Reopened(String),
     /// Part of Windows, which Vantix never ends.
@@ -621,8 +622,10 @@ pub fn end(name: &str) -> EndOutcome {
     if protected {
         return EndOutcome::Protected;
     }
-    if let Some(service) = service_names().into_iter().find(|(pid, _)| left.iter().any(|p| p.pid == *pid)) {
-        return EndOutcome::Service(service.1);
+    let owner = service_names().into_iter().find(|(pid, _)| left.iter().any(|p| p.pid == *pid));
+    if let Some((_, services)) = owner {
+        let display = services[0].1.clone();
+        return EndOutcome::Service { display, names: services.into_iter().map(|(name, _)| name).collect() };
     }
     let parent = left.iter().find_map(|process| {
         list.iter().find(|other| other.pid == process.parent && !other.name.eq_ignore_ascii_case(name))
@@ -681,9 +684,9 @@ fn protected(pid: u32) -> bool {
     read && level.ProtectionLevel != PROTECTION_LEVEL_NONE
 }
 
-/// Process id and display name of every service that's running. Several services share
-/// one svchost, and the first name is as good as any for saying who owns the process.
-fn service_names() -> HashMap<u32, String> {
+/// The services in each process that runs one, as (name, display name). Several can share
+/// a process, and the first display name is as good as any for saying who owns it.
+fn service_names() -> HashMap<u32, Vec<(String, String)>> {
     let mut map = HashMap::new();
     unsafe {
         let Ok(manager) = OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE) else { return map };
@@ -724,12 +727,13 @@ fn service_names() -> HashMap<u32, String> {
                 let text = |value: PWSTR| {
                     if value.is_null() { String::new() } else { value.to_string().unwrap_or_default() }
                 };
-                let name = match text(item.lpDisplayName) {
+                let name = text(item.lpServiceName);
+                let display = match text(item.lpDisplayName) {
                     display if !display.is_empty() => display,
-                    _ => text(item.lpServiceName),
+                    _ => name.clone(),
                 };
                 if pid != 0 && !name.is_empty() {
-                    map.entry(pid).or_insert(name);
+                    map.entry(pid).or_default().push((name, display));
                 }
             }
         }

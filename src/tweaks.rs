@@ -23,7 +23,7 @@ use windows::Win32::System::Ioctl::{
 use windows::Win32::System::SystemInformation::{GetSystemDirectoryW, GetTickCount64, GetWindowsDirectoryW};
 use windows::core::{BOOL, Error, HSTRING, Result};
 
-use crate::{boost, net, reg};
+use crate::{boost, input, net, reg};
 
 /// From WinBase.h; the windows crate only has it behind an unrelated feature.
 const DRIVE_FIXED: u32 = 3;
@@ -935,6 +935,40 @@ pub const CATALOG: &[Tweak] = &[
             apply: net::enable_doh,
             revert: net::restore_doh,
             reset: net::reset_doh,
+        },
+    },
+    Tweak {
+        id: input::POWER_TWEAK,
+        section: Section::Input,
+        gain: Level::Low,
+        cost: Level::Low,
+        reboot: false,
+        shown: input::shows_power,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Toggle {
+            read: input::power_off,
+            apply: input::disable_power,
+            revert: input::restore_power,
+            reset: input::reset_power,
+        },
+    },
+    Tweak {
+        id: boost::FILTER_DELAY_TWEAK,
+        section: Section::Input,
+        gain: Level::Medium,
+        cost: Level::None,
+        reboot: false,
+        shown: boost::shows_filter_delay,
+        estimate: none,
+        slow: false,
+        on_plan: false,
+        kind: Kind::Toggle {
+            read: boost::filter_delay_off,
+            apply: boost::disable_filter_delay,
+            revert: boost::restore_filter_delay,
+            reset: boost::reset_filter_delay,
         },
     },
 ];

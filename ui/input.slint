@@ -1,0 +1,426 @@
+import { Theme, Icons, Icon, Card, Button, Chip, Segmented } from "theme.slint";
+import { Sparkline } from "memory.slint";
+import { Tweaks, TweakColumn } from "tweaks.slint";
+
+/// A keyboard or mouse as the inspector found it.
+export struct InputDevice {
+    name: string,
+    mouse: bool,
+    /// 0 USB, 1 Bluetooth, 2 PS/2.
+    link: int,
+    /// 0 low, 1 full, 2 high, 3 super speed, -1 unknown.
+    speed: int,
+    hubs: int,
+    receiver: bool,
+    /// Who made the USB controller, empty when there's none.
+    controller: string,
+    add-on: bool,
+    /// -1 unknown, 0 line-based interrupts, 1 MSI.
+    msi: int,
+    /// 0 nothing Windows can turn off, 1 allowed to, 2 not allowed.
+    power: int,
+}
+
+export global Input {
+    in-out property <int> tab;
+    in property <[InputDevice]> devices;
+    in property <bool> reading;
+    /// Slow Keys or Bounce Keys is set.
+    in property <bool> filter-delay;
+    /// Catalog indexes of the two tweaks the cards can start.
+    in property <int> power-tweak: -1;
+    in property <int> filter-tweak: -1;
+    in property <bool> power-offered;
+
+    in property <bool> running;
+    /// Vantix is in front, so the meter counts.
+    in property <bool> in-front: true;
+    in property <string> mouse-name;
+    in property <bool> moving;
+    in property <string> rate;
+    in property <string> peak;
+    in property <string> jitter;
+    in property <string> missed;
+    in property <bool> missed-high;
+    in property <string> rate-line;
+    in property <string> rate-area;
+    in property <string> keyboard-name;
+    in property <int> held;
+    in property <int> most;
+    in property <int> presses;
+    in property <string> chatter;
+
+    callback refresh();
+    callback start();
+    callback stop();
+}
+
+component Fact inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <color> tint: Theme.muted;
+
+    spacing: 8px;
+    Text {
+        width: 120px;
+        text: root.label;
+        color: Theme.faint;
+        font-size: 12.5px;
+    }
+    Text {
+        text: root.value;
+        color: root.tint;
+        font-size: 12.5px;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+}
+
+/// A line of advice under a device, in the warning color.
+component Advice inherits HorizontalLayout {
+    in property <string> text;
+    in property <length> room;
+
+    spacing: 8px;
+    VerticalLayout {
+        padding-top: 2px;
+        alignment: start;
+        Icon {
+            data: Icons.alert;
+            tint: Theme.warn;
+            size: 14px;
+        }
+    }
+    Text {
+        width: root.room - 22px;
+        text: root.text;
+        color: Theme.text;
+        font-size: 12.5px;
+        wrap: word-wrap;
+    }
+}
+
+component DeviceCard inherits Card {
+    in property <InputDevice> item;
+    property <bool> usb: root.item.link == 0;
+    property <length> room: self.width - 2 * self.pad;
+
+    pad: 18px;
+
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                data: root.item.mouse ? Icons.mouse : Icons.keyboard;
+                tint: Theme.muted;
+                size: 18px;
+            }
+        }
+        Text {
+            text: root.item.name != "" ? root.item.name : root.item.mouse ? @tr("Mouse") : @tr("Keyboard");
+            color: Theme.text;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        VerticalLayout {
+            alignment: center;
+            Chip { text: root.item.mouse ? @tr("Mouse") : @tr("Keyboard"); }
+        }
+        if root.item.receiver: VerticalLayout {
+            alignment: center;
+            Chip { text: @tr("Wireless receiver"); tint: Theme.info; }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 6px;
+        Fact {
+            label: @tr("Connection");
+            value: root.item.link == 1 ? @tr("Bluetooth")
+                : root.item.link == 2 ? @tr("PS/2")
+                : root.item.speed == 0 ? @tr("USB Low Speed")
+                : root.item.speed == 1 ? @tr("USB Full Speed")
+                : root.item.speed == 2 ? @tr("USB High Speed")
+                : root.item.speed == 3 ? @tr("USB SuperSpeed")
+                : @tr("USB");
+        }
+        if root.usb && root.item.speed >= 0: Fact {
+            label: @tr("Polling limit");
+            value: root.item.speed == 0 ? @tr("Up to 125 Hz from the port")
+                : root.item.speed == 1 ? @tr("Up to 1000 Hz from the port")
+                : @tr("Up to 8000 Hz from the port");
+        }
+        if root.usb: Fact {
+            label: @tr("Path");
+            value: root.item.hubs == 0 ? @tr("Straight into the controller's port")
+                : root.item.hubs == 1 ? @tr("Through a USB hub")
+                : @tr("Through {} USB hubs", root.item.hubs);
+            tint: root.item.hubs == 0 ? Theme.muted : Theme.warn;
+        }
+        if root.item.controller != "": Fact {
+            label: @tr("Controller");
+            value: (root.item.add-on ? @tr("{}, an add-on chip", root.item.controller) : @tr("{}, the CPU's or the chipset's", root.item.controller))
+                + (root.item.msi == 1 ? @tr(" · MSI interrupts") : root.item.msi == 0 ? @tr(" · line-based interrupts") : "");
+        }
+        if root.item.power > 0: Fact {
+            label: @tr("Power saving");
+            value: root.item.power == 1 ? @tr("Windows may turn it off when idle") : @tr("Off");
+            tint: root.item.power == 1 ? Theme.warn : Theme.accent;
+        }
+    }
+
+    if root.item.hubs > 0 || root.item.link == 1 || root.item.receiver || root.item.power == 1: VerticalLayout {
+        spacing: 8px;
+        if root.usb && root.item.hubs > 0 && !root.item.receiver: Advice {
+            room: root.room;
+            text: @tr("Plug it straight into a port on the back of the motherboard. A hub in a monitor, a dock or a front panel shares its time with whatever else is on it.");
+        }
+        if root.item.link == 1: Advice {
+            room: root.room;
+            text: @tr("Bluetooth sends about 125 reports a second, later than a cable or a 2.4 GHz receiver. For games, use the cable, or the receiver if it came with one.");
+        }
+        if root.item.receiver: Advice {
+            room: root.room;
+            text: @tr("Keep the receiver close to the device and in its line of sight: on the desk with the extension cable it came with, not behind the PC.");
+        }
+        if root.item.power == 1: HorizontalLayout {
+            spacing: 12px;
+            Advice {
+                room: root.room - (Input.power-offered ? 236px : 0px);
+                text: @tr("After a pause, the first key or movement can be lost while Windows wakes it up.");
+            }
+            if Input.power-offered: VerticalLayout {
+                alignment: center;
+                Button {
+                    width: 224px;
+                    text: @tr("Don't let Windows turn it off");
+                    tall: 32px;
+                    enabled: !Tweaks.busy;
+                    clicked => { Tweaks.activate(Input.power-tweak); }
+                }
+            }
+        }
+    }
+}
+
+component DevicesTab inherits VerticalLayout {
+    spacing: 12px;
+
+    init => { Input.refresh(); }
+
+    if Input.filter-delay: Card {
+        pad: 18px;
+        HorizontalLayout {
+            spacing: 12px;
+            Advice {
+                room: parent.width - 172px;
+                text: @tr("Slow Keys or Bounce Keys is on: Windows ignores a key until it's held for a while, or when it's pressed again soon after. In games that means late or lost presses.");
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    width: 160px;
+                    text: @tr("Turn them off");
+                    tall: 32px;
+                    enabled: !Tweaks.busy && Input.filter-tweak >= 0;
+                    clicked => { Tweaks.activate(Input.filter-tweak); }
+                }
+            }
+        }
+    }
+
+    for device in Input.devices: DeviceCard { item: device; }
+
+    if Input.devices.length == 0: Card {
+        Text {
+            text: Input.reading ? @tr("Looking at the devices...") : @tr("No USB, Bluetooth or PS/2 keyboard or mouse found.");
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    Text {
+        text: @tr("Polling rate, debounce and rapid trigger are set in the device or its maker's app; Windows can't change them. This shows what the PC's side allows.");
+        color: Theme.faint;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    Rectangle { vertical-stretch: 1; }
+}
+
+component Big inherits Text {
+    color: Theme.text;
+    font-family: Theme.display-font;
+    font-size: 34px;
+    font-weight: 700;
+}
+
+component MouseCard inherits Card {
+    title: @tr("Mouse");
+    icon: Icons.mouse;
+    pad: 18px;
+
+    VerticalLayout {
+        spacing: 2px;
+        Big { text: Input.rate != "" ? Input.rate : "-"; }
+        Text {
+            text: !Input.running ? @tr("Start, then move the mouse fast in circles.")
+                : !Input.in-front ? @tr("Paused while another window is in front.")
+                : Input.moving ? Input.mouse-name
+                : @tr("Move the mouse fast in circles.");
+            color: Input.running && !Input.in-front ? Theme.warn : Theme.muted;
+            font-size: 12.5px;
+            overflow: elide;
+        }
+    }
+    Sparkline {
+        height: 56px;
+        line: Input.rate-line;
+        area: Input.rate-area;
+        tint: Theme.accent;
+    }
+    VerticalLayout {
+        spacing: 6px;
+        Fact { label: @tr("Highest"); value: Input.peak != "" ? Input.peak : "-"; }
+        Fact { label: @tr("Jitter"); value: Input.jitter != "" ? Input.jitter : "-"; }
+        Fact {
+            label: @tr("Missed polls");
+            value: Input.missed != "" ? Input.missed : "-";
+            tint: Input.missed-high ? Theme.warn : Theme.muted;
+        }
+    }
+}
+
+component KeyboardCard inherits Card {
+    title: @tr("Keyboard");
+    icon: Icons.keyboard;
+    pad: 18px;
+
+    VerticalLayout {
+        spacing: 2px;
+        Big { text: Input.most > 0 ? @tr("{} keys", Input.most) : "-"; }
+        Text {
+            text: !Input.running ? @tr("Start, then hold down as many keys as you can at once.")
+                : !Input.in-front ? @tr("Paused while another window is in front.")
+                : Input.keyboard-name != "" ? Input.keyboard-name
+                : @tr("Hold down as many keys as you can at once.");
+            color: Input.running && !Input.in-front ? Theme.warn : Theme.muted;
+            font-size: 12.5px;
+            overflow: elide;
+        }
+    }
+    Rectangle {
+        height: 56px;
+        border-radius: 8px;
+        background: Theme.background;
+        HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            for i in 10: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 5px;
+                    background: i < Input.held ? Theme.accent : Theme.raised;
+                    border-width: 1px;
+                    border-color: i < Input.held ? Theme.accent : Theme.border-strong;
+                }
+            }
+        }
+    }
+    VerticalLayout {
+        spacing: 6px;
+        Fact { label: @tr("Held now"); value: Input.held; }
+        Fact { label: @tr("Presses"); value: Input.presses; }
+        Fact {
+            label: @tr("Chatter");
+            value: Input.chatter != "" ? Input.chatter : Input.presses > 0 ? @tr("None so far") : "-";
+            tint: Input.chatter != "" ? Theme.warn : Theme.muted;
+        }
+    }
+}
+
+component TestTab inherits VerticalLayout {
+    spacing: 12px;
+
+    HorizontalLayout {
+        spacing: 12px;
+        vertical-stretch: 0;
+        KeyboardCard { width: (parent.width - 12px) * 0.58; }
+        MouseCard { width: (parent.width - 12px) * 0.42; }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        Text {
+            horizontal-stretch: 1;
+            text: @tr("Chatter is a key that registers twice for one press, within 40 ms. Counts only while Vantix is in front: Windows 11 slows input to background windows down to about 125 Hz.");
+            color: Theme.faint;
+            font-size: 12px;
+            wrap: word-wrap;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                width: 140px;
+                text: Input.running ? @tr("Stop") : @tr("Start");
+                primary: !Input.running;
+                tall: 36px;
+                clicked => {
+                    if Input.running {
+                        Input.stop();
+                    } else {
+                        Input.start();
+                    }
+                }
+            }
+        }
+    }
+    Rectangle { vertical-stretch: 1; }
+}
+
+export component InputPage inherits VerticalLayout {
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: @tr("Input");
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 28px;
+                font-weight: 700;
+            }
+            Text {
+                text: @tr("How the keyboard and mouse reach the PC, and what adds delay in games.");
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Segmented {
+                width: 300px;
+                options: [@tr("Devices"), @tr("Test"), @tr("Tweaks")];
+                selected <=> Input.tab;
+            }
+        }
+    }
+
+    if Input.tab == 0: DevicesTab { vertical-stretch: 1; }
+    if Input.tab == 1: TestTab { vertical-stretch: 1; }
+    if Input.tab == 2: VerticalLayout {
+        TweakColumn { rows: Tweaks.input; }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

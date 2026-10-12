@@ -5,6 +5,7 @@ mod disk;
 mod dupes;
 mod etw;
 mod governor;
+mod input;
 mod memory;
 mod monitor;
 mod net;
@@ -106,9 +107,9 @@ struct State {
     opened_without_tray: bool,
     /// The rows on the Monitor page, in screen order, for its buttons.
     programs: Vec<monitor::Program>,
-    /// What the last End came to, for the row it was pressed on to say so for a few
-    /// seconds: the program, the outcome and when it arrived. `None` while it runs.
-    ended: Option<(String, Option<monitor::EndOutcome>, Instant)>,
+    /// What the last End or Stop service came to, for the row it was pressed on to say so
+    /// for a few seconds: the program, the note and when it arrived.
+    ended: Option<(String, RowNote, Instant)>,
     /// The Services page: everything read last time, which rows are on screen after the
     /// filters, and the change waiting for a yes.
     services: Vec<services::Service>,
@@ -133,6 +134,9 @@ struct State {
     dup_rows: Vec<(usize, Option<usize>)>,
     dup_progress: Option<Arc<dupes::Progress>>,
     dup_searched: bool,
+    /// The Input page: a device read is running, and the mouse rate for the meter's chart.
+    input_reading: bool,
+    input_rates: VecDeque<u32>,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -155,6 +159,17 @@ struct TweakTest {
     stage: i32,
     before: Option<net::LoadCheck>,
     after: Option<net::LoadCheck>,
+}
+
+/// The line a Monitor row shows after one of its buttons.
+enum RowNote {
+    Ending,
+    Ended(monitor::EndOutcome),
+    Stopping,
+    Stopped,
+    /// Stopped, and Windows started it again straight away.
+    CameBack,
+    StopFailed,
 }
 
 #[derive(Clone, Copy)]
@@ -186,6 +201,8 @@ struct App {
     window: RefCell<Option<AppWindow>>,
     tray: RefCell<Option<Tray>>,
     ticker: Timer,
+    /// Refreshes the input meter ten times a second while it runs.
+    meter: Timer,
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -250,10 +267,13 @@ fn main() -> Result<(), slint::PlatformError> {
             dup_rows: Vec::new(),
             dup_progress: None,
             dup_searched: false,
+            input_reading: false,
+            input_rates: VecDeque::with_capacity(SPARK_SAMPLES),
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
         ticker: Timer::default(),
+        meter: Timer::default(),
     });
     // Nothing runs and nothing is written until the terms are accepted: the window opens
     // so people see what they're agreeing to, and the terms come up over it.
@@ -418,6 +438,7 @@ impl App {
         Timer::single_shot(Duration::ZERO, move || {
             let Some(app) = app.upgrade() else { return };
             app.window.borrow_mut().take();
+            app.stop_meter();
             app.state.borrow_mut().space = None;
             memory::trim_self();
 
@@ -777,6 +798,7 @@ impl App {
             })
         });
         monitor.on_end(bind_with(self, |app, i: i32| app.end_program(i)));
+        monitor.on_stop_service(bind_with(self, |app, i: i32| app.stop_service(i)));
         monitor.on_eco(bind_with2(self, |app, i: i32, on: bool| {
             app.on_program(i, move |p| {
                 monitor::set_eco(&p.name, &p.pids, on);
@@ -787,6 +809,12 @@ impl App {
                 monitor::trim(&p.name, &p.pids);
             })
         }));
+        let input = ui.global::<Input>();
+        input.on_refresh(bind(self, |app| app.refresh_input()));
+        input.on_start(bind(self, |app| app.start_meter()));
+        input.on_stop(bind(self, |app| app.stop_meter()));
+        input.set_power_tweak(tweak_index(input::POWER_TWEAK));
+        input.set_filter_tweak(tweak_index(boost::FILTER_DELAY_TWEAK));
         let page = ui.global::<Services>();
         page.on_refresh(bind(self, |app| app.refresh_services()));
         page.on_toggled(bind(self, |app| {
@@ -870,6 +898,7 @@ impl App {
         });
         self.tick_internet();
         self.tick_monitor();
+        self.tick_input();
         if let Some(progress) = &self.state.borrow().space_progress {
             let done = progress.load(Ordering::Relaxed) as f32 / 1000.0;
             self.with_ui(|ui| ui.global::<Space>().set_progress(done));
@@ -1546,6 +1575,9 @@ impl App {
                     }
                 }
                 app.with_ui(|ui| app.show_tweaks(ui));
+                if app.with_ui_value(|ui| ui.get_page() == INPUT_PAGE).unwrap_or(false) {
+                    app.refresh_input();
+                }
             },
         );
     }
@@ -1875,7 +1907,12 @@ impl App {
         tweaks.set_internet(ModelRc::new(VecModel::from(section(Section::Internet))));
         tweaks.set_network(ModelRc::new(VecModel::from(section(Section::Network))));
         tweaks.set_testing(state.tweak_test.is_some_and(|test| matches!(test.stage, 1..=3)));
-        tweaks.set_input(ModelRc::new(VecModel::from(section(Section::Input))));
+        let mut input = section(Section::Input);
+        input.sort_by_key(|row| {
+            let id = CATALOG[row.index as usize].id;
+            INPUT_ORDER.iter().position(|&first| first == id).unwrap_or(INPUT_ORDER.len())
+        });
+        tweaks.set_input(ModelRc::new(VecModel::from(input)));
         tweaks.set_storage(ModelRc::new(VecModel::from(section(Section::Storage))));
         tweaks.set_background(ModelRc::new(VecModel::from(section(Section::Background))));
         tweaks.set_pending_count(changes.iter().filter(|c| c.pending).count() as i32);
@@ -2312,6 +2349,110 @@ impl App {
         self.with_ui(|ui| show_monitor(ui, snapshot.as_ref(), &mut state));
     }
 
+    /// Reads the keyboards and mice off the UI thread: a WMI query and a question to each
+    /// USB hub, about a tenth of a second.
+    fn refresh_input(self: &Rc<Self>) {
+        if std::mem::replace(&mut self.state.borrow_mut().input_reading, true) {
+            return;
+        }
+        self.with_ui(|ui| ui.global::<Input>().set_reading(true));
+        self.run_job(
+            || (input::devices(), !boost::filter_delay_off().unwrap_or(true)),
+            |app, result| {
+                app.state.borrow_mut().input_reading = false;
+                let Some((mut devices, delay)) = result else { return };
+                // Keyboards first.
+                devices.sort_by_key(|device| device.mouse);
+                let offered = {
+                    let state = app.state.borrow();
+                    let index = tweak_index(input::POWER_TWEAK);
+                    usize::try_from(index)
+                        .ok()
+                        .and_then(|i| state.tweaks.get(i))
+                        .is_some_and(|info| info.shown && info.on != Some(true))
+                };
+                app.with_ui(|ui| {
+                    let page = ui.global::<Input>();
+                    page.set_reading(false);
+                    page.set_filter_delay(delay);
+                    page.set_power_offered(offered);
+                    let rows: Vec<InputDevice> = devices.iter().map(input_row).collect();
+                    page.set_devices(ModelRc::new(VecModel::from(rows)));
+                });
+            },
+        );
+    }
+
+    fn start_meter(self: &Rc<Self>) {
+        input::start();
+        self.state.borrow_mut().input_rates.clear();
+        self.meter.start(TimerMode::Repeated, Duration::from_millis(100), bind(self, |app| app.tick_meter()));
+        self.with_ui(|ui| {
+            let page = ui.global::<Input>();
+            page.set_running(true);
+            page.set_rate(Default::default());
+            page.set_peak(Default::default());
+            page.set_jitter(Default::default());
+            page.set_missed(Default::default());
+        });
+    }
+
+    fn stop_meter(&self) {
+        if !self.meter.running() {
+            return;
+        }
+        input::stop();
+        self.meter.stop();
+        self.with_ui(|ui| ui.global::<Input>().set_running(false));
+    }
+
+    /// The meter runs only while its tab is on screen.
+    fn tick_input(&self) {
+        let open = self
+            .with_ui_value(|ui| ui.get_page() == INPUT_PAGE && ui.global::<Input>().get_tab() == 1)
+            .unwrap_or(false);
+        if !open {
+            self.stop_meter();
+        }
+    }
+
+    fn tick_meter(&self) {
+        let reading = input::reading();
+        let mut state = self.state.borrow_mut();
+        let mouse = reading.mouse.unwrap_or_default();
+        let peak = mouse.peak.max(125.0);
+        if state.input_rates.len() == SPARK_SAMPLES {
+            state.input_rates.pop_front();
+        }
+        let rate = if mouse.moving { (mouse.rate / peak * 100.0).round() as u32 } else { 0 };
+        state.input_rates.push_back(rate);
+        let (line, area) = spark_paths(state.input_rates.iter().copied());
+        self.with_ui(|ui| {
+            let page = ui.global::<Input>();
+            page.set_in_front(reading.in_front);
+            page.set_moving(mouse.moving);
+            page.set_rate_line(line.into());
+            page.set_rate_area(area.into());
+            // At rest the last numbers stay up, so they can be read.
+            if mouse.moving {
+                page.set_mouse_name(mouse.name.as_str().into());
+                page.set_rate(format!("{:.0} Hz", mouse.rate).into());
+                page.set_peak(format!("{:.0} Hz", mouse.peak).into());
+                page.set_jitter(format!("{:.2} ms", mouse.jitter / 1000.0).into());
+                page.set_missed(format!("{:.1}%", mouse.missed * 100.0).into());
+                page.set_missed_high(mouse.missed > 0.01);
+            }
+            let keyboard = reading.keyboard.unwrap_or_default();
+            page.set_keyboard_name(keyboard.name.as_str().into());
+            page.set_held(keyboard.held as i32);
+            page.set_most(keyboard.most as i32);
+            page.set_presses(keyboard.presses as i32);
+            let chatter: Vec<String> =
+                keyboard.chatter.iter().map(|(key, count)| format!("{key} ×{count}")).collect();
+            page.set_chatter(chatter.join(", ").into());
+        });
+    }
+
     /// Runs a button of the Monitor page on its row's processes, off the UI thread. The
     /// next sample shows the result.
     fn on_program(self: &Rc<Self>, i: i32, f: impl FnOnce(&monitor::Program) + Send + 'static) {
@@ -2324,7 +2465,7 @@ impl App {
     fn end_program(self: &Rc<Self>, i: i32) {
         let Some(program) = self.state.borrow().programs.get(i as usize).cloned() else { return };
         let name = program.name.clone();
-        self.state.borrow_mut().ended = Some((name.clone(), None, Instant::now()));
+        self.state.borrow_mut().ended = Some((name.clone(), RowNote::Ending, Instant::now()));
         self.tick_monitor();
         let ending = name.clone();
         self.run_job(
@@ -2337,9 +2478,67 @@ impl App {
                     let mine = state
                         .ended
                         .as_ref()
-                        .is_some_and(|(row, pending, _)| *row == name && pending.is_none());
+                        .is_some_and(|(row, note, _)| *row == name && matches!(note, RowNote::Ending));
                     if mine {
-                        state.ended = outcome.map(|outcome| (name.clone(), Some(outcome), Instant::now()));
+                        state.ended =
+                            outcome.map(|outcome| (name.clone(), RowNote::Ended(outcome), Instant::now()));
+                    }
+                }
+                app.tick_monitor();
+            },
+        );
+    }
+
+    /// End found a service behind the program, so the row offers to stop the service
+    /// instead. Like Stop on the Services page, nothing is written down: how the service
+    /// starts doesn't change, and it runs again the next time something asks for it.
+    fn stop_service(self: &Rc<Self>, i: i32) {
+        let (name, names) = {
+            let state = self.state.borrow();
+            let Some(program) = state.programs.get(i as usize) else { return };
+            match &state.ended {
+                Some((row, RowNote::Ended(monitor::EndOutcome::Service { names, .. }), _))
+                    if *row == program.name =>
+                {
+                    (program.name.clone(), names.clone())
+                }
+                _ => return,
+            }
+        };
+        if names.iter().any(|service| services::blocked(service).is_some()) {
+            return;
+        }
+        self.state.borrow_mut().ended = Some((name.clone(), RowNote::Stopping, Instant::now()));
+        self.tick_monitor();
+        let stopping = names.clone();
+        self.run_job(
+            move || {
+                stopping
+                    .iter()
+                    .map(|service| services::run(service, false))
+                    .collect::<windows::core::Result<Vec<bool>>>()
+            },
+            move |app, result| {
+                {
+                    let mut state = app.state.borrow_mut();
+                    if let Some(Ok(running)) = &result {
+                        for (service, &on) in names.iter().zip(running) {
+                            if let Some(known) = state.services.iter_mut().find(|s| s.name == *service) {
+                                known.running = on;
+                            }
+                        }
+                    }
+                    let mine = state
+                        .ended
+                        .as_ref()
+                        .is_some_and(|(row, note, _)| *row == name && matches!(note, RowNote::Stopping));
+                    if mine {
+                        let note = match result {
+                            Some(Ok(running)) if running.contains(&true) => RowNote::CameBack,
+                            Some(Ok(_)) => RowNote::Stopped,
+                            _ => RowNote::StopFailed,
+                        };
+                        state.ended = Some((name.clone(), note, Instant::now()));
                     }
                 }
                 app.tick_monitor();
@@ -2857,6 +3056,16 @@ impl App {
     }
 }
 
+const INPUT_PAGE: i32 = 6;
+/// The Input page puts the keyboard first: what delays or drops keys, then the rest.
+const INPUT_ORDER: [&str; 6] = [
+    boost::FILTER_DELAY_TWEAK,
+    "game-filter-keys",
+    "fast-key-repeat",
+    "accessibility-hotkeys-off",
+    input::POWER_TWEAK,
+    "mouse-acceleration-off",
+];
 const INTERNET_PAGE: i32 = 8;
 const MONITOR_PAGE: i32 = 9;
 /// Rows on the Disk space page: the largest files, and the items of a folder.
@@ -2866,6 +3075,42 @@ const FOLDER_ROWS: usize = 100;
 const DUP_GROUPS: usize = 100;
 /// Ping targets the user can add, on top of the router and Cloudflare.
 const MAX_HOSTS: usize = 5;
+
+/// A tweak's place in the catalog, or -1, for the pages that start one by its index.
+fn tweak_index(id: &str) -> i32 {
+    CATALOG.iter().position(|t| t.id == id).map_or(-1, |i| i as i32)
+}
+
+fn input_row(device: &input::Device) -> InputDevice {
+    use input::{Link, Speed};
+    let (link, speed, hubs) = match device.link {
+        Link::Usb { speed, hubs } => {
+            let speed = match speed {
+                Speed::Low => 0,
+                Speed::Full => 1,
+                Speed::High => 2,
+                Speed::Super => 3,
+                Speed::Unknown => -1,
+            };
+            (0, speed, hubs as i32)
+        }
+        Link::Bluetooth => (1, -1, 0),
+        Link::Ps2 => (2, -1, 0),
+    };
+    let controller = device.controller.as_ref();
+    InputDevice {
+        name: device.name.as_str().into(),
+        mouse: device.mouse,
+        link,
+        speed,
+        hubs,
+        receiver: device.receiver,
+        controller: controller.map_or(String::new(), |c| c.vendor.clone()).into(),
+        add_on: controller.is_some_and(|c| c.add_on),
+        msi: controller.and_then(|c| c.msi).map_or(-1, i32::from),
+        power: if device.power.is_empty() { 0 } else if device.power_saving() { 1 } else { 2 },
+    }
+}
 
 fn dns_tweak() -> Option<usize> {
     CATALOG.iter().position(|t| t.id == net::DNS_TWEAK)
@@ -3569,28 +3814,39 @@ fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, state: &mu
     } else {
         s.programs.clone()
     };
-    // The result of an End stays on its row for four seconds, and "Ending..." never
-    // outstays the work, which takes about two.
-    let ended = state.ended.take().filter(|(_, outcome, at)| match outcome {
-        None => at.elapsed() < Duration::from_secs(15),
-        Some(_) => at.elapsed() < Duration::from_secs(4),
+    // A note stays on its row for four seconds, a service long enough to press Stop
+    // service, and "Ending..." or "Stopping..." never outstays the work.
+    let ended = state.ended.take().filter(|(_, note, at)| {
+        let keep = match note {
+            RowNote::Ending | RowNote::Stopping => 25,
+            RowNote::Ended(monitor::EndOutcome::Service { .. }) => 15,
+            _ => 4,
+        };
+        at.elapsed() < Duration::from_secs(keep)
     });
-    let status = |name: &str| -> (i32, slint::SharedString) {
-        match ended.as_ref().filter(|(row, ..)| row == name).map(|(_, outcome, _)| outcome) {
-            None => (0, Default::default()),
-            Some(None) => (1, Default::default()),
-            Some(Some(monitor::EndOutcome::Ended)) => (2, Default::default()),
-            Some(Some(monitor::EndOutcome::Protected)) => (3, Default::default()),
-            Some(Some(monitor::EndOutcome::Service(service))) => (4, service.as_str().into()),
-            Some(Some(monitor::EndOutcome::Reopened(parent))) => (5, parent.as_str().into()),
-            Some(Some(monitor::EndOutcome::Core)) => (6, Default::default()),
-            Some(Some(monitor::EndOutcome::Failed)) => (7, Default::default()),
+    let status = |name: &str| -> (i32, slint::SharedString, bool) {
+        let none = slint::SharedString::default;
+        match ended.as_ref().filter(|(row, ..)| row == name).map(|(_, note, _)| note) {
+            None => (0, none(), false),
+            Some(RowNote::Ending) => (1, none(), false),
+            Some(RowNote::Ended(monitor::EndOutcome::Ended)) => (2, none(), false),
+            Some(RowNote::Ended(monitor::EndOutcome::Protected)) => (3, none(), false),
+            Some(RowNote::Ended(monitor::EndOutcome::Service { display, names })) => {
+                (4, display.as_str().into(), names.iter().all(|service| services::blocked(service).is_none()))
+            }
+            Some(RowNote::Ended(monitor::EndOutcome::Reopened(parent))) => (5, parent.as_str().into(), false),
+            Some(RowNote::Ended(monitor::EndOutcome::Core)) => (6, none(), false),
+            Some(RowNote::Ended(monitor::EndOutcome::Failed)) => (7, none(), false),
+            Some(RowNote::Stopping) => (8, none(), false),
+            Some(RowNote::Stopped) => (9, none(), false),
+            Some(RowNote::CameBack) => (10, none(), false),
+            Some(RowNote::StopFailed) => (11, none(), false),
         }
     };
     let rows: Vec<ProgramRow> = programs
         .iter()
         .map(|p| {
-            let (status, status_name) = status(&p.name);
+            let (status, status_name, can_stop) = status(&p.name);
             ProgramRow {
                 name: p.name.trim_end_matches(".exe").into(),
                 count: p.pids.len() as i32,
@@ -3601,6 +3857,7 @@ fn show_monitor(ui: &AppWindow, snapshot: Option<&monitor::Snapshot>, state: &mu
                 can_end: p.can_end,
                 status,
                 status_name,
+                can_stop,
             }
         })
         .collect();

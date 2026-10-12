@@ -13,10 +13,13 @@ export struct ProgramRow {
     eco: int,
     can-end: bool,
     /// What came of the last End on this row: 0 nothing, 1 ending, 2 ended, 3 protected,
-    /// 4 a service, 5 reopened, 6 part of Windows, 7 still there.
+    /// 4 a service, 5 reopened, 6 part of Windows, 7 still there. Then Stop service:
+    /// 8 stopping, 9 stopped, 10 Windows started it again, 11 Windows refused.
     status: int,
     /// The service or the program named by status 4 and 5.
     status-name: string,
+    /// Status 4, and the service isn't one Vantix keeps its hands off.
+    can-stop: bool,
 }
 
 /// An instruction set the CPU and Windows both support. The hint comes from
@@ -83,6 +86,7 @@ export global Monitor {
     in-out property <bool> hovering;
     callback sorted(int);
     callback end(int);
+    callback stop-service(int);
     callback eco(int, bool);
     callback trim(int);
 
@@ -331,9 +335,13 @@ component ProgramLine inherits HorizontalLayout {
                     : root.item.status == 4 ? @tr("Service: {}", root.item.status-name)
                     : root.item.status == 5 ? @tr("Reopened by {}", root.item.status-name)
                     : root.item.status == 6 ? @tr("Part of Windows")
-                    : @tr("Windows wouldn't let it end");
-                tint: root.item.status == 2 ? Theme.accent
-                    : root.item.status == 1 ? Theme.muted
+                    : root.item.status == 7 ? @tr("Windows wouldn't let it end")
+                    : root.item.status == 8 ? @tr("Stopping...")
+                    : root.item.status == 9 ? @tr("Service stopped")
+                    : root.item.status == 10 ? @tr("Windows started it again")
+                    : @tr("Windows wouldn't stop it");
+                tint: root.item.status == 2 || root.item.status == 9 ? Theme.accent
+                    : root.item.status == 1 || root.item.status == 8 ? Theme.muted
                     : Theme.warn;
             }
         }
@@ -365,15 +373,21 @@ component ProgramLine inherits HorizontalLayout {
         }
         VerticalLayout {
             alignment: center;
+            // Ending a service's process only makes Windows start it again, so the button
+            // stops the service instead.
             Button {
-                text: root.confirm ? @tr("Sure?") : @tr("End");
+                text: root.confirm ? @tr("Sure?") : root.item.can-stop ? @tr("Stop service") : @tr("End");
                 tall: 30px;
                 danger: true;
-                enabled: root.item.can-end && root.item.status != 1;
+                enabled: (root.item.can-end || root.item.can-stop) && root.item.status != 1 && root.item.status != 8;
                 clicked => {
                     if root.confirm {
                         root.armed = "";
-                        Monitor.end(root.index);
+                        if root.item.can-stop {
+                            Monitor.stop-service(root.index);
+                        } else {
+                            Monitor.end(root.index);
+                        }
                     } else {
                         root.armed = root.item.name;
                     }

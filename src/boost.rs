@@ -407,7 +407,7 @@ pub fn reset_memory_compression() -> Result<()> {
 const DISPLAY_CLASS: &str = "{4d36e968-e325-11ce-bfc1-08002be10318}";
 const NET_CLASS: &str = "{4d36e972-e325-11ce-bfc1-08002be10318}";
 
-fn msi_key(device: &str) -> String {
+pub(crate) fn msi_key(device: &str) -> String {
     format!(
         r"SYSTEM\CurrentControlSet\Enum\{device}\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties"
     )
@@ -960,6 +960,44 @@ pub fn reset_filter_keys() -> Result<()> {
     let mut f = filter_keys()?;
     f.dwFlags &= !FKF_FILTERKEYSON;
     set_filter_keys(f)
+}
+
+// Slow Keys (a key only counts after being held a while) and Bounce Keys (a key pressed
+// again soon after is ignored) are the "ignore brief or repeated keystrokes" part of
+// Filter Keys. While it's on, either one delays or drops presses.
+
+pub fn filter_delay_off() -> Result<bool> {
+    let f = filter_keys()?;
+    Ok(f.dwFlags & FKF_FILTERKEYSON == 0 || f.iWaitMSec == 0 && f.iBounceMSec == 0)
+}
+
+pub const FILTER_DELAY_TWEAK: &str = "filter-keys-delay-off";
+
+/// Only while one of them is set, or to undo.
+pub fn shows_filter_delay() -> bool {
+    crate::settings::load_changes().iter().any(|c| c.id == FILTER_DELAY_TWEAK)
+        || !filter_delay_off().unwrap_or(true)
+}
+
+pub fn disable_filter_delay() -> Saved {
+    let mut f = filter_keys()?;
+    let previous = format!("{},{}", f.iWaitMSec, f.iBounceMSec);
+    (f.iWaitMSec, f.iBounceMSec) = (0, 0);
+    set_filter_keys(f)?;
+    Ok(Some(previous))
+}
+
+pub fn restore_filter_delay(previous: Option<&str>) -> Result<()> {
+    let values: Vec<u32> = previous.unwrap_or_default().split(',').filter_map(|v| v.parse().ok()).collect();
+    let [wait, bounce] = values[..] else { return Ok(()) };
+    let mut f = filter_keys()?;
+    (f.iWaitMSec, f.iBounceMSec) = (wait, bounce);
+    set_filter_keys(f)
+}
+
+/// Shown only while a delay is set, so a lost journal leaves no delay to put back.
+pub fn reset_filter_delay() -> Result<()> {
+    Ok(())
 }
 
 // Background.

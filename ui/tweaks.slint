@@ -129,6 +129,8 @@ export global TweakText {
         @tr("Turn off LLMNR"),
         @tr("Turn off NetBIOS over TCP/IP"),
         @tr("DNS over HTTPS"),
+        @tr("Don't let Windows turn off the keyboard and mouse"),
+        @tr("Turn off Slow Keys and Bounce Keys"),
     ];
     out property <[string]> details: [
         @tr("Deletes hiberfil.sys, a file sized from your RAM that only hibernation uses."),
@@ -183,6 +185,8 @@ export global TweakText {
         @tr("Security, not speed. When a name isn't in DNS, Windows asks the whole local network who has it, and anyone can answer. On public Wi-Fi a device can answer for a name it doesn't own and collect your PC's sign-in hash."),
         @tr("Security, not speed. The older cousin of LLMNR: Windows answers and asks for names over broadcast, on every adapter. The same trick works on it, and it also tells the network your PC's name. Set on every adapter, so a VPN or a second card doesn't bring it back."),
         @tr("Privacy, not speed. The DNS service you picked on the DNS tab gets its lookups over HTTPS, so the network and your provider can't read or change which sites you look up. Windows 11 only."),
+        @tr("Windows may put an idle keyboard or mouse to sleep, and the USB hub it hangs on, so the first key or movement after a pause can be lost while it wakes up. This unticks \"Allow the computer to turn off this device to save power\" in Device Manager for every keyboard, mouse and hub on the way. Takes effect at once."),
+        @tr("Filter Keys is on with Slow Keys or Bounce Keys set: Windows ignores a key until it has been held a while, or when it's pressed again soon after. In a game that means late or lost presses. This sets both to zero and leaves the rest of Filter Keys as it is."),
     ];
     out property <[string]> notes: [
         @tr("The PC can no longer hibernate and Windows Fast Startup turns off with it."),
@@ -237,6 +241,8 @@ export global TweakText {
         @tr("Devices found only by name on the local network, like some printers or NAS boxes, need their IP or a DNS entry."),
         @tr("Very old devices and Windows XP era shares that are browsed by name stop showing up."),
         @tr("No plain fallback: if the HTTPS address can't be reached, names stop resolving until you undo this. Some public Wi-Fi sign-in pages need it off."),
+        @tr("A little more battery use on laptops."),
+        @tr("If you set them on purpose to type more comfortably, undo this here."),
     ];
     out property <[string]> levels: [@tr("None"), @tr("Low"), @tr("Medium"), @tr("High")];
 }
