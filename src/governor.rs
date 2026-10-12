@@ -18,7 +18,8 @@ use windows::Wdk::Graphics::Direct3D::{
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow};
 use windows::Win32::NetworkManagement::WiFi::{
-    WLAN_INTERFACE_INFO_LIST, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle, WlanSetInterface,
+    WLAN_INTERFACE_INFO_LIST, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle, WlanQueryInterface,
+    WlanSetInterface,
     wlan_interface_state_connected, wlan_intf_opcode_background_scan_enabled,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -557,16 +558,32 @@ impl Governor {
         {
             game.cores = pin(pid, handle, Some(&cores.ids));
         }
+        // Written down before each change, so a crash in the middle still leaves the way
+        // back; without a record that can be saved, the change isn't made at all.
         if config.services {
-            game.services = SERVICES.iter().filter(|name| stop_service(name)).map(|name| name.to_string()).collect();
+            let running: Vec<String> =
+                SERVICES.iter().filter(|name| with_service(name, service_running)).map(|name| name.to_string()).collect();
+            if !running.is_empty() && update_leftovers(|l| add_missing(&mut l.services, &running)) {
+                game.services = running.iter().filter(|name| stop_service(name)).cloned().collect();
+                let kept: Vec<&String> = running.iter().filter(|name| !game.services.contains(name)).collect();
+                if !kept.is_empty() {
+                    update_leftovers(|l| l.services.retain(|name| !kept.contains(&name)));
+                }
+            }
         }
         if config.wifi {
-            game.wifi = set_wifi_scan(None, false);
+            let scanning = wifi_scanning();
+            if !scanning.is_empty() && update_leftovers(|l| add_missing(&mut l.wifi, &scanning)) {
+                game.wifi = set_wifi_scan(&scanning, false);
+                let kept: Vec<&GUID> = scanning.iter().filter(|guid| !game.wifi.contains(guid)).collect();
+                if !kept.is_empty() {
+                    update_leftovers(|l| l.wifi.retain(|guid| !kept.contains(&guid)));
+                }
+            }
         }
         if config.gpu && capabilities.hybrid_gpu {
             prefer_dedicated_gpu(&image);
         }
-        save_leftovers(&Leftovers { services: game.services.clone(), wifi: game.wifi.clone(), ..load_leftovers() });
         self.last = Some(LastGame {
             name: game.name.clone(),
             started: Local::now(),
@@ -656,10 +673,7 @@ impl Governor {
                 pin(game.pid, process.handle, None);
             }
         }
-        // One that won't start stays listed and is tried again when Vantix next starts.
-        let services = game.services.into_iter().filter(|name| !start_service(name)).collect();
-        set_wifi_scan(Some(&game.wifi), true);
-        save_leftovers(&Leftovers { services, wifi: Vec::new(), ..load_leftovers() });
+        put_back(&game.services, &game.wifi);
     }
 }
 
@@ -895,24 +909,24 @@ const GPU_DEDICATED: &str = "GpuPreference=2;";
 /// Takes effect the next time the game starts. A choice the user already made in
 /// Settings stays as it is.
 fn prefer_dedicated_gpu(path: &str) {
+    // An entry for a value that never got written is harmless: forgetting only removes
+    // values that still say what Vantix wrote.
     if reg::get_string(HKEY_CURRENT_USER, GPU_KEY, path).is_ok_and(|value| value.is_none())
-        && reg::set_string(HKEY_CURRENT_USER, GPU_KEY, path, GPU_DEDICATED).is_ok()
+        && update_leftovers(|l| add_missing(&mut l.gpu, &[path.to_string()]))
     {
-        let mut leftovers = load_leftovers();
-        leftovers.gpu.push(path.to_string());
-        save_leftovers(&leftovers);
+        let _ = reg::set_string(HKEY_CURRENT_USER, GPU_KEY, path, GPU_DEDICATED);
     }
 }
 
 /// Removes the GPU choices Vantix made, when the option is turned off.
 pub fn forget_gpu_choices() {
-    let mut leftovers = load_leftovers();
-    for path in std::mem::take(&mut leftovers.gpu) {
-        if reg::get_string(HKEY_CURRENT_USER, GPU_KEY, &path).ok().flatten().as_deref() == Some(GPU_DEDICATED) {
-            let _ = reg::delete_value(HKEY_CURRENT_USER, GPU_KEY, &path);
+    update_leftovers(|l| {
+        for path in std::mem::take(&mut l.gpu) {
+            if reg::get_string(HKEY_CURRENT_USER, GPU_KEY, &path).ok().flatten().as_deref() == Some(GPU_DEDICATED) {
+                let _ = reg::delete_value(HKEY_CURRENT_USER, GPU_KEY, &path);
+            }
         }
-    }
-    save_leftovers(&leftovers);
+    });
 }
 
 fn service_running(service: windows::Win32::System::Services::SC_HANDLE) -> bool {
@@ -967,23 +981,69 @@ fn has_wifi() -> bool {
     with_wlan(|_, interfaces| !interfaces.is_empty()).unwrap_or(false)
 }
 
-/// Turns background scanning off on connected interfaces, or back on for `only` (all when
-/// `None`). Returns the interfaces changed. Windows scans every minute or so even while
-/// connected, which shows up as a ping spike; it doesn't keep this across restarts.
-fn set_wifi_scan(only: Option<&[GUID]>, on: bool) -> Vec<GUID> {
+fn has_wlan() -> bool {
+    with_wlan(|_, _| ()).is_some()
+}
+
+/// Connected interfaces that scan in the background now. Windows scans every minute or so
+/// even while connected, which shows up as a ping spike. One already off, by the user, a
+/// vendor tool or a policy, is left out, so the game mode never turns it on afterwards.
+fn wifi_scanning() -> Vec<GUID> {
     with_wlan(|handle, interfaces| {
-        let value: u32 = on.into();
         interfaces
             .iter()
-            .filter(|(guid, connected)| only.map_or(*connected, |only| only.contains(guid)))
-            .filter(|(guid, _)| unsafe {
-                WlanSetInterface(handle, guid, wlan_intf_opcode_background_scan_enabled, 4, (&raw const value).cast(), None)
-                    == 0
-            })
+            .filter(|(guid, connected)| *connected && wifi_scan_on(handle, guid) == Some(true))
             .map(|(guid, _)| *guid)
             .collect()
     })
     .unwrap_or_default()
+}
+
+fn wifi_scan_on(handle: HANDLE, guid: &GUID) -> Option<bool> {
+    unsafe {
+        let (mut size, mut data) = (0u32, std::ptr::null_mut());
+        if WlanQueryInterface(handle, guid, wlan_intf_opcode_background_scan_enabled, None, &mut size, &mut data, None)
+            != 0
+            || data.is_null()
+        {
+            return None;
+        }
+        let on = (size >= 4).then(|| *data.cast::<u32>() != 0);
+        WlanFreeMemory(data);
+        on
+    }
+}
+
+/// Turns background scanning on or off for `guids` and returns the ones it changed.
+fn set_wifi_scan(guids: &[GUID], on: bool) -> Vec<GUID> {
+    with_wlan(|handle, _| {
+        let value: u32 = on.into();
+        guids
+            .iter()
+            .filter(|guid| unsafe {
+                WlanSetInterface(handle, *guid, wlan_intf_opcode_background_scan_enabled, 4, (&raw const value).cast(), None)
+                    == 0
+            })
+            .copied()
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Starts the services and turns scanning back on, then crosses off what went back. What
+/// didn't stays listed and is tried again when Vantix next starts. An interface that's
+/// gone is crossed off too: Windows doesn't keep the setting once the adapter goes away.
+fn put_back(services: &[String], wifi: &[GUID]) {
+    let started: Vec<&String> = services.iter().filter(|name| start_service(name)).collect();
+    let present: Vec<GUID> = with_wlan(|_, interfaces| interfaces.iter().map(|(guid, _)| *guid).collect()).unwrap_or_default();
+    let waiting: Vec<GUID> = wifi.iter().filter(|guid| present.contains(guid)).copied().collect();
+    let back = set_wifi_scan(&waiting, true);
+    // Without the WLAN service there's no telling, so everything stays listed.
+    let wlan_up = has_wlan();
+    update_leftovers(|l| {
+        l.services.retain(|name| !started.contains(&name));
+        l.wifi.retain(|guid| !wifi.contains(guid) || (!back.contains(guid) && (!wlan_up || present.contains(guid))));
+    });
 }
 
 /// Every WLAN interface and whether it's connected.
@@ -1040,24 +1100,43 @@ fn leftovers_path() -> std::path::PathBuf {
     data_dir().join("game.json")
 }
 
+/// The governor thread and the window both change game.json; one at a time.
+static LEFTOVERS: Mutex<()> = Mutex::new(());
+
 fn load_leftovers() -> Leftovers {
-    std::fs::read(leftovers_path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+    let _lock = LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner());
+    crate::settings::read_json(&leftovers_path()).unwrap_or_default()
 }
 
-fn save_leftovers(leftovers: &Leftovers) {
-    if let Ok(json) = serde_json::to_vec_pretty(leftovers) {
-        let _ = std::fs::write(leftovers_path(), json);
+/// Reads, changes and writes game.json under the lock, the write atomic. False when it
+/// couldn't be written, or when the file is there but unreadable, which a write would
+/// wipe. A damaged one has been moved aside and starts over empty.
+fn update_leftovers(change: impl FnOnce(&mut Leftovers)) -> bool {
+    let _lock = LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut leftovers = match crate::settings::read_json(&leftovers_path()) {
+        Ok(leftovers) => leftovers,
+        Err(crate::settings::Unreadable::Moved(_)) => Leftovers::default(),
+        Err(crate::settings::Unreadable::Locked) => return false,
+    };
+    change(&mut leftovers);
+    crate::settings::write_json(&leftovers_path(), &leftovers)
+        .inspect_err(|e| crate::system::log_error("save game.json", e))
+        .is_ok()
+}
+
+fn add_missing<T: PartialEq + Clone>(list: &mut Vec<T>, items: &[T]) {
+    for item in items {
+        if !list.contains(item) {
+            list.push(item.clone());
+        }
     }
 }
 
 fn restore_leftovers() {
-    let mut leftovers = load_leftovers();
-    if leftovers.services.is_empty() && leftovers.wifi.is_empty() {
-        return;
+    let leftovers = load_leftovers();
+    if !leftovers.services.is_empty() || !leftovers.wifi.is_empty() {
+        put_back(&leftovers.services, &leftovers.wifi);
     }
-    leftovers.services.retain(|name| !start_service(name));
-    set_wifi_scan(Some(&std::mem::take(&mut leftovers.wifi)), true);
-    save_leftovers(&leftovers);
 }
 
 #[cfg(test)]
@@ -1189,6 +1268,76 @@ mod tests {
             "priority high -> normal, {efficient} in efficiency mode, {} kept their own, search {search_before} -> {search_during} -> {search_after}",
             own_eco.len()
         );
+    }
+
+    /// Starts a game session and never ends it, as if Vantix died mid-game, then runs what
+    /// the next start runs. Stops Windows Search for a moment:
+    /// `cargo test crash_recovery -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn crash_recovery() {
+        let scratch = std::env::temp_dir().join("vantix-crash-test");
+        std::fs::create_dir_all(scratch.join("Vantix")).unwrap();
+        unsafe { std::env::set_var("APPDATA", &scratch) };
+
+        let fake = powershell("Start-Sleep 60");
+        let pid = fake.0.id();
+        let mut governor = governor();
+        governor.sample();
+        let search_before = with_service("WSearch", service_running);
+        let process = &governor.processes[&pid];
+        let (handle, name, image) = (process.handle, process.name.clone(), process.image.clone());
+        let config = GameMode { enabled: true, priority: false, cores: false, ..Default::default() };
+        governor.begin_game(pid, handle, name, image, config, &Capabilities::default());
+        let journal = load_leftovers().services;
+        let search_during = with_service("WSearch", service_running);
+        // The crash: the session is dropped without end_game.
+        std::mem::forget(governor);
+
+        restore_leftovers();
+        std::thread::sleep(Duration::from_secs(2));
+        let search_after = with_service("WSearch", service_running);
+        drop(fake);
+        println!("search {search_before} -> {search_during} -> {search_after}, journal {journal:?}");
+
+        assert_eq!(journal.contains(&"WSearch".to_string()), search_before);
+        assert_eq!(search_after, search_before, "Windows Search not back");
+        assert!(load_leftovers().services.is_empty());
+    }
+
+    /// Turns background scanning off on the connected Wi-Fi and back, through game.json as
+    /// the game mode does, and checks every interface ends as it began:
+    /// `cargo test wifi_scan_round_trip -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn wifi_scan_round_trip() {
+        let scratch = std::env::temp_dir().join("vantix-wifi-test");
+        std::fs::create_dir_all(scratch.join("Vantix")).unwrap();
+        unsafe { std::env::set_var("APPDATA", &scratch) };
+        let state = || {
+            with_wlan(|handle, interfaces| {
+                interfaces.iter().map(|(guid, _)| (*guid, wifi_scan_on(handle, guid))).collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+        };
+
+        let before = state();
+        if before.is_empty() {
+            println!("no Wi-Fi on this PC, nothing to check");
+            return;
+        }
+        let scanning = wifi_scanning();
+        assert!(update_leftovers(|l| add_missing(&mut l.wifi, &scanning)));
+        let off = set_wifi_scan(&scanning, false);
+        let during = state();
+        put_back(&[], &scanning);
+        let after = state();
+        println!("before {before:?}\nduring {during:?}\nafter  {after:?}");
+
+        assert_eq!(off, scanning);
+        assert!(during.iter().all(|(guid, on)| !off.contains(guid) || *on == Some(false)));
+        assert_eq!(after, before);
+        assert!(load_leftovers().wifi.is_empty());
     }
 
     /// A program on the always list counts in a window, one on the never list doesn't, and

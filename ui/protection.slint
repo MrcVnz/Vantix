@@ -70,6 +70,10 @@ export global Job {
     in property <bool> came-back;
     /// Free space a finished change gave back.
     in property <string> freed;
+    // The undo journal: not saved after this job, moved aside as damaged, or unreadable.
+    in property <bool> journal-unsaved;
+    in property <string> journal-kept;
+    in property <bool> journal-locked;
 
     callback dismiss();
     callback confirm();
@@ -281,6 +285,27 @@ export component JobSheet inherits Rectangle {
                 if (root.failed || Job.state == JobState.done) && Job.detail != "": Text {
                     text: Job.detail;
                     color: Theme.muted;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+
+                if Job.journal-kept != "": Text {
+                    text: @tr("Vantix's record of the changes it made was damaged, so those changes can't be undone from Vantix anymore. The file was kept as {}. Restore points still cover them.", Job.journal-kept);
+                    color: Theme.warn;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+
+                if Job.journal-locked: Text {
+                    text: @tr("Vantix couldn't read its record of the changes it made. To keep it safe, new changes won't be recorded until Vantix is opened again.");
+                    color: Theme.warn;
+                    wrap: word-wrap;
+                    width: root.text-width;
+                }
+
+                if Job.journal-unsaved: Text {
+                    text: @tr("Vantix couldn't save its record of this change. It can be undone until Vantix closes; after that, only a restore point covers it.");
+                    color: Theme.warn;
                     wrap: word-wrap;
                     width: root.text-width;
                 }

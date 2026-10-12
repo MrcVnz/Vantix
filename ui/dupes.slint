@@ -130,7 +130,8 @@ export component DupesPage inherits VerticalLayout {
                 text: !Dupes.searching ? @tr("Only files of 1 MB or more, where the space is. Files kept only in the cloud are skipped so they don't download.")
                     : Dupes.stage == 0 ? @tr("Listing files...")
                     : Dupes.stage == 1 ? @tr("Comparing the start of files with the same size...")
-                    : @tr("Reading files that start alike: {} of {}.", Dupes.read, Dupes.total);
+                    : Dupes.stage == 2 ? @tr("Reading files that start alike: {} of {}.", Dupes.read, Dupes.total)
+                    : @tr("Checking matches byte by byte: {} of {}.", Dupes.read, Dupes.total);
             }
             VerticalLayout {
                 alignment: center;

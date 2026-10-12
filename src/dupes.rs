@@ -284,22 +284,82 @@ pub fn find(folders: &[PathBuf], progress: &Progress) -> Option<Vec<Group>> {
     if progress.cancel.load(Ordering::Relaxed) {
         return None;
     }
-    let mut groups: HashMap<(u64, u64), Vec<Copy>> = HashMap::new();
+    let mut candidates: HashMap<(u64, u64), Vec<Copy>> = HashMap::new();
     for (((size, _), path), whole) in alike.into_iter().zip(wholes) {
         if let Some((whole, modified)) = whole {
-            groups.entry((size, whole)).or_default().push(Copy { path, size, modified });
+            candidates.entry((size, whole)).or_default().push(Copy { path, size, modified });
         }
     }
-    let mut groups: Vec<Group> = groups
+    let candidates: Vec<Vec<Copy>> = candidates.into_values().filter(|copies| copies.len() > 1).collect();
+
+    // A 64-bit hash makes a match near certain, not certain, and the next step is the
+    // Recycle Bin, so every copy is read once more against the first one.
+    progress.stage.store(3, Ordering::Relaxed);
+    progress.done.store(0, Ordering::Relaxed);
+    progress.total.store(candidates.iter().map(|c| 2 * c[0].size * (c.len() as u64 - 1)).sum(), Ordering::Relaxed);
+    let checked = par_map(&candidates, |copies| {
+        split_identical(copies.clone(), |a, b| identical(a, b, progress))
+    });
+    if progress.cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    let mut groups: Vec<Group> = checked
         .into_iter()
-        .filter(|(_, copies)| copies.len() > 1)
-        .map(|((size, _), mut copies)| {
+        .flatten()
+        .map(|mut copies| {
             copies.sort_by_key(|c| c.modified);
-            Group { size, copies }
+            Group { size: copies[0].size, copies }
         })
         .collect();
     groups.sort_by_key(|g| std::cmp::Reverse(g.wasted()));
     Some(groups)
+}
+
+/// Splits copies that share a size and hash into the groups whose bytes really match.
+fn split_identical(mut copies: Vec<Copy>, same: impl Fn(&Path, &Path) -> bool) -> Vec<Vec<Copy>> {
+    let mut groups = Vec::new();
+    while copies.len() > 1 {
+        let first = copies.remove(0);
+        let (alike, rest): (Vec<Copy>, Vec<Copy>) = copies.into_iter().partition(|c| same(&first.path, &c.path));
+        copies = rest;
+        if !alike.is_empty() {
+            groups.push(std::iter::once(first).chain(alike).collect());
+        }
+    }
+    groups
+}
+
+/// Byte for byte. A file that can't be read, or a cancelled search, never counts as equal.
+fn identical(a: &Path, b: &Path, progress: &Progress) -> bool {
+    let (Ok(mut a), Ok(mut b)) = (File::open(a), File::open(b)) else { return false };
+    let (mut left, mut right) = (vec![0u8; BUFFER], vec![0u8; BUFFER]);
+    loop {
+        if progress.cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        let (Some(n), Some(m)) = (fill(&mut a, &mut left), fill(&mut b, &mut right)) else { return false };
+        if left[..n] != right[..m] {
+            return false;
+        }
+        if n == 0 {
+            return true;
+        }
+        progress.done.fetch_add(2 * n as u64, Ordering::Relaxed);
+    }
+}
+
+/// Reads until `buffer` is full or the file ends, so two files line up block by block.
+fn fill(file: &mut File, buffer: &mut [u8]) -> Option<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match file.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
+    Some(filled)
 }
 
 /// Moves `copies` to the Recycle Bin one by one, so a file that's open elsewhere only
@@ -358,6 +418,33 @@ mod tests {
             groups[0].copies.iter().map(|c| c.path.file_name().unwrap().to_owned()).collect();
         assert_eq!(names, HashSet::from(["a.bin".into(), "b.bin".into()]));
         assert_eq!(groups[0].wasted(), data.len() as u64);
+    }
+
+    #[test]
+    fn same_hash_is_not_enough() {
+        let dir = std::env::temp_dir().join(format!("vantix-dupes-split-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Bigger than one read buffer, differing only in the second block.
+        let data: Vec<u8> = (0..BUFFER + 4096).map(|i| (i * 13 % 251) as u8).collect();
+        let mut other = data.clone();
+        other[BUFFER + 10] ^= 1;
+        let mut copies = Vec::new();
+        for (name, bytes) in [("a.bin", &data), ("b.bin", &other), ("c.bin", &data), ("d.bin", &other)] {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            copies.push(Copy { path, size: data.len() as u64, modified: SystemTime::UNIX_EPOCH });
+        }
+        // A missing file never matches anything.
+        copies.push(Copy { path: dir.join("gone.bin"), size: data.len() as u64, modified: SystemTime::UNIX_EPOCH });
+        let progress = Progress::default();
+        let groups = split_identical(copies, |a, b| identical(a, b, &progress));
+        let _ = std::fs::remove_dir_all(&dir);
+        let names: Vec<Vec<String>> = groups
+            .iter()
+            .map(|g| g.iter().map(|c| c.path.file_name().unwrap().to_string_lossy().into_owned()).collect())
+            .collect();
+        assert_eq!(names, vec![vec!["a.bin", "c.bin"], vec!["b.bin", "d.bin"]]);
     }
 
     /// Sends a copy to the real Recycle Bin and checks that one changed since the search

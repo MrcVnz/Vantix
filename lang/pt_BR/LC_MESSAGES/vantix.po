@@ -1495,6 +1495,9 @@ msgstr "Comparando o começo dos arquivos de mesmo tamanho..."
 msgid "Reading files that start alike: {} of {}."
 msgstr "Lendo os arquivos que começam iguais: {} de {}."
 
+msgid "Checking matches byte by byte: {} of {}."
+msgstr "Conferindo os iguais byte a byte: {} de {}."
+
 msgid "Add folder"
 msgstr "Adicionar pasta"
 
@@ -2524,3 +2527,12 @@ msgid "Up to {n} background program in efficiency mode."
 msgid_plural "Up to {n} background programs in efficiency mode."
 msgstr[0] "Até {n} programa em segundo plano no modo de eficiência."
 msgstr[1] "Até {n} programas em segundo plano no modo de eficiência."
+
+msgid "Vantix's record of the changes it made was damaged, so those changes can't be undone from Vantix anymore. The file was kept as {}. Restore points still cover them."
+msgstr "O registro das mudanças feitas pelo Vantix estava danificado, então elas não podem mais ser desfeitas pelo Vantix. O arquivo foi guardado como {}. Os pontos de restauração continuam valendo para elas."
+
+msgid "Vantix couldn't read its record of the changes it made. To keep it safe, new changes won't be recorded until Vantix is opened again."
+msgstr "O Vantix não conseguiu ler o registro das mudanças que fez. Para não perder esse registro, as novas mudanças não serão anotadas até o Vantix ser aberto de novo."
+
+msgid "Vantix couldn't save its record of this change. It can be undone until Vantix closes; after that, only a restore point covers it."
+msgstr "O Vantix não conseguiu salvar o registro desta mudança. Dá para desfazer até o Vantix fechar; depois disso, só um ponto de restauração cobre."

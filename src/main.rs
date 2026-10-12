@@ -306,6 +306,11 @@ fn main() -> Result<(), slint::PlatformError> {
     result
 }
 
+/// Writes the undo journal; false when it couldn't, which the job sheet says.
+fn save_journal(changes: &[Change]) -> bool {
+    settings::save_changes(changes).inspect_err(|e| system::log_error("save changes.json", e)).is_ok()
+}
+
 fn bind_with<T>(app: &Rc<App>, f: impl Fn(&Rc<App>, T) + 'static) -> impl Fn(T) + 'static {
     let app: Weak<App> = Rc::downgrade(app);
     move |value| {
@@ -908,6 +913,22 @@ impl App {
         ui.show()?;
         style_when_ready(ui.as_weak(), 0);
         *self.window.borrow_mut() = Some(ui);
+        // Told once, the first time the window opens, and never over the terms.
+        if let Some(problem) = settings::journal_problem()
+            && !self.state.borrow().terms_pending
+        {
+            self.show_job(JobState::Failed, "changes.json", false);
+            self.with_ui(|ui| {
+                let job = ui.global::<Job>();
+                match problem {
+                    settings::Unreadable::Moved(kept) => {
+                        let name = kept.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                        job.set_journal_kept(name.into());
+                    }
+                    settings::Unreadable::Locked => job.set_journal_locked(true),
+                }
+            });
+        }
         Ok(())
     }
 
@@ -1529,6 +1550,9 @@ impl App {
             job.set_start(-1);
             job.set_note("".into());
             job.set_came_back(false);
+            job.set_journal_unsaved(false);
+            job.set_journal_kept("".into());
+            job.set_journal_locked(false);
             job.set_elapsed(0);
             job.set_state(state);
         });
@@ -1638,7 +1662,7 @@ impl App {
                         dirty = true;
                     }
                     if dirty {
-                        let _ = settings::save_changes(&state.changes);
+                        save_journal(&state.changes);
                     }
                 }
                 app.with_ui(|ui| app.show_tweaks(ui));
@@ -1793,6 +1817,7 @@ impl App {
             move |app, result| {
                 match result {
                     Some(Ok(before)) => {
+                        let saved;
                         {
                             let mut state = app.state.borrow_mut();
                             // By name: a refresh in the meantime would have moved the row.
@@ -1821,9 +1846,10 @@ impl App {
                                 };
                                 state.changes.push(change);
                             }
-                            let _ = settings::save_changes(&state.changes);
+                            saved = save_journal(&state.changes);
                         }
                         app.set_job(JobState::Done, "");
+                        app.with_ui(|ui| ui.global::<Job>().set_journal_unsaved(!saved));
                         app.with_ui(|ui| {
                             let mut state = app.state.borrow_mut();
                             show_services(ui, &mut state);
@@ -2306,6 +2332,7 @@ impl App {
                 let gained = (gained >= 1 << 20).then_some(gained);
                 let mut error = None;
                 let mut reboot = false;
+                let saved;
                 {
                     let mut state = app.state.borrow_mut();
                     state.working = None;
@@ -2358,7 +2385,7 @@ impl App {
                             }
                         }
                     }
-                    let _ = settings::save_changes(&state.changes);
+                    saved = save_journal(&state.changes);
                 }
                 let again = std::mem::take(&mut app.state.borrow_mut().diag_again);
                 match error {
@@ -2376,6 +2403,7 @@ impl App {
                         app.set_job(JobState::Done, "");
                     }
                 }
+                app.with_ui(|ui| ui.global::<Job>().set_journal_unsaved(!saved));
                 app.with_ui(|ui| {
                     app.show_tweaks(ui);
                     app.show_dns(ui);

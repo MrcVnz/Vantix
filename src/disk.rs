@@ -641,7 +641,7 @@ fn clean_windows_old() -> Tally {
     let after = windows_old_tally();
     Tally {
         bytes: before.bytes.saturating_sub(after.bytes),
-        files: before.files - after.files,
+        files: before.files.saturating_sub(after.files),
         skipped: after.files,
         items: Vec::new(),
     }

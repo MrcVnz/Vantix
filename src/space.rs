@@ -147,7 +147,8 @@ impl Attribute<'_> {
         let mut lcn = 0i64;
         while let Some(&head) = self.bytes.get(at) {
             let (len_size, offset_size) = (usize::from(head & 0xf), usize::from(head >> 4));
-            if head == 0 || at + 1 + len_size + offset_size > self.bytes.len() {
+            // A damaged volume can claim widths up to 15 bytes, which would overflow the shifts.
+            if head == 0 || len_size == 0 || len_size > 8 || offset_size > 8 || at + 1 + len_size + offset_size > self.bytes.len() {
                 break;
             }
             let mut length = 0u64;
@@ -574,6 +575,19 @@ mod tests {
         bytes.extend([0x21, 4, 0x00, 0x01, 0x11, 2, 0xf0, 0]);
         let attribute = Attribute { kind: DATA, resident: false, named: false, bytes: &bytes };
         assert_eq!(attribute.runs(), vec![(0x100, 4), (0xf0, 2)]);
+    }
+
+    #[test]
+    fn damaged_runs_stop_the_list() {
+        // One good run, then a header claiming 15-byte widths with enough bytes behind it.
+        for head in [0x19u8, 0x91, 0xff, 0x01, 0x10] {
+            let mut bytes = vec![0u8; 64];
+            bytes[32] = 64;
+            bytes.extend([0x11, 4, 0x10, head]);
+            bytes.extend([0xab; 32]);
+            let attribute = Attribute { kind: DATA, resident: false, named: false, bytes: &bytes };
+            assert_eq!(attribute.runs(), vec![(0x10, 4)], "head {head:#x}");
+        }
     }
 
     /// Scans C: and checks the total against what Windows says is used:

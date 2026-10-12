@@ -39,7 +39,7 @@ use windows::Win32::System::Services::{
     SERVICE_ACTIVE, SERVICE_CONTROL_STOP, SERVICE_ENUMERATE_DEPENDENTS, SERVICE_FAILURE_ACTIONSW,
     SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DEMAND_START, SERVICE_DESCRIPTIONW, SERVICE_DISABLED,
     SERVICE_DRIVER, SERVICE_ERROR, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_START,
-    SERVICE_STATE_ALL, SERVICE_STATUS, SERVICE_STATUS_PROCESS, SERVICE_STOP,
+    SERVICE_START_TYPE, SERVICE_STATE_ALL, SERVICE_STATUS, SERVICE_STATUS_PROCESS, SERVICE_STOP,
     SERVICE_SYSTEM_START, SERVICE_TRIGGER_INFO, SERVICE_WIN32, StartServiceW,
 };
 use windows::core::{BOOL, Error, HSTRING, Result};
@@ -372,6 +372,28 @@ pub fn set_start(name: &str, start: Start) -> Result<Start> {
     };
     with_service(name, SERVICE_CHANGE_CONFIG | SERVICE_QUERY_CONFIG, |handle| unsafe {
         let before = start_of(handle);
+        let Some(code_before) = start_code(handle) else {
+            return Err(Error::from_thread());
+        };
+        change_start(handle, code)?;
+        if matches!(start, Start::Auto | Start::Delayed) {
+            let mut delay = SERVICE_DELAYED_AUTO_START_INFO { fDelayedAutostart: BOOL::from(start == Start::Delayed) };
+            if let Err(e) =
+                ChangeServiceConfig2W(handle, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, Some((&raw mut delay).cast()))
+            {
+                // Half done would leave it automatic with no journal entry to undo it.
+                if let Err(undo) = change_start(handle, code_before) {
+                    crate::system::log_error(&format!("rollback start type of {name}"), &undo);
+                }
+                return Err(e);
+            }
+        }
+        Ok(before)
+    })
+}
+
+unsafe fn change_start(handle: SC_HANDLE, code: SERVICE_START_TYPE) -> Result<()> {
+    unsafe {
         ChangeServiceConfigW(
             handle,
             ENUM_SERVICE_TYPE(NO_CHANGE),
@@ -384,17 +406,8 @@ pub fn set_start(name: &str, start: Start) -> Result<Start> {
             None,
             None,
             None,
-        )?;
-        if matches!(start, Start::Auto | Start::Delayed) {
-            let mut delay = SERVICE_DELAYED_AUTO_START_INFO { fDelayedAutostart: BOOL::from(start == Start::Delayed) };
-            ChangeServiceConfig2W(
-                handle,
-                SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
-                Some((&raw mut delay).cast()),
-            )?;
-        }
-        Ok(before)
-    })
+        )
+    }
 }
 
 /// Starts or stops a service now and waits for it to get there. Gives back the state it
@@ -514,6 +527,12 @@ fn running(handle: SC_HANDLE) -> Option<bool> {
     };
     unsafe { QueryServiceStatusEx(handle, SC_STATUS_PROCESS_INFO, Some(bytes), &mut needed) }.ok()?;
     Some(status.dwCurrentState.0 != STOPPED)
+}
+
+/// The raw start type, to put back exactly.
+fn start_code(handle: SC_HANDLE) -> Option<SERVICE_START_TYPE> {
+    let buffer = query_config(handle)?;
+    Some(unsafe { &*buffer.as_ptr().cast::<QUERY_SERVICE_CONFIGW>() }.dwStartType)
 }
 
 /// How the service starts right now.

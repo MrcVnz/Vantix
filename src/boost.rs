@@ -30,6 +30,28 @@ use crate::tweaks::{powershell, run};
 
 type Saved = Result<Option<String>>;
 
+/// Runs `count` steps in order. When one fails, the ones already done are undone in
+/// reverse and the error comes back, so a tweak never stays half applied: a failed apply
+/// gets no journal entry, and what it changed would have no way back.
+fn all_or_nothing(
+    what: &str,
+    count: usize,
+    mut step: impl FnMut(usize) -> Result<()>,
+    mut undo: impl FnMut(usize) -> Result<()>,
+) -> Result<()> {
+    for i in 0..count {
+        if let Err(e) = step(i) {
+            for done in (0..i).rev() {
+                if let Err(undo_error) = undo(done) {
+                    crate::system::log_error(&format!("undo {what}"), &undo_error);
+                }
+            }
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
 fn saved(value: Option<u32>) -> String {
     value.map_or("-".into(), |v| v.to_string())
 }
@@ -140,13 +162,18 @@ fn power(subgroup: &GUID, setting: &GUID) -> Result<u32> {
 /// which only happens when it's the active one.
 fn set_power(subgroup: &GUID, setting: &GUID, value: u32) -> Result<()> {
     let scheme = target_scheme()?;
-    unsafe {
-        PowerWriteACValueIndex(None, &scheme, Some(subgroup), Some(setting), value).ok()?;
-        if scheme == active_scheme()? {
-            PowerSetActiveScheme(None, Some(&scheme)).ok()?;
-        }
-    }
-    Ok(())
+    let before = power(subgroup, setting)?;
+    let write = |value| unsafe { PowerWriteACValueIndex(None, &scheme, Some(subgroup), Some(setting), value).ok() };
+    all_or_nothing(
+        "power setting",
+        2,
+        |step| match step {
+            0 => write(value),
+            _ if scheme == active_scheme()? => unsafe { PowerSetActiveScheme(None, Some(&scheme)).ok() },
+            _ => Ok(()),
+        },
+        |_| write(before),
+    )
 }
 
 /// `$off` is what Windows' own Balanced plan uses for the setting.
@@ -202,7 +229,11 @@ pub fn enable_ultimate() -> Saved {
     let previous = active_scheme()?;
     if set_scheme(&VANTIX_ULTIMATE).is_err() {
         run("powercfg.exe", &["/duplicatescheme", &format!("{ULTIMATE:?}"), &format!("{VANTIX_ULTIMATE:?}")])?;
-        set_scheme(&VANTIX_ULTIMATE)?;
+        if let Err(e) = set_scheme(&VANTIX_ULTIMATE) {
+            // Not left behind as a plan nobody picked.
+            let _ = run("powercfg.exe", &["/delete", &format!("{VANTIX_ULTIMATE:?}")]);
+            return Err(e);
+        }
     }
     Ok(Some(format!("{previous:?}")))
 }
@@ -285,15 +316,23 @@ fn wifi_power() -> Result<(u32, u32)> {
 
 fn set_wifi_power(ac: u32, dc: u32) -> Result<()> {
     let scheme = target_scheme()?;
+    let before = wifi_power()?;
     let (subgroup, setting): (*const GUID, *const GUID) = (&SUB_WIRELESS, &WIFI_POWER_SAVING);
-    unsafe {
-        PowerWriteACValueIndex(None, &scheme, Some(subgroup), Some(setting), ac).ok()?;
-        WIN32_ERROR(PowerWriteDCValueIndex(None, &scheme, Some(subgroup), Some(setting), dc)).ok()?;
-        if scheme == active_scheme()? {
-            PowerSetActiveScheme(None, Some(&scheme)).ok()?;
-        }
-    }
-    Ok(())
+    let write_ac = |value| unsafe { PowerWriteACValueIndex(None, &scheme, Some(subgroup), Some(setting), value).ok() };
+    let write_dc = |value| unsafe {
+        WIN32_ERROR(PowerWriteDCValueIndex(None, &scheme, Some(subgroup), Some(setting), value)).ok()
+    };
+    all_or_nothing(
+        "Wi-Fi power",
+        3,
+        |step| match step {
+            0 => write_ac(ac),
+            1 => write_dc(dc),
+            _ if scheme == active_scheme()? => unsafe { PowerSetActiveScheme(None, Some(&scheme)).ok() },
+            _ => Ok(()),
+        },
+        |step| if step == 0 { write_ac(before.0) } else { write_dc(before.1) },
+    )
 }
 
 pub fn shows_wifi_power() -> bool {
@@ -467,16 +506,20 @@ pub fn msi_on() -> Result<bool> {
 
 /// Saved as "device=value" pairs joined with "|"; instance ids never contain either.
 pub fn enable_msi() -> Saved {
-    let mut previous = Vec::new();
+    let mut off = Vec::new();
     for device in msi_devices() {
-        let key = msi_key(&device);
-        let value = reg::get_dword(HKEY_LOCAL_MACHINE, &key, "MSISupported")?;
+        let value = reg::get_dword(HKEY_LOCAL_MACHINE, &msi_key(&device), "MSISupported")?;
         if value != Some(1) {
-            reg::set_dword(HKEY_LOCAL_MACHINE, &key, "MSISupported", 1)?;
-            previous.push(format!("{device}={}", saved(value)));
+            off.push((device, saved(value)));
         }
     }
-    Ok(Some(previous.join("|")))
+    all_or_nothing(
+        "MSI mode",
+        off.len(),
+        |i| reg::set_dword(HKEY_LOCAL_MACHINE, &msi_key(&off[i].0), "MSISupported", 1),
+        |i| restore_dword(HKEY_LOCAL_MACHINE, &msi_key(&off[i].0), "MSISupported", Some(&off[i].1)),
+    )?;
+    Ok(Some(off.iter().map(|(device, value)| format!("{device}={value}")).collect::<Vec<_>>().join("|")))
 }
 
 pub fn restore_msi(previous: Option<&str>) -> Result<()> {
@@ -573,11 +616,16 @@ pub fn game_dvr_off() -> Result<bool> {
 }
 
 pub fn disable_game_dvr() -> Saved {
-    let mut previous = Vec::new();
-    for (root, path, name) in DVR_VALUES {
-        previous.push(saved(reg::get_dword(root, path, name)?));
-        reg::set_dword(root, path, name, 0)?;
-    }
+    let previous = DVR_VALUES
+        .iter()
+        .map(|&(root, path, name)| reg::get_dword(root, path, name).map(saved))
+        .collect::<Result<Vec<_>>>()?;
+    all_or_nothing(
+        "Game DVR",
+        DVR_VALUES.len(),
+        |i| reg::set_dword(DVR_VALUES[i].0, DVR_VALUES[i].1, DVR_VALUES[i].2, 0),
+        |i| restore_dword(DVR_VALUES[i].0, DVR_VALUES[i].1, DVR_VALUES[i].2, Some(&previous[i])),
+    )?;
     Ok(Some(previous.join(",")))
 }
 
@@ -779,27 +827,16 @@ fn hotkeys() -> Result<Hotkeys> {
 }
 
 fn set_hotkeys(mut keys: Hotkeys) -> Result<()> {
-    let flags = SPIF_UPDATEINIFILE | SPIF_SENDCHANGE;
-    unsafe {
-        SystemParametersInfoW(
-            SPI_SETSTICKYKEYS,
-            keys.sticky.cbSize,
-            Some((&raw mut keys.sticky).cast()),
-            flags,
-        )?;
-        SystemParametersInfoW(
-            SPI_SETFILTERKEYS,
-            keys.filter.cbSize,
-            Some((&raw mut keys.filter).cast()),
-            flags,
-        )?;
-        SystemParametersInfoW(
-            SPI_SETTOGGLEKEYS,
-            keys.toggle.cbSize,
-            Some((&raw mut keys.toggle).cast()),
-            flags,
-        )
-    }
+    let mut before = hotkeys()?;
+    let set = |keys: &mut Hotkeys, i: usize| {
+        let (action, size, value) = match i {
+            0 => (SPI_SETSTICKYKEYS, keys.sticky.cbSize, (&raw mut keys.sticky).cast()),
+            1 => (SPI_SETFILTERKEYS, keys.filter.cbSize, (&raw mut keys.filter).cast()),
+            _ => (SPI_SETTOGGLEKEYS, keys.toggle.cbSize, (&raw mut keys.toggle).cast()),
+        };
+        unsafe { SystemParametersInfoW(action, size, Some(value), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE) }
+    };
+    all_or_nothing("accessibility keys", 3, |i| set(&mut keys, i), |i| set(&mut before, i))
 }
 
 pub fn hotkeys_off() -> Result<bool> {
@@ -868,21 +905,21 @@ fn keyboard_repeat() -> Result<(u32, u32)> {
 
 /// Delay is 0 (250 ms) to 3 (1 s); speed is 0 (about 2.5 a second) to 31 (about 30).
 fn set_keyboard_repeat(delay: u32, speed: u32) -> Result<()> {
-    let flags = SPIF_UPDATEINIFILE | SPIF_SENDCHANGE;
-    unsafe {
+    let before = keyboard_repeat()?;
+    let set = |action: u32, value: u32| unsafe {
         SystemParametersInfoW(
-            windows::Win32::UI::WindowsAndMessaging::SYSTEM_PARAMETERS_INFO_ACTION(SPI_SETKEYBOARDDELAY),
-            delay,
+            windows::Win32::UI::WindowsAndMessaging::SYSTEM_PARAMETERS_INFO_ACTION(action),
+            value,
             None,
-            flags,
-        )?;
-        SystemParametersInfoW(
-            windows::Win32::UI::WindowsAndMessaging::SYSTEM_PARAMETERS_INFO_ACTION(SPI_SETKEYBOARDSPEED),
-            speed,
-            None,
-            flags,
+            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
         )
-    }
+    };
+    all_or_nothing(
+        "key repeat",
+        2,
+        |i| if i == 0 { set(SPI_SETKEYBOARDDELAY, delay) } else { set(SPI_SETKEYBOARDSPEED, speed) },
+        |_| set(SPI_SETKEYBOARDDELAY, before.0),
+    )
 }
 
 pub fn fast_repeat() -> Result<bool> {
@@ -1047,8 +1084,15 @@ pub fn telemetry_off() -> Result<bool> {
 pub fn disable_telemetry() -> Saved {
     let policy = reg::get_dword(HKEY_LOCAL_MACHINE, TELEMETRY_KEY, "AllowTelemetry")?;
     let start = reg::get_dword(HKEY_LOCAL_MACHINE, DIAGTRACK_KEY, "Start")?;
-    reg::set_dword(HKEY_LOCAL_MACHINE, TELEMETRY_KEY, "AllowTelemetry", 0)?;
-    run("sc.exe", &["config", "DiagTrack", "start=", "disabled"])?;
+    all_or_nothing(
+        "telemetry",
+        2,
+        |i| match i {
+            0 => reg::set_dword(HKEY_LOCAL_MACHINE, TELEMETRY_KEY, "AllowTelemetry", 0),
+            _ => run("sc.exe", &["config", "DiagTrack", "start=", "disabled"]).map(drop),
+        },
+        |_| restore_dword(HKEY_LOCAL_MACHINE, TELEMETRY_KEY, "AllowTelemetry", Some(&saved(policy))),
+    )?;
     // Fails when it's already stopped, which is fine.
     let _ = run("sc.exe", &["stop", "DiagTrack"]);
     Ok(Some(format!("{},{}", saved(policy), saved(start))))
@@ -1072,6 +1116,26 @@ pub fn reset_telemetry() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_step_undoes_the_ones_before() {
+        let log = std::cell::RefCell::new(Vec::new());
+        let result = all_or_nothing(
+            "test",
+            4,
+            |i| {
+                log.borrow_mut().push(format!("do {i}"));
+                if i == 2 { Err(windows::Win32::Foundation::E_FAIL.into()) } else { Ok(()) }
+            },
+            |i| {
+                log.borrow_mut().push(format!("undo {i}"));
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(log.into_inner(), ["do 0", "do 1", "do 2", "undo 1", "undo 0"]);
+        assert!(all_or_nothing("test", 3, |_| Ok(()), |_| panic!("nothing to undo")).is_ok());
+    }
 
     /// Changes a few settings, one of them on the active power plan, and puts them back:
     /// `cargo test boost_round_trip -- --ignored --nocapture`

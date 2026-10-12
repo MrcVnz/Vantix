@@ -174,7 +174,7 @@ pub fn data_dir() -> PathBuf {
 
 impl Settings {
     pub fn load() -> Self {
-        read_json(&data_dir().join("settings.json")).unwrap_or_default()
+        read_json(&data_dir().join("settings.json")).ok().unwrap_or_default()
     }
 
     pub fn save(&self) -> io::Result<()> {
@@ -183,7 +183,7 @@ impl Settings {
 }
 
 pub fn load_history() -> Vec<HistoryEntry> {
-    read_json(&data_dir().join("history.json")).unwrap_or_default()
+    read_json(&data_dir().join("history.json")).ok().unwrap_or_default()
 }
 
 pub fn save_history(history: &mut Vec<HistoryEntry>) -> io::Result<()> {
@@ -193,23 +193,109 @@ pub fn save_history(history: &mut Vec<HistoryEntry>) -> io::Result<()> {
     write_json(&data_dir().join("history.json"), history)
 }
 
+/// Why a file that exists couldn't be used.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Unreadable {
+    /// Damaged: moved aside under this name, so nothing overwrites it.
+    Moved(PathBuf),
+    /// Couldn't be read or moved, so it's left alone.
+    Locked,
+}
+
+/// What went wrong with the undo journal this session, kept for the window to tell.
+static JOURNAL: std::sync::Mutex<Option<Unreadable>> = std::sync::Mutex::new(None);
+
+/// The undo journal. Empty when missing or unusable; `journal_problem` says which.
 pub fn load_changes() -> Vec<Change> {
-    read_json(&data_dir().join("changes.json")).unwrap_or_default()
+    read_json(&data_dir().join("changes.json")).unwrap_or_else(|problem| {
+        JOURNAL.lock().unwrap().get_or_insert(problem);
+        Vec::new()
+    })
+}
+
+pub fn journal_problem() -> Option<Unreadable> {
+    JOURNAL.lock().unwrap().clone()
 }
 
 pub fn save_changes(changes: &[Change]) -> io::Result<()> {
+    // A journal that's there but couldn't be read still holds changes this session
+    // doesn't know about. Writing ours over it would lose them for good.
+    if *JOURNAL.lock().unwrap() == Some(Unreadable::Locked) {
+        return Err(io::Error::other("changes.json couldn't be read"));
+    }
     write_json(&data_dir().join("changes.json"), changes)
 }
 
-fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
-    let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
+/// A missing file is the default. A damaged one is moved aside and logged, and one that
+/// can't be read at all is left where it is; both come back as errors.
+pub(crate) fn read_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, Unreadable> {
+    let failed = |what: &str, error: &dyn std::fmt::Display| {
+        crate::system::log_error(&format!("{what} {}", path.display()), error);
+    };
+    let text = match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(T::default()),
+        // Not UTF-8: damaged, like bad JSON.
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            failed("read", &e);
+            None
+        }
+        Err(e) => {
+            failed("read", &e);
+            return Err(Unreadable::Locked);
+        }
+    };
+    if let Some(text) = text {
+        // A byte order mark, as Notepad writes, isn't damage.
+        match serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)) {
+            Ok(value) => return Ok(value),
+            Err(e) => failed("parse", &e),
+        }
+    }
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let kept = path.with_file_name(format!("{stem}.bad-{}.json", Local::now().format("%Y%m%d-%H%M%S")));
+    match fs::rename(path, &kept) {
+        Ok(()) => Err(Unreadable::Moved(kept)),
+        Err(e) => {
+            failed("move aside", &e);
+            Err(Unreadable::Locked)
+        }
+    }
 }
 
 /// Writes to a sibling temp file first so a crash mid-write never leaves a truncated file.
-fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
+pub(crate) fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
     fs::create_dir_all(path.parent().unwrap())?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(value)?)?;
     fs::rename(tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damaged_json_is_moved_aside() {
+        let dir = std::env::temp_dir().join(format!("vantix-settings-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("changes.json");
+        assert_eq!(read_json::<Vec<u32>>(&path), Ok(Vec::new()));
+
+        write_json(&path, &[1u32, 2]).unwrap();
+        assert_eq!(read_json::<Vec<u32>>(&path), Ok(vec![1, 2]));
+
+        fs::write(&path, "\u{feff}[3]").unwrap();
+        assert_eq!(read_json::<Vec<u32>>(&path), Ok(vec![3]));
+
+        for damage in [&b"[1, 2"[..], &[0xff, 0xfe, 0x00][..]] {
+            fs::write(&path, damage).unwrap();
+            let Err(Unreadable::Moved(kept)) = read_json::<Vec<u32>>(&path) else { panic!("not moved") };
+            assert!(!path.exists());
+            assert_eq!(fs::read(&kept).unwrap(), damage);
+            fs::remove_file(kept).unwrap();
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
