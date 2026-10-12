@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use windows::Wdk::Graphics::Direct3D::{
     D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH, D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL, D3DKMTSetProcessSchedulingPriorityClass,
@@ -51,10 +52,14 @@ use crate::reg::{self, HKEY_CURRENT_USER};
 use crate::settings::{GameMode, data_dir};
 
 /// What the UI turned on, copied in whenever it changes.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct Config {
     pub probalance: bool,
     pub game: GameMode,
+    /// Exe names the user marked as games, found in front even in a window.
+    pub always: Vec<String>,
+    /// Exe names the user marked as never a game.
+    pub never: Vec<String>,
 }
 
 /// What the UI shows about the running features.
@@ -65,6 +70,22 @@ pub struct Status {
     /// Processes ProBalance holds back right now.
     pub restrained: usize,
     /// Background processes in efficiency mode for the game.
+    pub efficient: usize,
+    pub last: Option<LastGame>,
+}
+
+/// The latest game found, so the user can see what game mode did with it.
+#[derive(Clone)]
+pub struct LastGame {
+    pub name: String,
+    pub started: DateTime<Local>,
+    /// `None` while it's still running.
+    pub ended: Option<DateTime<Local>>,
+    pub priority: bool,
+    pub cores: bool,
+    pub services: usize,
+    pub wifi: bool,
+    /// The most background programs in efficiency mode at once.
     pub efficient: usize,
 }
 
@@ -284,6 +305,7 @@ struct Governor {
     blocked: HashSet<u32>,
     candidate: Option<(u32, u32)>,
     game: Option<Game>,
+    last: Option<LastGame>,
     ticks: u64,
     me: u32,
     session: u32,
@@ -302,12 +324,13 @@ fn run() {
         ..Default::default()
     };
     while !shared.stop.load(Ordering::Relaxed) {
-        let config = *shared.config.lock().unwrap();
-        governor.tick(config, &shared.capabilities);
+        let config = shared.config.lock().unwrap().clone();
+        governor.tick(&config, &shared.capabilities);
         *shared.status.lock().unwrap() = Status {
             game: governor.game.as_ref().map(|game| game.name.clone()),
             restrained: governor.restrained.len(),
             efficient: governor.efficient.len(),
+            last: governor.last.clone(),
         };
         std::thread::sleep(Duration::from_secs(1));
     }
@@ -316,7 +339,7 @@ fn run() {
 }
 
 impl Governor {
-    fn tick(&mut self, config: Config, capabilities: &Capabilities) {
+    fn tick(&mut self, config: &Config, capabilities: &Capabilities) {
         // Both off is the default: nothing is measured and no process is kept open.
         if !config.probalance && !config.game.enabled {
             self.release_all();
@@ -340,13 +363,14 @@ impl Governor {
             self.end_game();
             return;
         }
+        // Gone, or just marked as not a game.
         if let Some(game) = &self.game
-            && !alive(self.processes.get(&game.pid).map(|p| p.handle))
+            && (!alive(self.processes.get(&game.pid).map(|p| p.handle)) || listed(&config.never, &game.name))
         {
             self.end_game();
         }
         if self.game.is_none() {
-            self.detect_game(foreground, config.game, capabilities);
+            self.detect_game(foreground, config, capabilities);
         }
         if self.game.is_some() {
             self.during_game(foreground, config.game);
@@ -461,18 +485,21 @@ impl Governor {
     }
 
     /// A game is a window that covers its whole monitor and stays in front, from a
-    /// program outside the Windows folder that isn't a browser or player.
-    fn detect_game(&mut self, foreground: u32, config: GameMode, capabilities: &Capabilities) {
+    /// program outside the Windows folder that isn't a browser or player. The user's own
+    /// lists come first: a game marked by hand counts in a window too.
+    fn detect_game(&mut self, foreground: u32, config: &Config, capabilities: &Capabilities) {
         let fullscreen = foreground != 0 && fullscreen_foreground();
         let candidate = self
             .processes
             .get(&foreground)
             .filter(|process| {
-                fullscreen
-                    && process.session == self.session
-                    && !process.path.is_empty()
-                    && !process.path.starts_with(&self.windows)
-                    && !listed(NOT_GAMES, &process.name)
+                process.session == self.session
+                    && !listed(&config.never, &process.name)
+                    && (listed(&config.always, &process.name)
+                        || fullscreen
+                            && !process.path.is_empty()
+                            && !process.path.starts_with(&self.windows)
+                            && !listed(NOT_GAMES, &process.name))
             })
             .map(|process| (process.handle, process.name.clone(), process.image.clone()));
         let Some((handle, name, image)) = candidate else {
@@ -488,7 +515,7 @@ impl Governor {
             return;
         }
         self.candidate = None;
-        self.begin_game(foreground, handle, name, image, config, capabilities);
+        self.begin_game(foreground, handle, name, image, config.game, capabilities);
     }
 
     fn begin_game(
@@ -540,6 +567,16 @@ impl Governor {
             prefer_dedicated_gpu(&image);
         }
         save_leftovers(&Leftovers { services: game.services.clone(), wifi: game.wifi.clone(), ..load_leftovers() });
+        self.last = Some(LastGame {
+            name: game.name.clone(),
+            started: Local::now(),
+            ended: None,
+            priority: config.priority,
+            cores: game.cores,
+            services: game.services.len(),
+            wifi: !game.wifi.is_empty(),
+            efficient: 0,
+        });
         self.game = Some(game);
     }
 
@@ -580,6 +617,9 @@ impl Governor {
         } else {
             self.end_eco();
         }
+        if let Some(last) = &mut self.last {
+            last.efficient = last.efficient.max(self.efficient.len());
+        }
 
         if config.standby && self.ticks.is_multiple_of(5) {
             let stats = memory::stats();
@@ -600,6 +640,9 @@ impl Governor {
     fn end_game(&mut self) {
         self.end_eco();
         let Some(game) = self.game.take() else { return };
+        if let Some(last) = &mut self.last {
+            last.ended = Some(Local::now());
+        }
         if let Some(process) = self.processes.get(&game.pid)
             && alive(Some(process.handle))
         {
@@ -620,8 +663,8 @@ impl Governor {
     }
 }
 
-fn listed(list: &[&str], name: &str) -> bool {
-    list.iter().any(|entry| entry.eq_ignore_ascii_case(name))
+fn listed(list: &[impl AsRef<str>], name: &str) -> bool {
+    list.iter().any(|entry| entry.as_ref().eq_ignore_ascii_case(name))
 }
 
 fn open(pid: u32, name: String) -> Option<Process> {
@@ -1078,7 +1121,7 @@ mod tests {
         let on = Config { probalance: true, ..Default::default() };
         let mut held = false;
         for _ in 0..15 {
-            governor.tick(on, &Capabilities::default());
+            governor.tick(&on, &Capabilities::default());
             if governor.restrained.contains(&pid) {
                 held = true;
                 break;
@@ -1086,7 +1129,7 @@ mod tests {
             std::thread::sleep(Duration::from_secs(1));
         }
         let while_held = priority(pid);
-        governor.tick(Config::default(), &Capabilities::default());
+        governor.tick(&Config::default(), &Capabilities::default());
         let after = priority(pid);
         drop(hog);
         assert!(held, "hog was never held back");
@@ -1146,6 +1189,53 @@ mod tests {
             "priority high -> normal, {efficient} in efficiency mode, {} kept their own, search {search_before} -> {search_during} -> {search_after}",
             own_eco.len()
         );
+    }
+
+    /// A program on the always list counts in a window, one on the never list doesn't, and
+    /// marking the running game as never ends it. Every boost is off, so nothing changes:
+    /// `cargo test game_lists -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn game_lists() {
+        let scratch = std::env::temp_dir().join("vantix-governor-test");
+        std::fs::create_dir_all(scratch.join("Vantix")).unwrap();
+        unsafe { std::env::set_var("APPDATA", &scratch) };
+
+        let fake = powershell("Start-Sleep 60");
+        let pid = fake.0.id();
+        let mut governor = governor();
+        governor.sample();
+        let name = governor.processes[&pid].name.clone();
+        let off = GameMode {
+            enabled: true,
+            priority: false,
+            cores: false,
+            eco: false,
+            services: false,
+            standby: false,
+            wifi: false,
+            gpu: false,
+        };
+        let never = Config { game: off, never: vec![name.to_uppercase()], ..Default::default() };
+        for _ in 0..GAME_TICKS + 1 {
+            governor.detect_game(pid, &never, &Capabilities::default());
+        }
+        assert!(governor.game.is_none(), "a program on the never list was taken for a game");
+
+        let always = Config { game: off, always: vec![name.clone()], ..Default::default() };
+        for _ in 0..GAME_TICKS {
+            governor.detect_game(pid, &always, &Capabilities::default());
+        }
+        assert_eq!(governor.game.as_ref().map(|game| game.pid), Some(pid), "always list ignored");
+        let last = governor.last.clone().unwrap();
+        assert!(last.ended.is_none() && !last.priority && last.services == 0);
+
+        let marked = Config { never: vec![name.clone()], ..always };
+        governor.tick(&marked, &Capabilities::default());
+        drop(fake);
+        assert!(governor.game.is_none(), "still boosting after marking it not a game");
+        assert!(governor.last.as_ref().unwrap().ended.is_some());
+        println!("{name}: never skipped, always taken in a window, marked not a game and let go");
     }
 
     #[test]

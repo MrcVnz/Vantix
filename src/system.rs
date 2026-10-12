@@ -40,7 +40,7 @@ use crate::settings::data_dir;
 // clash with other tools that register generic names (GIGABYTE EasyTune owns a
 // logon task called "EasyTune", for example).
 const APP_ID: &str = "MrcVnz.Vantix";
-const TASK_NAME: &str = "MrcVnz.Vantix";
+pub(crate) const TASK_NAME: &str = "MrcVnz.Vantix";
 /// Passed by the logon task so a boot start can go straight to the tray.
 pub const AUTOSTART_ARG: &str = "--autostart";
 
@@ -301,7 +301,7 @@ pub fn unregister_all() {
     let _ = reg::delete_tree(reg::HKEY_CURRENT_USER, &format!(r"Software\Classes\AppUserModelId\{APP_ID}"));
 }
 
-fn task_service() -> Result<ITaskService> {
+pub(crate) fn task_service() -> Result<ITaskService> {
     unsafe {
         // Already initialized on the UI thread by init_com; S_FALSE is fine.
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);

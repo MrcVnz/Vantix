@@ -425,17 +425,30 @@ export component MemoryPage inherits VerticalLayout {
                         horizontal-stretch: 1;
                     }
                     Rectangle {
-                        width: commit-text.preferred-width;
-                        min-height: commit-text.preferred-height;
-                        commit-text := Text {
-                            text: @tr("Committed {}", Memory.commit);
-                            color: Theme.faint;
-                            font-size: 12px;
+                        width: commit-row.preferred-width;
+                        min-height: commit-row.preferred-height;
+                        // The info mark says there's more on hover.
+                        commit-row := HorizontalLayout {
+                            spacing: 5px;
+                            Text {
+                                text: @tr("Committed {}", Memory.commit);
+                                color: commit-area.has-hover ? Theme.muted : Theme.faint;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    data: Icons.info;
+                                    size: 13px;
+                                    tint: commit-area.has-hover ? Theme.muted : Theme.faint;
+                                }
+                            }
                         }
                         commit-area := TouchArea {}
                         Tip {
                             x: parent.width - self.width;
-                            text: @tr("Everything programs have reserved, counting RAM and the page file, against the most Windows can hand out: RAM plus the page file.");
+                            text: @tr("Everything programs have reserved, counting RAM and the page file, against the most Windows can hand out: RAM plus the page file. Near that limit, programs can fail to open or close on their own even with RAM still free.");
                             shown: commit-area.has-hover;
                         }
                     }
@@ -598,13 +611,12 @@ export component MemoryPage inherits VerticalLayout {
                 }
             }
 
-            HorizontalLayout {
+            if Memory.history.length > 0: HorizontalLayout {
                 alignment: end;
                 Button {
                     text: @tr("Clear");
                     icon: Icons.trash;
                     tall: 34px;
-                    enabled: Memory.history.length > 0;
                     clicked => { Memory.clear-history(); }
                 }
             }

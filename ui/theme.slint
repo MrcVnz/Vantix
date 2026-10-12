@@ -62,6 +62,7 @@ export global Icons {
     out property <string> keyboard: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10";
     out property <string> wifi: "M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.86a10 10 0 0 1 14 0M8.5 16.43a5 5 0 0 1 7 0";
     out property <string> x: "M18 6 6 18M6 6l12 12";
+    out property <string> info: "M12 16v-4M12 8h.01M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0";
     out property <string> globe: "M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20";
 }
 
@@ -176,6 +177,26 @@ export component Button inherits Rectangle {
     }
 }
 
+/// A bare icon that lights up under the mouse, for small actions like removing a row.
+export component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <color> hover-tint: Theme.text;
+    callback clicked();
+    width: 32px;
+    height: 32px;
+    border-radius: Theme.radius-small;
+    background: area.has-hover ? Theme.hover : transparent;
+    Icon {
+        data: root.icon;
+        size: 16px;
+        tint: area.has-hover ? root.hover-tint : Theme.faint;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 /// Pill shaped row of mutually exclusive options with a sliding highlight.
 export component Segmented inherits Rectangle {
     in property <[string]> options;
@@ -257,6 +278,8 @@ export component Toggle inherits Rectangle {
     in property <string> detail;
     in property <bool> enabled: true;
     in-out property <bool> checked;
+    /// What the switch draws, when that isn't simply `checked`.
+    in property <bool> shows: self.checked;
     callback toggled(bool);
 
     // Grows with a detail that wraps, so the next row never lands on top of it.
@@ -288,18 +311,18 @@ export component Toggle inherits Rectangle {
                 width: 42px;
                 height: 24px;
                 border-radius: 12px;
-                background: root.checked && root.enabled ? Theme.accent : Theme.raised;
+                background: root.shows && root.enabled ? Theme.accent : Theme.raised;
                 border-width: 1px;
-                border-color: root.checked && root.enabled ? Theme.accent : Theme.border-strong;
+                border-color: root.shows && root.enabled ? Theme.accent : Theme.border-strong;
                 animate background { duration: 150ms; }
 
                 Rectangle {
-                    x: root.checked ? parent.width - self.width - 4px : 4px;
+                    x: root.shows ? parent.width - self.width - 4px : 4px;
                     y: 4px;
                     width: 16px;
                     height: 16px;
                     border-radius: 8px;
-                    background: root.checked && root.enabled ? Theme.on-accent : Theme.muted;
+                    background: root.shows && root.enabled ? Theme.on-accent : Theme.muted;
                     animate x { duration: 180ms; easing: ease-out-quart; }
                 }
             }

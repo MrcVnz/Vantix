@@ -334,27 +334,17 @@ component PointRow inherits HorizontalLayout {
             color: Theme.text;
             overflow: elide;
         }
-        HorizontalLayout {
-            spacing: 6px;
-            alignment: start;
-            Text {
-                text: root.point.created;
-                color: Theme.faint;
-                font-size: 12px;
-            }
-            if root.point.baseline: Text {
-                text: "· " + @tr("Before the first change");
-                color: Theme.accent;
-                font-size: 12px;
-                overflow: elide;
-            }
+        Text {
+            text: root.point.created;
+            color: Theme.faint;
+            font-size: 12px;
         }
-    }
-    Text {
-        text: "#" + root.point.sequence;
-        color: Theme.faint;
-        font-size: 12px;
-        vertical-alignment: center;
+        if root.point.baseline: Text {
+            text: @tr("Before the first change");
+            color: Theme.accent;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
     }
     // Same width on every row and in every language, so nothing shifts on the second click.
     VerticalLayout {
@@ -487,10 +477,12 @@ export component ProtectionPage inherits VerticalLayout {
         spacing: Theme.gap;
         vertical-stretch: 1;
 
+        // As wide as the System protection card above it, so the columns line up and the
+        // change titles get the room.
         Card {
             title: @tr("Restore points");
             icon: Icons.history;
-            horizontal-stretch: 1;
+            width: 380px;
 
             if Protection.points.length == 0: Text {
                 text: Protection.loading ? @tr("Loading...") : @tr("No restore points yet.");
@@ -507,7 +499,7 @@ export component ProtectionPage inherits VerticalLayout {
         Card {
             title: @tr("Changes made by Vantix");
             icon: Icons.layers;
-            width: 380px;
+            horizontal-stretch: 1;
 
             if Tweaks.changes.length == 0: Text {
                 text: @tr("Nothing changed yet. Every tweak you apply shows up here with an option to undo it.");
@@ -530,7 +522,7 @@ export component ProtectionPage inherits VerticalLayout {
                         Text {
                             text: TweakText.titles[change.index];
                             color: Theme.text;
-                            overflow: elide;
+                            wrap: word-wrap;
                         }
                         Text {
                             text: (change.reset ? @tr("Turned off") + " · " : "")

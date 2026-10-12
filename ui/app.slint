@@ -24,10 +24,13 @@ export global Preferences {
     in-out property <bool> start-with-windows;
     in-out property <bool> start-minimized;
     in-out property <bool> notifications;
+    in property <string> version;
     // Saves everything except autostart, which has its own call because it can fail.
     callback changed();
     callback autostart-toggled(bool);
     callback reset-all();
+    /// Opens the license (0) or the third-party notices (1) in Notepad.
+    callback open-notice(int);
 }
 
 component NavItem inherits Rectangle {
@@ -144,6 +147,8 @@ component SettingsPage inherits VerticalLayout {
                     detail: @tr("Only when started with Windows.");
                     enabled: Preferences.start-with-windows;
                     checked <=> Preferences.start-minimized;
+                    // Off while it can't apply, so it doesn't look on next to a switch that's off.
+                    shows: Preferences.start-with-windows && Preferences.start-minimized;
                     toggled => { Preferences.changed(); }
                 }
                 Toggle {
@@ -159,6 +164,39 @@ component SettingsPage inherits VerticalLayout {
             max-width: 380px;
             horizontal-stretch: 38;
             alignment: start;
+            spacing: Theme.gap;
+
+            Card {
+                title: @tr("About");
+                icon: Icons.info;
+
+                Text {
+                    text: "Vantix " + Preferences.version;
+                    color: Theme.text;
+                    font-weight: 600;
+                }
+                Text {
+                    text: @tr("Free software under the GNU GPL 3.0: you can use it, study it, share it and change it, as long as what you share stays under the same license. It comes with no warranty.");
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 10px;
+                    Button {
+                        text: @tr("License");
+                        icon: Icons.file;
+                        tall: 36px;
+                        clicked => { Preferences.open-notice(0); }
+                    }
+                    Button {
+                        text: @tr("Third-party notices");
+                        icon: Icons.file;
+                        tall: 36px;
+                        clicked => { Preferences.open-notice(1); }
+                    }
+                }
+            }
 
             Card {
                 title: @tr("Reset");
@@ -257,7 +295,7 @@ export component AppWindow inherits Window {
                             font-weight: 700;
                         }
                         Text {
-                            text: "v0.1.0";
+                            text: "v" + Preferences.version;
                             color: Theme.faint;
                             font-size: 11.5px;
                         }

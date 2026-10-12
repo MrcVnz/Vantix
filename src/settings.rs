@@ -103,6 +103,9 @@ pub struct Settings {
     /// Folders searched for duplicates; `None` until changed, which means the user's own
     /// folders (see dupes::default_folders).
     pub dup_folders: Option<Vec<std::path::PathBuf>>,
+    /// Exe names game mode always treats as games, and never does.
+    pub games: Vec<String>,
+    pub not_games: Vec<String>,
 }
 
 impl Default for Settings {
@@ -123,6 +126,8 @@ impl Default for Settings {
             ping_hosts: Vec::new(),
             upload_mbps: None,
             dup_folders: None,
+            games: Vec::new(),
+            not_games: Vec::new(),
         }
     }
 }

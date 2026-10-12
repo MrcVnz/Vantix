@@ -578,8 +578,8 @@ msgstr "Arquivos e programas que o Windows guarda na memória para abrirem mais 
 msgid "Memory holding nothing at all. Windows prefers to use it as cache, so a low number here is normal."
 msgstr "Memória sem nada dentro. O Windows prefere usá-la como cache, então é normal esse número ser baixo."
 
-msgid "Everything programs have reserved, counting RAM and the page file, against the most Windows can hand out: RAM plus the page file."
-msgstr "Tudo o que os programas já reservaram, somando RAM e arquivo de paginação, contra o máximo que o Windows consegue entregar: RAM mais o arquivo de paginação."
+msgid "Everything programs have reserved, counting RAM and the page file, against the most Windows can hand out: RAM plus the page file. Near that limit, programs can fail to open or close on their own even with RAM still free."
+msgstr "Tudo o que os programas já reservaram, somando RAM e arquivo de paginação, contra o máximo que o Windows consegue entregar: RAM mais o arquivo de paginação. Perto desse limite, programas podem não abrir ou fechar sozinhos mesmo com RAM livre."
 
 msgid "Before the first change"
 msgstr "Antes da 1ª alteração"
@@ -2460,3 +2460,67 @@ msgstr "Atualizações mais antigas que as últimas não podem mais ser desinsta
 
 msgid "Very old installers that depend on short names can fail."
 msgstr "Instaladores muito antigos que dependem de nomes curtos podem falhar."
+
+msgid "About"
+msgstr "Sobre"
+
+msgid "Free software under the GNU GPL 3.0: you can use it, study it, share it and change it, as long as what you share stays under the same license. It comes with no warranty."
+msgstr "Software livre sob a GNU GPL 3.0: você pode usar, estudar, compartilhar e modificar, desde que o que compartilhar continue sob a mesma licença. Vem sem garantia."
+
+msgid "License"
+msgstr "Licença"
+
+msgid "Third-party notices"
+msgstr "Avisos de terceiros"
+
+msgid "Not a game"
+msgstr "Não é um jogo"
+
+msgid "Last game: {} from {} to {}."
+msgstr "Último jogo: {}, das {} às {}."
+
+msgid "High priority."
+msgstr "Prioridade alta."
+
+msgid "Kept on the fast cores."
+msgstr "Mantido nos núcleos rápidos."
+
+msgid "Wi-Fi scans off."
+msgstr "Buscas de Wi-Fi desligadas."
+
+msgid "Always a game"
+msgstr "Sempre é um jogo"
+
+msgid "Boosted whenever it's in front, in a window too."
+msgstr "Recebe o boost sempre que estiver na frente, em janela também."
+
+msgid "Never a game"
+msgstr "Nunca é um jogo"
+
+msgid "Never boosted, even in fullscreen."
+msgstr "Nunca recebe o boost, nem em tela cheia."
+
+msgid "Store app"
+msgstr "App da Store"
+
+msgid "Scheduled task"
+msgstr "Tarefa agendada"
+
+msgid "Set by your organization"
+msgstr "Definido pela sua organização"
+
+msgid "The program it starts isn't there any more."
+msgstr "O programa que ele abre não existe mais."
+
+msgid "Remove"
+msgstr "Remover"
+
+msgid "{n} service paused."
+msgid_plural "{n} services paused."
+msgstr[0] "{n} serviço pausado."
+msgstr[1] "{n} serviços pausados."
+
+msgid "Up to {n} background program in efficiency mode."
+msgid_plural "Up to {n} background programs in efficiency mode."
+msgstr[0] "Até {n} programa em segundo plano no modo de eficiência."
+msgstr[1] "Até {n} programas em segundo plano no modo de eficiência."

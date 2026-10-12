@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::Local;
-use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
+use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
 
 use memory::Level;
@@ -546,6 +546,17 @@ impl App {
                 app.with_ui(|ui| ui.global::<Preferences>().set_start_with_windows(!on));
             }
         }));
+        prefs.on_open_notice(|which| {
+            // Copied out of the exe, so they open wherever Vantix was copied to.
+            let (name, text) = match which {
+                0 => ("LICENSE.txt", include_str!("../LICENSE")),
+                _ => ("THIRD-PARTY-NOTICES.txt", include_str!("../THIRD-PARTY-NOTICES")),
+            };
+            let path = settings::data_dir().join(name);
+            if std::fs::write(&path, text).is_ok() {
+                let _ = std::process::Command::new("notepad.exe").arg(path).spawn();
+            }
+        });
         prefs.on_reset_all(|| {
             system::unregister_all();
             let _ = std::fs::remove_dir_all(settings::data_dir());
@@ -609,6 +620,24 @@ impl App {
                 governor::configure(live_config(settings));
             })
         }));
+        live.on_add_game(bind_with(self, |app, game: bool| {
+            let owner = app.with_ui_value(|ui| system::hwnd(ui.window())).flatten();
+            let Some(exe) = dupes::pick_exe(owner) else { return };
+            let Some(name) = exe.file_name().map(|name| name.to_string_lossy().into_owned()) else { return };
+            app.change_game_lists(|settings| mark_game(settings, &name, game));
+        }));
+        live.on_remove_game(bind_with2(self, |app, game: bool, index: i32| {
+            app.change_game_lists(|settings| {
+                let list = if game { &mut settings.games } else { &mut settings.not_games };
+                if (index as usize) < list.len() {
+                    list.remove(index as usize);
+                }
+            });
+        }));
+        live.on_not_a_game(bind(self, |app| {
+            let Some(name) = governor::status().game else { return };
+            app.change_game_lists(|settings| mark_game(settings, &name, false));
+        }));
 
         let startup = ui.global::<Startup>();
         startup.on_refresh(bind(self, |app| app.refresh_startup()));
@@ -617,6 +646,14 @@ impl App {
             move |index, on| {
                 if let Some(app) = app.upgrade() {
                     app.toggle_startup(index as usize, on);
+                }
+            }
+        });
+        startup.on_remove({
+            let app = Rc::downgrade(self);
+            move |index| {
+                if let Some(app) = app.upgrade() {
+                    app.remove_startup(index as usize);
                 }
             }
         });
@@ -895,6 +932,7 @@ impl App {
         self.with_ui(|ui| {
             let live = ui.global::<Live>();
             live.set_game(status.game.unwrap_or_default().into());
+            live.set_last(status.last.as_ref().map(last_game_row).unwrap_or_default());
             live.set_restrained(status.restrained as i32);
             live.set_efficient(status.efficient as i32);
         });
@@ -1842,6 +1880,28 @@ impl App {
                     startup.get_rows().set_row_data(index, row);
                     startup.set_enabled_count(count);
                 });
+            },
+        );
+    }
+
+    fn change_game_lists(&self, change: impl FnOnce(&mut Settings)) {
+        let mut state = self.state.borrow_mut();
+        change(&mut state.settings);
+        let _ = state.settings.save();
+        governor::configure(live_config(&state.settings));
+        self.with_ui(|ui| show_game_lists(ui, &state.settings));
+    }
+
+    /// Removes an entry whose program is gone, then reads the list again.
+    fn remove_startup(self: &Rc<Self>, index: usize) {
+        let Some(entry) = self.state.borrow().startup.get(index).cloned() else { return };
+        self.run_job(
+            move || startup::remove(&entry),
+            |app, result| {
+                if let Some(Err(e)) = result {
+                    system::log_error("startup remove", &e);
+                }
+                app.refresh_startup();
             },
         );
     }
@@ -3578,6 +3638,7 @@ fn show_settings(ui: &AppWindow, settings: &Settings) {
     mem.set_applied_minutes(settings.auto_clean.minutes as i32);
     mem.set_applied_percent(settings.auto_clean.percent as i32);
     let prefs = ui.global::<Preferences>();
+    prefs.set_version(env!("CARGO_PKG_VERSION").into());
     prefs.set_language(settings.language as i32);
     prefs.set_start_with_windows(system::autostart_enabled());
     prefs.set_start_minimized(settings.start_minimized);
@@ -3609,7 +3670,48 @@ fn level_from_index(index: i32) -> Level {
 }
 
 fn live_config(settings: &Settings) -> governor::Config {
-    governor::Config { probalance: settings.probalance, game: settings.game_mode }
+    governor::Config {
+        probalance: settings.probalance,
+        game: settings.game_mode,
+        always: settings.games.clone(),
+        never: settings.not_games.clone(),
+    }
+}
+
+fn show_game_lists(ui: &AppWindow, settings: &Settings) {
+    let names = |list: &[String]| -> ModelRc<SharedString> {
+        ModelRc::new(VecModel::from(list.iter().map(|name| SharedString::from(name.as_str())).collect::<Vec<_>>()))
+    };
+    let live = ui.global::<Live>();
+    live.set_always(names(&settings.games));
+    live.set_never(names(&settings.not_games));
+}
+
+/// Puts an exe name on one game list and takes it off the other.
+fn mark_game(settings: &mut Settings, name: &str, game: bool) {
+    let (add, other) =
+        if game { (&mut settings.games, &mut settings.not_games) } else { (&mut settings.not_games, &mut settings.games) };
+    other.retain(|entry| !entry.eq_ignore_ascii_case(name));
+    if !add.iter().any(|entry| entry.eq_ignore_ascii_case(name)) {
+        add.push(name.to_string());
+    }
+}
+
+fn last_game_row(last: &governor::LastGame) -> LastGameRow {
+    let today = Local::now().date_naive();
+    let time = |at: chrono::DateTime<Local>| {
+        at.format(if at.date_naive() == today { "%H:%M" } else { "%d/%m %H:%M" }).to_string()
+    };
+    LastGameRow {
+        name: last.name.strip_suffix(".exe").unwrap_or(&last.name).into(),
+        from: time(last.started).into(),
+        to: last.ended.map(time).unwrap_or_default().into(),
+        priority: last.priority,
+        cores: last.cores,
+        services: last.services as i32,
+        wifi: last.wifi,
+        efficient: last.efficient as i32,
+    }
 }
 
 fn show_live(ui: &AppWindow, settings: &Settings) {
@@ -3637,6 +3739,7 @@ fn show_live(ui: &AppWindow, settings: &Settings) {
     live.set_cores_total(total);
     live.set_has_wifi(capabilities.wifi);
     live.set_has_hybrid_gpu(capabilities.hybrid_gpu);
+    show_game_lists(ui, settings);
 }
 
 fn startup_row(entry: &startup::Entry) -> StartupRow {
@@ -3645,7 +3748,15 @@ fn startup_row(entry: &startup::Entry) -> StartupRow {
         publisher: entry.publisher.as_str().into(),
         all_users: entry.all_users,
         enabled: entry.enabled,
-        memory: entry.memory.map(format_bytes).unwrap_or_default().into(),
+        kind: match entry.kind {
+            startup::Kind::App => 0,
+            startup::Kind::Store => 1,
+            startup::Kind::Task => 2,
+        },
+        locked: entry.locked,
+        missing: entry.missing,
+        // Below a megabyte it would read "0 MB in use".
+        memory: entry.memory.filter(|&bytes| bytes >= 1 << 20).map(format_bytes).unwrap_or_default().into(),
     }
 }
 

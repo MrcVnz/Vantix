@@ -1,4 +1,4 @@
-import { Theme, Icons, Icon, Card, Button } from "theme.slint";
+import { Theme, Icons, Icon, Card, Button, IconButton } from "theme.slint";
 
 export struct DupRow {
     /// A group's heading: the file's name, its size and how many copies there are.
@@ -67,24 +67,6 @@ component Square inherits Rectangle {
     }
 }
 
-component IconButton inherits Rectangle {
-    in property <string> icon;
-    in property <color> hover-tint: Theme.text;
-    callback clicked();
-    width: 32px;
-    height: 32px;
-    border-radius: Theme.radius-small;
-    background: area.has-hover ? Theme.hover : transparent;
-    Icon {
-        data: root.icon;
-        size: 16px;
-        tint: area.has-hover ? root.hover-tint : Theme.faint;
-    }
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
 
 export component DupesPage inherits VerticalLayout {
     padding: 32px;

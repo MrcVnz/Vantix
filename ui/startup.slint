@@ -1,13 +1,19 @@
-import { Theme, Card, Toggle, Segmented } from "theme.slint";
+import { Theme, Card, Toggle, Segmented, Button } from "theme.slint";
 import { ListView } from "std-widgets.slint";
 import { Tweaks, TweakList } from "tweaks.slint";
 
-/// One program that starts with Windows, from a Run key or a Startup folder.
+/// One program that starts with Windows.
 export struct StartupRow {
     name: string,
     publisher: string,
     all-users: bool,
     enabled: bool,
+    /// 0 a Run key or Startup folder, 1 a Store app, 2 a scheduled task.
+    kind: int,
+    /// Set by policy, so the switch is greyed out.
+    locked: bool,
+    /// The program it starts is gone; the row offers to remove it.
+    missing: bool,
     /// RAM its processes use right now, empty when it isn't running.
     memory: string,
 }
@@ -21,6 +27,7 @@ export global Startup {
 
     callback refresh();
     callback toggled(int, bool);
+    callback remove(int);
 }
 
 export component BackgroundPage inherits VerticalLayout {
@@ -84,13 +91,44 @@ export component BackgroundPage inherits VerticalLayout {
             for row[i] in Startup.rows: HorizontalLayout {
                 padding-left: 6px;
                 padding-right: 14px;
-                Toggle {
+                if !row.missing: Toggle {
                     text: row.name;
                     detail: (row.publisher != "" ? row.publisher + "  ·  " : "")
-                        + (row.all-users ? @tr("All users") : @tr("This user"))
+                        + (row.kind == 1 ? @tr("Store app") : row.kind == 2 ? @tr("Scheduled task")
+                            : row.all-users ? @tr("All users") : @tr("This user"))
+                        + (row.locked ? "  ·  " + @tr("Set by your organization") : "")
                         + (row.memory != "" ? "  ·  " + @tr("{} in use now", row.memory) : "");
+                    enabled: !row.locked;
                     checked: row.enabled;
                     toggled(on) => { Startup.toggled(i, on); }
+                }
+                if row.missing: HorizontalLayout {
+                    spacing: 16px;
+                    min-height: 48px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: row.name;
+                            color: Theme.text;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: @tr("The program it starts isn't there any more.");
+                            color: Theme.warn;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            text: @tr("Remove");
+                            tall: 32px;
+                            clicked => { Startup.remove(i); }
+                        }
+                    }
                 }
             }
         }

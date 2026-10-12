@@ -1,4 +1,18 @@
-import { Theme, Toggle, Chip } from "theme.slint";
+import { Theme, Icons, Toggle, Chip, Button, IconButton } from "theme.slint";
+
+/// The latest game game mode found, and what it did.
+export struct LastGameRow {
+    /// Empty until a game was found since Vantix started.
+    name: string,
+    from: string,
+    /// Empty while it's still running.
+    to: string,
+    priority: bool,
+    cores: bool,
+    services: int,
+    wifi: bool,
+    efficient: int,
+}
 
 /// ProBalance and the real-time game mode: what runs while Vantix is open.
 export global Live {
@@ -23,8 +37,73 @@ export global Live {
     in property <string> game;
     in property <int> restrained;
     in property <int> efficient;
+    in property <LastGameRow> last;
+    /// Exe names marked by hand as always a game, and never.
+    in property <[string]> always;
+    in property <[string]> never;
 
     callback changed();
+    /// Picks a program for the always list (true) or the never list.
+    callback add-game(bool);
+    callback remove-game(bool, int);
+    /// Puts the game being boosted on the never list, which ends the boost.
+    callback not-a-game();
+}
+
+/// One of the hand made lists: a title, the names and a way to add one.
+component GameList inherits VerticalLayout {
+    in property <string> title;
+    in property <string> detail;
+    in property <[string]> names;
+    callback add();
+    callback remove(int);
+
+    spacing: 4px;
+
+    HorizontalLayout {
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-weight: 600;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: @tr("Add");
+                tall: 32px;
+                clicked => { root.add(); }
+            }
+        }
+    }
+    for name[i] in root.names: HorizontalLayout {
+        spacing: 10px;
+        height: 32px;
+        padding-left: 12px;
+        Text {
+            text: name;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        IconButton {
+            icon: Icons.x;
+            hover-tint: Theme.bad;
+            clicked => { root.remove(i); }
+        }
+    }
 }
 
 component LiveCard inherits Rectangle {
@@ -109,10 +188,33 @@ export component GameModeCard inherits LiveCard {
         checked <=> Live.game-mode;
         toggled => { Live.changed(); }
     }
-    if Live.game-mode: Status {
-        text: Live.game == "" ? @tr("Waiting for a game in fullscreen.")
-            : Live.efficient > 0 ? @tr("Boosting {}. Background programs in efficiency mode: {}.", Live.game, Live.efficient)
-            : @tr("Boosting {}.", Live.game);
+    if Live.game-mode: HorizontalLayout {
+        spacing: 12px;
+        Status {
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            text: Live.game == "" ? @tr("Waiting for a game in fullscreen.")
+                : Live.efficient > 0 ? @tr("Boosting {}. Background programs in efficiency mode: {}.", Live.game, Live.efficient)
+                : @tr("Boosting {}.", Live.game);
+        }
+        if Live.game != "": Button {
+            text: @tr("Not a game");
+            tall: 28px;
+            clicked => { Live.not-a-game(); }
+        }
+    }
+    if Live.game-mode && Live.game == "" && Live.last.name != "": Text {
+        color: Theme.muted;
+        font-size: 12px;
+        wrap: word-wrap;
+        text: @tr("Last game: {} from {} to {}.", Live.last.name, Live.last.from, Live.last.to)
+            + (Live.last.priority ? " " + @tr("High priority.") : "")
+            + (Live.last.cores ? " " + @tr("Kept on the fast cores.") : "")
+            + (Live.last.services > 0 ? " " + @tr("{n} service paused." | "{n} services paused." % Live.last.services) : "")
+            + (Live.last.wifi ? " " + @tr("Wi-Fi scans off.") : "")
+            + (Live.last.efficient > 0
+                ? " " + @tr("Up to {n} background program in efficiency mode." | "Up to {n} background programs in efficiency mode." % Live.last.efficient)
+                : "");
     }
 
     if Live.game-mode: VerticalLayout {
@@ -155,6 +257,21 @@ export component GameModeCard inherits LiveCard {
             text: @tr("Dedicated graphics card for detected games");
             detail: @tr("Each game found is set to the dedicated GPU in Windows graphics settings, from its next start. A choice you already made there stays. Turning this off removes the ones Vantix set.");
             checked <=> Live.gpu;
+        }
+        Rectangle { height: 6px; }
+        GameList {
+            title: @tr("Always a game");
+            detail: @tr("Boosted whenever it's in front, in a window too.");
+            names: Live.always;
+            add => { Live.add-game(true); }
+            remove(i) => { Live.remove-game(true, i); }
+        }
+        GameList {
+            title: @tr("Never a game");
+            detail: @tr("Never boosted, even in fullscreen.");
+            names: Live.never;
+            add => { Live.add-game(false); }
+            remove(i) => { Live.remove-game(false, i); }
         }
     }
 }

@@ -31,7 +31,8 @@ use windows::Win32::UI::Shell::{
     FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, KF_FLAG_DEFAULT, SHFILEOPSTRUCTW,
     SHFileOperationW, SHGetKnownFolderPath, SIGDN_FILESYSPATH,
 };
-use windows::core::{GUID, PCWSTR};
+use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+use windows::core::{GUID, PCWSTR, w};
 
 use crate::space;
 
@@ -103,11 +104,25 @@ fn known_folder(id: &GUID) -> Option<PathBuf> {
 
 /// Windows' folder picker; `None` when cancelled.
 pub fn pick_folder(owner: Option<HWND>) -> Option<PathBuf> {
+    pick(owner, true)
+}
+
+/// Windows' file picker, for one program; `None` when cancelled.
+pub fn pick_exe(owner: Option<HWND>) -> Option<PathBuf> {
+    pick(owner, false)
+}
+
+fn pick(owner: Option<HWND>, folder: bool) -> Option<PathBuf> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
-        let options = dialog.GetOptions().ok()?;
-        dialog.SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).ok()?;
+        let options = dialog.GetOptions().ok()? | FOS_FORCEFILESYSTEM;
+        if folder {
+            dialog.SetOptions(options | FOS_PICKFOLDERS).ok()?;
+        } else {
+            dialog.SetOptions(options).ok()?;
+            dialog.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("*.exe"), pszSpec: w!("*.exe") }]).ok()?;
+        }
         dialog.Show(owner).ok()?;
         let path = dialog.GetResult().ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
         let text = path.to_string().ok();
