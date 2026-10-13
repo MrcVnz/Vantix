@@ -2571,3 +2571,136 @@ msgstr "{} de {} programas"
 
 msgid "No program by that name."
 msgstr "Nenhum programa com esse nome."
+
+
+msgid "Home"
+msgstr "Início"
+
+msgid "Updates"
+msgstr "Atualizações"
+
+msgid "Version {} is out"
+msgstr "A versão {} saiu"
+
+msgid "Asking GitHub for the latest version..."
+msgstr "Perguntando ao GitHub qual é a versão mais nova..."
+
+msgid "This is the latest version."
+msgstr "Esta é a versão mais nova."
+
+msgid "No version has been published yet."
+msgstr "Nenhuma versão foi publicada ainda."
+
+msgid "You have {}. The download is checked against its SHA-256 before anything changes."
+msgstr "Você tem a {}. O download é conferido pelo SHA-256 antes de qualquer mudança."
+
+msgid "{} of {}"
+msgstr "{} de {}"
+
+msgid "Downloaded and checked. Vantix closes and opens again on the new version, with your settings."
+msgstr "Baixada e conferida. O Vantix fecha e abre de novo já na versão nova, com as suas configurações."
+
+msgid "Installing..."
+msgstr "Instalando..."
+
+msgid "GitHub didn't answer. Check the connection and try again."
+msgstr "O GitHub não respondeu. Confira a conexão e tente de novo."
+
+msgid "GitHub refused the request. Try again in an hour."
+msgstr "O GitHub recusou o pedido. Tente de novo daqui a uma hora."
+
+msgid "That release has no file to download yet."
+msgstr "Essa versão ainda não tem arquivo para baixar."
+
+msgid "The download didn't match its SHA-256 and was thrown away. Nothing changed."
+msgstr "O download não bateu com o SHA-256 e foi descartado. Nada mudou."
+
+msgid "The download couldn't be saved."
+msgstr "Não foi possível salvar o download."
+
+msgid "The new version couldn't take the old one's place. Vantix was left as it was."
+msgstr "A versão nova não conseguiu substituir a antiga. O Vantix ficou como estava."
+
+msgid "Vantix looks for a new version once a day."
+msgstr "O Vantix procura uma versão nova uma vez por dia."
+
+msgid "Install and restart"
+msgstr "Instalar e reiniciar"
+
+msgid "Checking..."
+msgstr "Verificando..."
+
+msgid "Check now"
+msgstr "Verificar agora"
+
+msgid "How the PC is doing, and what's new in Vantix."
+msgstr "Como o PC está, e o que há de novo no Vantix."
+
+msgid "This PC"
+msgstr "Este PC"
+
+msgid "Memory in use"
+msgstr "Memória em uso"
+
+msgid "Health of {}"
+msgstr "Saúde do {}"
+
+msgid "Reading..."
+msgstr "Lendo..."
+
+msgid "Restore point"
+msgstr "Ponto de restauração"
+
+msgid "Kept"
+msgstr "Guardado"
+
+msgid "Quick actions"
+msgstr "Ações rápidas"
+
+msgid "Clean memory now"
+msgstr "Limpar memória agora"
+
+msgid "Quick level"
+msgstr "Nível rápido"
+
+msgid "Deep level"
+msgstr "Nível profundo"
+
+msgid "Standard level"
+msgstr "Nível padrão"
+
+msgid "Boosts a game while it runs and puts everything back after."
+msgstr "Dá o boost no jogo enquanto ele roda e devolve tudo depois."
+
+msgid "Holds back background programs that hog the CPU."
+msgstr "Segura programas em segundo plano que tomam a CPU."
+
+msgid "What's new in {}"
+msgstr "Novidades da {}"
+
+msgid "Got it"
+msgstr "Entendi"
+
+msgid "Vantix on GitHub"
+msgstr "Vantix no GitHub"
+
+msgid "Support it with a star"
+msgstr "Apoie com uma estrela"
+
+msgid "Helps other people find Vantix."
+msgstr "Ajuda outras pessoas a encontrar o Vantix."
+
+msgid "Want to contribute?"
+msgstr "Quer contribuir?"
+
+msgid "How to suggest changes, translate or send code."
+msgstr "Como sugerir mudanças, traduzir ou enviar código."
+
+msgid "Report a problem"
+msgstr "Reportar um problema"
+
+msgid "Opens a new issue. Say what happened and attach crash.log if there is one."
+msgstr "Abre uma issue nova. Conte o que aconteceu e anexe o crash.log, se houver."
+
+msgid "Download update"
+msgstr "Baixar atualização"

@@ -1,0 +1,370 @@
+//! Updates from GitHub Releases: asks for the latest release, downloads its exe, checks it
+//! against the SHA-256 published next to it and swaps it in for the running one. Every
+//! call here blocks, so run them off the UI thread.
+
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::{Deserialize, Serialize};
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::Networking::WinHttp::{WinHttpReadData, WinHttpSendRequest, WinHttpSetTimeouts};
+use windows::Win32::Security::Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHash};
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+
+use crate::{net, settings};
+
+const LATEST: &str = "https://api.github.com/repos/MrcVnz/Vantix/releases/latest";
+/// Every release carries these two assets: the exe and its hash, as `sha256sum` writes it.
+const EXE: &str = "vantix.exe";
+const SHA: &str = "vantix.exe.sha256";
+/// Passed to the new exe with the old one's pid, see `wait_for_old`.
+const UPDATED_ARG: &str = "--updated";
+/// Where the release notes of an installed update wait to be read, in the data folder.
+const NOTES: &str = "whats-new.json";
+
+#[derive(Clone, Debug)]
+pub struct Release {
+    /// As "1.2.0", without the v of the tag.
+    pub version: String,
+    /// The release body, Markdown as written on GitHub.
+    pub notes: String,
+    pub size: u64,
+    exe: String,
+    sha: String,
+}
+
+pub enum Check {
+    Current,
+    Newer(Release),
+    /// Nothing published yet. GitHub also says so for a private repo.
+    NoReleases,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Error {
+    /// No answer at all: offline, DNS, a proxy or a timeout.
+    Offline,
+    /// An answer other than 200, like the 403 of the hourly limit.
+    Refused(u32),
+    Unreadable,
+    /// The release is out without the exe or its hash.
+    NoExe,
+    /// The download didn't match its hash and was thrown away.
+    BadHash,
+    /// The download couldn't be saved.
+    Disk,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Offline => write!(f, "no answer from GitHub"),
+            Error::Refused(status) => write!(f, "GitHub answered {status}"),
+            Error::Unreadable => write!(f, "unreadable answer"),
+            Error::NoExe => write!(f, "the release has no {EXE} and {SHA}"),
+            Error::BadHash => write!(f, "the download doesn't match its SHA-256"),
+            Error::Disk => write!(f, "the download couldn't be saved"),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Answer {
+    tag_name: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    assets: Vec<Asset>,
+}
+
+#[derive(Deserialize)]
+struct Asset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+}
+
+pub fn check() -> Result<Check, Error> {
+    let (status, body) = get(LATEST, Some("Accept: application/vnd.github+json"), 1 << 20, None)?;
+    match status {
+        200 => {}
+        404 => return Ok(Check::NoReleases),
+        status => return Err(Error::Refused(status)),
+    }
+    let answer: Answer = serde_json::from_slice(&body).map_err(|_| Error::Unreadable)?;
+    let version = parse_version(&answer.tag_name).ok_or(Error::Unreadable)?;
+    if answer.draft || answer.prerelease || !newer(version, parse_version(env!("CARGO_PKG_VERSION"))) {
+        return Ok(Check::Current);
+    }
+    let asset = |name: &str| answer.assets.iter().find(|a| a.name.eq_ignore_ascii_case(name));
+    let (Some(exe), Some(sha)) = (asset(EXE), asset(SHA)) else { return Err(Error::NoExe) };
+    Ok(Check::Newer(Release {
+        version: format!("{}.{}.{}", version[0], version[1], version[2]),
+        notes: answer.body.clone().unwrap_or_default(),
+        size: exe.size,
+        exe: exe.browser_download_url.clone(),
+        sha: sha.browser_download_url.clone(),
+    }))
+}
+
+/// "v1.2.3" or "1.2" as numbers; anything else, like a "-beta" suffix, isn't a version.
+fn parse_version(tag: &str) -> Option<[u32; 3]> {
+    let mut version = [0; 3];
+    let mut parts = tag.trim().trim_start_matches(['v', 'V']).split('.');
+    for (slot, part) in version.iter_mut().zip(parts.by_ref()) {
+        *slot = part.parse().ok()?;
+    }
+    parts.next().is_none().then_some(version)
+}
+
+fn newer(release: [u32; 3], running: Option<[u32; 3]>) -> bool {
+    running.is_none_or(|running| release > running)
+}
+
+/// Downloads the release's exe into the data folder and returns where it is. It's only
+/// written once its hash matches, so a bad download leaves nothing behind. `done`
+/// counts the bytes as they come.
+pub fn download(release: &Release, done: &AtomicU64) -> Result<PathBuf, Error> {
+    let (status, sha) = get(&release.sha, None, 4096, None)?;
+    if status != 200 {
+        return Err(Error::Refused(status));
+    }
+    let want = parse_sha(&sha).ok_or(Error::Unreadable)?;
+    let (status, exe) = get(&release.exe, None, 256 << 20, Some(done))?;
+    if status != 200 {
+        return Err(Error::Refused(status));
+    }
+    if sha256(&exe) != Some(want) {
+        return Err(Error::BadHash);
+    }
+    let dir = settings::data_dir().join("update");
+    let path = dir.join(EXE);
+    fs::create_dir_all(&dir).and_then(|()| fs::write(&path, &exe)).map_err(|_| Error::Disk)?;
+    Ok(path)
+}
+
+/// The first word of the file, which `sha256sum` follows with the file name.
+fn parse_sha(text: &[u8]) -> Option<[u8; 32]> {
+    let hex = std::str::from_utf8(text).ok()?.split_whitespace().next()?;
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut hash = [0; 32];
+    for (byte, pair) in hash.iter_mut().zip(hex.as_bytes().chunks(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(hash)
+}
+
+fn sha256(data: &[u8]) -> Option<[u8; 32]> {
+    let mut hash = [0; 32];
+    unsafe { BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, data, &mut hash) }.ok().ok()?;
+    Some(hash)
+}
+
+/// GET over HTTPS, following redirects, as GitHub's asset links need. Gives the status
+/// and up to `limit` bytes of the body.
+fn get(
+    url: &str,
+    header: Option<&str>,
+    limit: usize,
+    done: Option<&AtomicU64>,
+) -> Result<(u32, Vec<u8>), Error> {
+    let (host, port, path) = split_url(url).ok_or(Error::Unreadable)?;
+    let (_session, connection) = net::http_connection(host, port).ok_or(Error::Offline)?;
+    let request = net::request(&connection, "GET", path).ok_or(Error::Offline)?;
+    // Longer waits than the network tests use: a slow line, or an antivirus looking at
+    // the exe on its way in, can hold the first bytes for a while.
+    unsafe { WinHttpSetTimeouts(request.0, 10_000, 10_000, 10_000, 30_000) }.map_err(|_| Error::Offline)?;
+    let header: Option<Vec<u16>> = header.map(|h| h.encode_utf16().collect());
+    unsafe { WinHttpSendRequest(request.0, header.as_deref(), None, 0, 0, 0) }.map_err(|_| Error::Offline)?;
+    let status = net::status(&request).ok_or(Error::Offline)?;
+    let mut body = Vec::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let mut read = 0;
+        unsafe { WinHttpReadData(request.0, buffer.as_mut_ptr().cast(), buffer.len() as u32, &mut read) }
+            .map_err(|_| Error::Offline)?;
+        if read == 0 {
+            break;
+        }
+        if body.len() + read as usize > limit {
+            return Err(Error::Unreadable);
+        }
+        body.extend_from_slice(&buffer[..read as usize]);
+        if let Some(done) = done {
+            done.store(body.len() as u64, Ordering::Relaxed);
+        }
+    }
+    Ok((status, body))
+}
+
+/// Host, port and path of an https URL.
+fn split_url(url: &str) -> Option<(&str, u16, &str)> {
+    let rest = url.strip_prefix("https://")?;
+    let (authority, path) = rest.find('/').map_or((rest, "/"), |at| rest.split_at(at));
+    match authority.rsplit_once(':') {
+        Some((host, port)) => Some((host, port.parse().ok()?, path)),
+        None => Some((authority, 443, path)),
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct WhatsNew {
+    version: String,
+    notes: String,
+}
+
+/// Swaps the downloaded exe in for the running one and starts it. A running exe can be
+/// renamed but not overwritten, so it steps aside as `<name>.old.exe`, which the new one
+/// deletes once this one is gone. The path stays the same, so the logon task still
+/// points at it. Anything that fails puts the old exe back. The caller then quits.
+pub fn install(new: &Path, release: &Release) -> io::Result<()> {
+    let exe = std::env::current_exe()?;
+    let old = old_exe(&exe);
+    // Written first, so the new exe finds them however fast it starts. Notes left over
+    // from a swap that failed name another version and stay hidden.
+    let notes = WhatsNew { version: release.version.clone(), notes: release.notes.clone() };
+    if let Ok(json) = serde_json::to_vec(&notes) {
+        let _ = fs::write(settings::data_dir().join(NOTES), json);
+    }
+    let _ = fs::remove_file(&old);
+    fs::rename(&exe, &old)?;
+    // The data folder can be on another drive than the exe, where a rename can't go.
+    let started = fs::rename(new, &exe)
+        .or_else(|_| fs::copy(new, &exe).map(drop))
+        .and_then(|()| Command::new(&exe).arg(UPDATED_ARG).arg(std::process::id().to_string()).spawn());
+    if let Err(e) = started {
+        let _ = fs::remove_file(&exe);
+        let _ = fs::rename(&old, &exe);
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn old_exe(exe: &Path) -> PathBuf {
+    let stem = exe.file_stem().unwrap_or_default().to_string_lossy();
+    exe.with_file_name(format!("{stem}.old.exe"))
+}
+
+/// In the exe an update just started: waits for the one it replaced to finish closing,
+/// which puts back what its governor changed, so the single-instance check that follows
+/// doesn't send this one away.
+pub fn wait_for_old() {
+    let mut args = std::env::args().skip_while(|arg| arg != UPDATED_ARG).skip(1);
+    let Some(pid) = args.next().and_then(|pid| pid.parse::<u32>().ok()) else { return };
+    unsafe {
+        if let Ok(process) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            WaitForSingleObject(process, 30_000);
+            let _ = CloseHandle(process);
+        }
+    }
+}
+
+/// On every start: deletes what an update leaves behind, the old exe and the download.
+/// Only once this is the one instance, so a second launch can't take the download away
+/// from the one running.
+pub fn clean_up() {
+    if let Ok(exe) = std::env::current_exe() {
+        let old = old_exe(&exe);
+        // Windows may still hold the old exe for a moment after its process ended.
+        for _ in 0..10 {
+            if fs::remove_file(&old).is_ok() || !old.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    let _ = fs::remove_dir_all(settings::data_dir().join("update"));
+}
+
+/// The notes of the update that brought this version, until they're dismissed.
+pub fn whats_new() -> Option<String> {
+    let text = fs::read(settings::data_dir().join(NOTES)).ok()?;
+    let notes: WhatsNew = serde_json::from_slice(&text).ok()?;
+    (notes.version == env!("CARGO_PKG_VERSION")).then(|| plain(&notes.notes))
+}
+
+pub fn dismiss_whats_new() {
+    let _ = fs::remove_file(settings::data_dir().join(NOTES));
+}
+
+/// Release notes as plain text: headings lose their #, list items get a bullet and bold
+/// markers go.
+fn plain(markdown: &str) -> String {
+    let lines: Vec<String> = markdown
+        .lines()
+        .map(|line| {
+            let line = line.trim_end().replace("**", "");
+            let indent = line.len() - line.trim_start().len();
+            let text = line.trim_start();
+            if let Some(item) = text.strip_prefix("- ").or_else(|| text.strip_prefix("* ")) {
+                format!("{}• {item}", " ".repeat(indent))
+            } else {
+                text.trim_start_matches('#').trim_start().to_string()
+            }
+        })
+        .collect();
+    lines.join("\n").trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions() {
+        assert_eq!(parse_version("v1.2.3"), Some([1, 2, 3]));
+        assert_eq!(parse_version("0.2"), Some([0, 2, 0]));
+        assert_eq!(parse_version("v1.2.3-beta"), None);
+        assert_eq!(parse_version("1.2.3.4"), None);
+        assert_eq!(parse_version("latest"), None);
+        assert!(newer([0, 2, 0], Some([0, 1, 9])));
+        assert!(newer([0, 10, 0], Some([0, 9, 0])));
+        assert!(!newer([0, 1, 0], Some([0, 1, 0])));
+        assert!(!newer([0, 0, 9], Some([0, 1, 0])));
+    }
+
+    #[test]
+    fn hashes() {
+        let line = b"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  vantix.exe\n";
+        assert_eq!(parse_sha(line), sha256(b""));
+        let upper = b"E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+        assert_eq!(parse_sha(upper), sha256(b""));
+        assert_eq!(parse_sha(b"e3b0c442"), None);
+        assert_eq!(parse_sha(b"zz"), None);
+    }
+
+    #[test]
+    fn urls() {
+        assert_eq!(split_url(LATEST), Some(("api.github.com", 443, "/repos/MrcVnz/Vantix/releases/latest")));
+        assert_eq!(split_url("https://example.com:8443"), Some(("example.com", 8443, "/")));
+        assert_eq!(split_url("http://example.com/a"), None);
+    }
+
+    #[test]
+    fn notes_as_text() {
+        let md = "## What's new\r\n\r\n- **Monitor** lists every process\n  * per pid\n# Fixes";
+        assert_eq!(plain(md), "What's new\n\n• Monitor lists every process\n  • per pid\nFixes");
+    }
+
+    /// Asks GitHub for real. The repo has no release yet, or is private, so this sees
+    /// NoReleases; once one is out it should see Current.
+    #[test]
+    #[ignore]
+    fn asks_github() {
+        match check() {
+            Ok(Check::NoReleases) => println!("no releases"),
+            Ok(Check::Current) => println!("current"),
+            Ok(Check::Newer(release)) => println!("newer: {}", release.version),
+            Err(e) => panic!("{e}"),
+        }
+    }
+}

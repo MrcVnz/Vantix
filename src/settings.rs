@@ -106,6 +106,8 @@ pub struct Settings {
     /// Exe names game mode always treats as games, and never does.
     pub games: Vec<String>,
     pub not_games: Vec<String>,
+    /// Last time GitHub answered whether there's a newer version.
+    pub update_checked_at: Option<DateTime<Local>>,
 }
 
 impl Default for Settings {
@@ -128,6 +130,7 @@ impl Default for Settings {
             dup_folders: None,
             games: Vec::new(),
             not_games: Vec::new(),
+            update_checked_at: None,
         }
     }
 }

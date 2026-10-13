@@ -1,0 +1,397 @@
+import { Theme, Icons, Icon, Card, Button, Toggle } from "theme.slint";
+import { Memory, CleanState } from "memory.slint";
+import { Live } from "live.slint";
+import { Storage } from "storage.slint";
+
+export enum UpdateStep { idle, checking, current, none, failed, available, downloading, ready, installing }
+
+/// The Home page: updates, the release notes after one, and a summary of the PC.
+export global Home {
+    /// The running version.
+    in property <string> version;
+    in property <UpdateStep> step;
+    /// The version on offer, from `available` on.
+    in property <string> latest;
+    /// Why the last step failed: 0 no answer, 1 refused, 2 no exe in the release,
+    /// 3 hash mismatch, 4 couldn't save, 5 couldn't swap the exe.
+    in property <int> why;
+    in property <float> progress;
+    /// Downloaded so far and the whole file, while downloading.
+    in property <string> got;
+    in property <string> size;
+    /// The notes of the update that brought this version; empty hides the card.
+    in property <string> notes;
+
+    /// The system drive's health as on the Storage page: 0 healthy, 1 worth watching,
+    /// 2 back it up now, 3 unknown, -1 still reading.
+    in property <int> disk: -1;
+    in property <string> disk-name: "C:";
+    in property <bool> baseline;
+    in property <int> changes;
+
+    callback check();
+    callback download();
+    callback install();
+    /// 0 the repo, to star it, 1 how to contribute, 2 a new issue.
+    callback link(int);
+    callback dismiss-notes();
+    /// Asked ten times a second while downloading, for the bar.
+    callback poll();
+}
+
+component SummaryRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> value;
+    in property <color> tint: Theme.text;
+    callback clicked;
+
+    height: 42px;
+    border-radius: Theme.radius-small;
+    background: area.has-hover ? Theme.raised : transparent;
+    animate background { duration: 120ms; }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                data: root.icon;
+                size: 16px;
+                tint: Theme.muted;
+            }
+        }
+        Text {
+            text: root.label;
+            color: Theme.muted;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.value;
+            color: root.tint;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                data: Icons.next;
+                size: 14px;
+                tint: area.has-hover ? Theme.text : Theme.faint;
+            }
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component LinkRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> detail;
+    callback clicked;
+
+    border-radius: Theme.radius-small;
+    background: area.has-hover ? Theme.raised : transparent;
+    animate background { duration: 120ms; }
+
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                data: root.icon;
+                size: 18px;
+                tint: Theme.accent;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.text;
+                color: Theme.text;
+                font-weight: 600;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                data: Icons.external;
+                size: 14px;
+                tint: area.has-hover ? Theme.text : Theme.faint;
+            }
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component UpdateCard inherits Card {
+    property <bool> busy: Home.step == UpdateStep.checking || Home.step == UpdateStep.downloading || Home.step == UpdateStep.installing;
+
+    title: @tr("Updates");
+    icon: Icons.download;
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: Home.step == UpdateStep.available || Home.step == UpdateStep.downloading || Home.step == UpdateStep.ready || Home.step == UpdateStep.installing
+                ? @tr("Version {} is out", Home.latest)
+                : "Vantix " + Home.version;
+            color: Theme.text;
+            font-size: 15px;
+            font-weight: 600;
+        }
+        Text {
+            text: Home.step == UpdateStep.checking ? @tr("Asking GitHub for the latest version...")
+                : Home.step == UpdateStep.current ? @tr("This is the latest version.")
+                : Home.step == UpdateStep.none ? @tr("No version has been published yet.")
+                : Home.step == UpdateStep.available ? @tr("You have {}. The download is checked against its SHA-256 before anything changes.", Home.version)
+                : Home.step == UpdateStep.downloading ? @tr("{} of {}", Home.got, Home.size)
+                : Home.step == UpdateStep.ready ? @tr("Downloaded and checked. Vantix closes and opens again on the new version, with your settings.")
+                : Home.step == UpdateStep.installing ? @tr("Installing...")
+                : Home.step == UpdateStep.failed ? (
+                    Home.why == 0 ? @tr("GitHub didn't answer. Check the connection and try again.")
+                    : Home.why == 1 ? @tr("GitHub refused the request. Try again in an hour.")
+                    : Home.why == 2 ? @tr("That release has no file to download yet.")
+                    : Home.why == 3 ? @tr("The download didn't match its SHA-256 and was thrown away. Nothing changed.")
+                    : Home.why == 4 ? @tr("The download couldn't be saved.")
+                    : @tr("The new version couldn't take the old one's place. Vantix was left as it was."))
+                : @tr("Vantix looks for a new version once a day.");
+            color: Home.step == UpdateStep.failed ? Theme.warn : Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+
+    if Home.step == UpdateStep.downloading: Rectangle {
+        height: 6px;
+        border-radius: 3px;
+        background: Theme.raised;
+        Rectangle {
+            x: 0;
+            width: parent.width * clamp(Home.progress, 0, 1);
+            border-radius: 3px;
+            background: Theme.accent;
+        }
+    }
+
+    HorizontalLayout {
+        alignment: start;
+        spacing: 10px;
+        if Home.step == UpdateStep.available: Button {
+            text: @tr("Download update");
+            icon: Icons.download;
+            primary: true;
+            tall: 36px;
+            clicked => { Home.download(); }
+        }
+        if Home.step == UpdateStep.ready: Button {
+            text: @tr("Install and restart");
+            icon: Icons.power;
+            primary: true;
+            tall: 36px;
+            clicked => { Home.install(); }
+        }
+        if Home.step != UpdateStep.ready: Button {
+            text: Home.step == UpdateStep.checking ? @tr("Checking...") : @tr("Check now");
+            icon: Icons.history;
+            enabled: !root.busy;
+            tall: 36px;
+            clicked => { Home.check(); }
+        }
+    }
+
+    Timer {
+        interval: 100ms;
+        running: Home.step == UpdateStep.downloading;
+        triggered => { Home.poll(); }
+    }
+}
+
+export component HomePage inherits VerticalLayout {
+    callback go(int);
+
+    padding: 32px;
+    padding-top: 26px;
+    spacing: Theme.gap;
+    alignment: start;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: @tr("Home");
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("How the PC is doing, and what's new in Vantix.");
+            color: Theme.muted;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: Theme.gap;
+            alignment: start;
+
+            Card {
+                title: @tr("This PC");
+                icon: Icons.monitor;
+                pad: 14px;
+
+                VerticalLayout {
+                    spacing: 2px;
+                    SummaryRow {
+                        icon: Icons.memory;
+                        label: @tr("Memory in use");
+                        value: Math.round(Memory.load * 100) + "% · " + Memory.in-use;
+                        tint: Memory.load >= 0.9 ? Theme.warn : Theme.text;
+                        clicked => { root.go(0); }
+                    }
+                    SummaryRow {
+                        icon: Icons.drive;
+                        label: @tr("Health of {}", Home.disk-name);
+                        value: Home.disk == -1 ? @tr("Reading...")
+                            : Home.disk == 0 ? @tr("Healthy")
+                            : Home.disk == 1 ? @tr("Worth watching")
+                            : Home.disk == 2 ? @tr("Back it up now")
+                            : @tr("Health unknown");
+                        tint: Home.disk == 0 ? Theme.accent : Home.disk == 1 ? Theme.warn : Home.disk == 2 ? Theme.bad : Theme.muted;
+                        clicked => {
+                            Storage.tab = 2;
+                            root.go(3);
+                        }
+                    }
+                    SummaryRow {
+                        icon: Icons.shield;
+                        label: @tr("Restore point");
+                        value: Home.baseline ? @tr("Kept") : @tr("None");
+                        tint: Home.baseline ? Theme.accent : Theme.muted;
+                        clicked => { root.go(2); }
+                    }
+                    SummaryRow {
+                        icon: Icons.sparkles;
+                        label: @tr("Changes made by Vantix");
+                        value: Home.changes;
+                        clicked => { root.go(2); }
+                    }
+                }
+            }
+
+            Card {
+                title: @tr("Quick actions");
+                icon: Icons.zap;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    Button {
+                        text: Memory.state == CleanState.running ? @tr("Cleaning...") : @tr("Clean memory now");
+                        icon: Icons.sparkles;
+                        primary: true;
+                        enabled: Memory.state != CleanState.running;
+                        tall: 36px;
+                        clicked => { Memory.clean(); }
+                    }
+                    Text {
+                        text: Memory.state == CleanState.done ? @tr("Freed {}", Memory.last-freed)
+                            : Memory.level == 0 ? @tr("Quick level") : Memory.level == 2 ? @tr("Deep level") : @tr("Standard level");
+                        color: Memory.state == CleanState.done ? Theme.accent : Theme.muted;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                Toggle {
+                    text: @tr("Real-time game mode");
+                    detail: @tr("Boosts a game while it runs and puts everything back after.");
+                    checked <=> Live.game-mode;
+                    toggled => { Live.changed(); }
+                }
+                Toggle {
+                    text: @tr("ProBalance");
+                    detail: @tr("Holds back background programs that hog the CPU.");
+                    checked <=> Live.probalance;
+                    toggled => { Live.changed(); }
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: Theme.gap;
+            alignment: start;
+
+            if Home.notes != "": Card {
+                title: @tr("What's new in {}", Home.version);
+                icon: Icons.sparkles;
+
+                Text {
+                    text: Home.notes;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: @tr("Got it");
+                        icon: Icons.check;
+                        tall: 36px;
+                        clicked => { Home.dismiss-notes(); }
+                    }
+                }
+            }
+
+            UpdateCard {}
+
+            Card {
+                title: @tr("Vantix on GitHub");
+                icon: Icons.globe;
+                pad: 14px;
+
+                VerticalLayout {
+                    spacing: 2px;
+                    LinkRow {
+                        icon: Icons.star;
+                        text: @tr("Support it with a star");
+                        detail: @tr("Helps other people find Vantix.");
+                        clicked => { Home.link(0); }
+                    }
+                    LinkRow {
+                        icon: Icons.heart;
+                        text: @tr("Want to contribute?");
+                        detail: @tr("How to suggest changes, translate or send code.");
+                        clicked => { Home.link(1); }
+                    }
+                    LinkRow {
+                        icon: Icons.alert;
+                        text: @tr("Report a problem");
+                        detail: @tr("Opens a new issue. Say what happened and attach crash.log if there is one.");
+                        clicked => { Home.link(2); }
+                    }
+                }
+            }
+        }
+    }
+}

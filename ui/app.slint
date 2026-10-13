@@ -13,10 +13,11 @@ import { Services, ServicesPage, ServiceRow } from "services.slint";
 import { Space, SpacePage, SpaceRow } from "space.slint";
 import { Dupes, DupesPage, DupRow } from "dupes.slint";
 import { Input, InputPage, InputDevice } from "input.slint";
+import { Home, HomePage, UpdateStep } from "home.slint";
 
 export { Memory, CleanState, HistoryRow, Protection, Job, JobState, RestorePoint, Storage, CleanupRow, CleanupEntry, DriveRow, RowState }
 export { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, Terms, TermsLine, TermsParagraph }
-export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Feature, GpuCard, Services, ServiceRow, Space, SpaceRow, Dupes, DupRow, Input, InputDevice, Theme }
+export { Startup, StartupRow, Live, Net, PingRow, BloatResult, DnsRow, UsageRow, Monitor, ProgramRow, Feature, GpuCard, Services, ServiceRow, Space, SpaceRow, Dupes, DupRow, Input, InputDevice, Home, UpdateStep, Theme }
 export { Tray } from "tray.slint";
 
 export global Preferences {
@@ -236,7 +237,8 @@ component SettingsPage inherits VerticalLayout {
 
 export component AppWindow inherits Window {
     /// Read by main.rs to run the live ping and traffic count only while they're on screen.
-    out property <int> page;
+    /// Home is 13, added last so the other pages kept their numbers.
+    out property <int> page: 13;
     /// Flipped after a restore from minimized. The background differs by one step of
     /// blue between the two values, which no one can see but makes the whole window dirty.
     in-out property <bool> repaint;
@@ -275,30 +277,37 @@ export component AppWindow inherits Window {
                 padding-left: 8px;
                 spacing: 4px;
 
-                HorizontalLayout {
-                    spacing: 12px;
-                    padding-left: 16px;
-                    Image {
-                        source: @image-url("../res/vantix.png");
-                        // 1/8 of the 256 px art, so every pixel stays the same size.
-                        width: 32px;
-                        height: 32px;
-                        image-rendering: pixelated;
+                // The logo goes Home.
+                Rectangle {
+                    HorizontalLayout {
+                        spacing: 12px;
+                        padding-left: 16px;
+                        Image {
+                            source: @image-url("../res/vantix.png");
+                            // 1/8 of the 256 px art, so every pixel stays the same size.
+                            width: 32px;
+                            height: 32px;
+                            image-rendering: pixelated;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "Vantix";
+                                color: Theme.text;
+                                font-family: Theme.display-font;
+                                font-size: 17px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: "v" + Preferences.version;
+                                color: Theme.faint;
+                                font-size: 11.5px;
+                            }
+                        }
                     }
-                    VerticalLayout {
-                        alignment: center;
-                        Text {
-                            text: "Vantix";
-                            color: Theme.text;
-                            font-family: Theme.display-font;
-                            font-size: 17px;
-                            font-weight: 700;
-                        }
-                        Text {
-                            text: "v" + Preferences.version;
-                            color: Theme.faint;
-                            font-size: 11.5px;
-                        }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.page = 13; }
                     }
                 }
 
@@ -313,6 +322,15 @@ export component AppWindow inherits Window {
                         height: nav.content-height;
                         padding-left: 12px;
                         spacing: 2px;
+
+                        Rectangle { height: 14px; }
+
+                        NavItem {
+                            text: @tr("Home");
+                            icon: Icons.home;
+                            active: root.page == 13;
+                            clicked => { root.page = 13; }
+                        }
 
                         Rectangle { height: 14px; }
 
@@ -563,6 +581,14 @@ export component AppWindow inherits Window {
                     p12 := ServicesPage {
                         width: s12.visible-width;
                         height: s12.content-height;
+                    }
+                }
+                if root.page == 13: s13 := PageScroll {
+                    needs: p13.min-height;
+                    p13 := HomePage {
+                        width: s13.visible-width;
+                        height: s13.content-height;
+                        go(page) => { root.page = page; }
                     }
                 }
             }

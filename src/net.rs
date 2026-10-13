@@ -608,7 +608,7 @@ fn sample_pings(
 }
 
 /// A WinHTTP handle that closes itself.
-struct Http(*mut core::ffi::c_void);
+pub(crate) struct Http(pub(crate) *mut core::ffi::c_void);
 
 impl Http {
     fn ok(self) -> Option<Self> {
@@ -626,10 +626,10 @@ impl Drop for Http {
     }
 }
 
-fn http_connection() -> Option<(Http, Http)> {
+pub(crate) fn http_connection(host: &str, port: u16) -> Option<(Http, Http)> {
     unsafe {
         let session = Http(WinHttpOpen(
-            &HSTRING::from("Vantix"),
+            &HSTRING::from(concat!("Vantix/", env!("CARGO_PKG_VERSION"))),
             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             PCWSTR::null(),
             PCWSTR::null(),
@@ -637,12 +637,12 @@ fn http_connection() -> Option<(Http, Http)> {
         ))
         .ok()?;
         WinHttpSetTimeouts(session.0, 5000, 5000, 5000, 5000).ok()?;
-        let connection = Http(WinHttpConnect(session.0, &HSTRING::from(SPEED_HOST), 443, 0)).ok()?;
+        let connection = Http(WinHttpConnect(session.0, &HSTRING::from(host), port, 0)).ok()?;
         Some((session, connection))
     }
 }
 
-fn request(connection: &Http, verb: &str, path: &str) -> Option<Http> {
+pub(crate) fn request(connection: &Http, verb: &str, path: &str) -> Option<Http> {
     unsafe {
         Http(WinHttpOpenRequest(
             connection.0,
@@ -660,25 +660,30 @@ fn request(connection: &Http, verb: &str, path: &str) -> Option<Http> {
 /// Received a 200. Anything else ends the stream, so a refusal can't turn into a loop of
 /// requests.
 fn answered_ok(request: &Http) -> bool {
+    status(request) == Some(200)
+}
+
+/// Waits for the answer to a sent request and gives its HTTP status.
+pub(crate) fn status(request: &Http) -> Option<u32> {
     let mut status = 0u32;
     let mut size = 4u32;
     unsafe {
-        WinHttpReceiveResponse(request.0, std::ptr::null_mut()).is_ok()
-            && WinHttpQueryHeaders(
-                request.0,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                PCWSTR::null(),
-                Some((&raw mut status).cast()),
-                &mut size,
-                std::ptr::null_mut(),
-            )
-            .is_ok()
-            && status == 200
+        WinHttpReceiveResponse(request.0, std::ptr::null_mut()).ok()?;
+        WinHttpQueryHeaders(
+            request.0,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            PCWSTR::null(),
+            Some((&raw mut status).cast()),
+            &mut size,
+            std::ptr::null_mut(),
+        )
+        .ok()?;
     }
+    Some(status)
 }
 
 fn download_stream(bytes: &AtomicU64, stop: &AtomicBool) {
-    let Some((_session, connection)) = http_connection() else { return };
+    let Some((_session, connection)) = http_connection(SPEED_HOST, 443) else { return };
     let mut buffer = vec![0u8; 64 * 1024];
     while !stop.load(Ordering::Relaxed) {
         // The endpoint refuses more than 50 MB per request.
@@ -704,7 +709,7 @@ fn download_stream(bytes: &AtomicU64, stop: &AtomicBool) {
 
 fn upload_stream(bytes: &AtomicU64, stop: &AtomicBool) {
     const BODY: u32 = 25_000_000;
-    let Some((_session, connection)) = http_connection() else { return };
+    let Some((_session, connection)) = http_connection(SPEED_HOST, 443) else { return };
     // Not all zeros, so nothing along the way can compress it.
     let mut seed = random();
     let chunk: Vec<u8> = (0..64 * 1024)
@@ -2868,7 +2873,7 @@ fn reach(icmp: Option<&Icmp>) -> (Status, Detail) {
 const CLOCK_SLACK: i64 = 120;
 
 fn https(probe: impl FnOnce() -> Option<Probe>) -> (Status, Detail) {
-    let Some((_session, connection)) = http_connection() else {
+    let Some((_session, connection)) = http_connection(SPEED_HOST, 443) else {
         return (Status::Skipped, Detail::Untestable);
     };
     let Some(request) = request(&connection, "HEAD", "/__down?bytes=1") else {

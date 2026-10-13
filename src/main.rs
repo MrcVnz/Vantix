@@ -11,6 +11,7 @@ mod memory;
 mod monitor;
 mod net;
 mod pages {
+    pub mod home;
     pub mod monitor;
 }
 mod reg;
@@ -22,6 +23,7 @@ mod startup;
 mod system;
 mod text;
 mod tweaks;
+mod update;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -141,6 +143,7 @@ struct State {
     /// The Input page: a device read is running, and the mouse rate for the meter's chart.
     input_reading: bool,
     input_rates: VecDeque<u32>,
+    home: pages::home::HomeState,
 }
 
 /// What a tweak looks like on this machine, read off the UI thread.
@@ -271,9 +274,11 @@ fn shutdown() {
 }
 
 fn run() -> Result<(), slint::PlatformError> {
+    update::wait_for_old();
     if !system::single_instance() {
         return Ok(());
     }
+    update::clean_up();
     system::init_com();
     memory::enable_privileges();
 
@@ -334,6 +339,7 @@ fn run() -> Result<(), slint::PlatformError> {
             dup_searched: false,
             input_reading: false,
             input_rates: VecDeque::with_capacity(SPARK_SAMPLES),
+            home: pages::home::HomeState::new(),
         }),
         window: RefCell::new(None),
         tray: RefCell::new(None),
@@ -900,6 +906,7 @@ impl App {
         }));
         show_dupes(&ui, &mut self.state.borrow_mut());
         self.connect_monitor(&ui);
+        self.connect_home(&ui);
         let input = ui.global::<Input>();
         input.on_refresh(bind(self, |app| app.refresh_input()));
         input.on_start(bind(self, |app| app.start_meter()));
@@ -1017,6 +1024,7 @@ impl App {
         });
         self.tick_internet();
         self.tick_monitor();
+        self.tick_home();
         self.tick_input();
         if let Some(progress) = &self.state.borrow().space_progress {
             let done = progress.load(Ordering::Relaxed) as f32 / 1000.0;
