@@ -2562,3 +2562,12 @@ msgstr "O jogo recusou a mudança de prioridade, provavelmente pelo anti-cheat. 
 
 msgid "The game refused the priority change, likely its anti-cheat."
 msgstr "O jogo recusou a mudança de prioridade, provavelmente pelo anti-cheat."
+
+msgid "{} programs running, {} processes"
+msgstr "{} programas abertos, {} processos"
+
+msgid "{} of {} programs"
+msgstr "{} de {} programas"
+
+msgid "No program by that name."
+msgstr "Nenhum programa com esse nome."

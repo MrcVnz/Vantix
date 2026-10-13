@@ -1,8 +1,9 @@
 //! The Monitor page: CPU per core and clock, graphics card load and memory, disks, the
-//! network and the busiest programs. A thread samples once a second, and only while the
+//! network and every program running. A thread samples once a second, and only while the
 //! page is open: the GPU counters alone cost a few milliseconds of CPU per read. No
 //! temperatures, which need a kernel driver.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -48,8 +49,8 @@ use crate::{governor, net, reg};
 
 /// Seconds of history behind each sparkline.
 pub const HISTORY: usize = 60;
-/// Rows in the program list. It's rebuilt every second, so it never scrolls.
-pub const ROWS: usize = 12;
+/// How often a row's EcoQoS is read again. Anything else can change it, but rarely.
+const ECO_EVERY: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
@@ -85,15 +86,45 @@ pub struct Disk {
 #[derive(Clone, Default)]
 pub struct Program {
     pub name: String,
-    pub pids: Vec<u32>,
+    /// In the order of the list: busiest first by the column it's sorted on.
+    pub processes: Vec<Process>,
     pub cpu: f32,
     pub gpu: f32,
     /// Private working set, what Task Manager calls Memory.
     pub memory: u64,
-    /// EcoQoS on the first process, `None` when Windows doesn't let Vantix look.
+    /// EcoQoS on the oldest process, `None` when Windows doesn't let Vantix look.
     pub eco: Option<bool>,
+    /// False for Windows itself, for what Vantix can't open and for Vantix.
     pub can_end: bool,
 }
+
+impl Program {
+    pub fn pids(&self) -> Vec<u32> {
+        self.processes.iter().map(|p| p.pid).collect()
+    }
+}
+
+/// One process of a program, for the row opened up.
+#[derive(Clone, Default)]
+pub struct Process {
+    pub pid: u32,
+    pub cpu: f32,
+    pub gpu: f32,
+    pub memory: u64,
+}
+
+/// Whether a process may be ended never changes, so it's read once per process; EcoQoS
+/// is read again every few seconds, or right after the Eco button. With a hundred and
+/// more programs on the list, opening each one every second would cost more than the
+/// rest of the sample.
+struct Facts {
+    can_end: bool,
+    eco: Option<bool>,
+    read: Instant,
+}
+
+/// Set by the Eco button, so the next sample reads every row's EcoQoS again.
+static ECO_CHANGED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
@@ -239,6 +270,7 @@ fn run(stop: &AtomicBool) {
     let (base_mhz, threads) = (info.base_mhz, info.threads.max(1));
     let mut history: [VecDeque<f64>; 4] = Default::default();
     let mut times: HashMap<u32, u64> = HashMap::new();
+    let mut facts: HashMap<(u32, u64), Facts> = HashMap::new();
     let mut octets: Option<(u32, u64, u64)> = None;
     // Open already from an earlier visit: then the reading starts here, and its first
     // difference lands with the cheap sample. A visit that ended minutes ago left a
@@ -356,7 +388,7 @@ fn run(stop: &AtomicBool) {
             }
         }
 
-        snapshot.programs = programs(&mut times, &gpu_by_pid, elapsed, threads);
+        snapshot.programs = programs(&mut times, &mut facts, &gpu_by_pid, elapsed, threads);
 
         let values = [
             f64::from(snapshot.cpu),
@@ -451,15 +483,19 @@ pub struct Raw {
 
 /// Every process but Vantix itself, in one call.
 pub fn process_list() -> Vec<Raw> {
+    read_processes(false)
+}
+
+fn read_processes(keep_own: bool) -> Vec<Raw> {
     thread_local! {
         // Kept between calls and grown to what the list needs: a fresh buffer every
         // second cost more than the read itself.
         static BUFFER: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
     }
-    BUFFER.with_borrow_mut(read_processes)
+    BUFFER.with_borrow_mut(|buffer| parse_processes(buffer, keep_own))
 }
 
-fn read_processes(buffer: &mut Vec<u64>) -> Vec<Raw> {
+fn parse_processes(buffer: &mut Vec<u64>, keep_own: bool) -> Vec<Raw> {
     const INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
     loop {
         let mut needed = 0u32;
@@ -488,7 +524,7 @@ fn read_processes(buffer: &mut Vec<u64>) -> Vec<Raw> {
     loop {
         let entry = unsafe { &*buffer.as_ptr().cast::<u8>().add(offset).cast::<ProcessEntry>() };
         let pid = entry.pid as u32;
-        if pid != 0 && pid != own && !entry.name.is_null() {
+        if pid != 0 && (keep_own || pid != own) && !entry.name.is_null() {
             list.push(Raw {
                 pid,
                 parent: entry.parent as u32,
@@ -581,39 +617,99 @@ fn drive_devices() -> Vec<(String, String)> {
         .collect()
 }
 
-fn programs(times: &mut HashMap<u32, u64>, gpu: &HashMap<u32, f32>, elapsed: f64, threads: u32) -> Vec<Program> {
+/// Every program, Vantix and the processes of session 0 included, sorted by the column
+/// picked on the page.
+fn programs(
+    times: &mut HashMap<u32, u64>,
+    facts: &mut HashMap<(u32, u64), Facts>,
+    gpu: &HashMap<u32, f32>,
+    elapsed: f64,
+    threads: u32,
+) -> Vec<Program> {
     let budget = elapsed * 10_000_000.0 * f64::from(threads);
+    let own = unsafe { GetCurrentProcessId() };
     let mut seen: HashMap<u32, u64> = HashMap::new();
-    let mut groups: HashMap<String, Program> = HashMap::new();
-    for entry in process_list() {
+    // Per program, its oldest process: the one whose EcoQoS the row shows, and what Vantix
+    // and the critical check go by.
+    let mut groups: HashMap<String, (Program, (u32, u64), bool)> = HashMap::new();
+    for entry in read_processes(true) {
         seen.insert(entry.pid, entry.cpu_time);
         let cpu =
             times.get(&entry.pid).map_or(0.0, |before| entry.cpu_time.saturating_sub(*before) as f64 / budget * 100.0);
-        let program = groups
-            .entry(entry.name.to_ascii_lowercase())
-            .or_insert_with(|| Program { name: entry.name.clone(), ..Default::default() });
-        program.pids.push(entry.pid);
-        program.cpu += cpu as f32;
-        program.gpu += gpu.get(&entry.pid).copied().unwrap_or(0.0);
-        program.memory += entry.memory;
+        let (program, oldest, has_own) = groups.entry(entry.name.to_ascii_lowercase()).or_insert_with(|| {
+            (Program { name: entry.name.clone(), ..Default::default() }, (entry.pid, entry.created), false)
+        });
+        let process = Process {
+            pid: entry.pid,
+            cpu: cpu as f32,
+            gpu: gpu.get(&entry.pid).copied().unwrap_or(0.0),
+            memory: entry.memory,
+        };
+        program.cpu += process.cpu;
+        program.gpu += process.gpu;
+        program.memory += process.memory;
+        program.processes.push(process);
+        if entry.created < oldest.1 {
+            *oldest = (entry.pid, entry.created);
+        }
+        *has_own |= entry.pid == own;
     }
     *times = seen;
 
-    let mut list: Vec<Program> = groups.into_values().collect();
-    let key = |p: &Program| match sort() {
-        Sort::Cpu => (p.cpu as f64, p.memory as f64),
-        Sort::Gpu => (p.gpu as f64, p.cpu as f64),
-        Sort::Memory => (p.memory as f64, p.cpu as f64),
+    let eco_changed = ECO_CHANGED.swap(false, Ordering::Relaxed);
+    let mut list = Vec::with_capacity(groups.len());
+    let mut kept = std::collections::HashSet::with_capacity(groups.len());
+    for (mut program, key, has_own) in groups.into_values() {
+        let fact = match facts.entry(key) {
+            Entry::Occupied(entry) => {
+                let fact = entry.into_mut();
+                if eco_changed || fact.read.elapsed() >= ECO_EVERY {
+                    fact.eco =
+                        with_process(key.0, PROCESS_QUERY_LIMITED_INFORMATION, governor::eco_set).flatten();
+                    fact.read = Instant::now();
+                }
+                fact
+            }
+            Entry::Vacant(entry) => {
+                let (not_critical, eco) = with_process(key.0, PROCESS_QUERY_LIMITED_INFORMATION, |handle| {
+                    (!critical(handle), governor::eco_set(handle))
+                })
+                .unwrap_or((false, None));
+                entry.insert(Facts {
+                    can_end: not_critical && endable(&program.name),
+                    eco,
+                    read: Instant::now(),
+                })
+            }
+        };
+        program.eco = fact.eco;
+        // Ending Vantix from its own window would only drop whatever it has changed.
+        program.can_end = fact.can_end && !has_own;
+        kept.insert(key);
+        list.push(program);
+    }
+    facts.retain(|key, _| kept.contains(key));
+
+    let sort = sort();
+    let key = |cpu: f32, gpu: f32, memory: u64| match sort {
+        Sort::Cpu => (f64::from(cpu), memory as f64),
+        Sort::Gpu => (f64::from(gpu), f64::from(cpu)),
+        Sort::Memory => (memory as f64, f64::from(cpu)),
     };
-    list.sort_by(|a, b| key(b).partial_cmp(&key(a)).unwrap_or(std::cmp::Ordering::Equal));
-    list.truncate(ROWS);
+    let order = |a: (f64, f64), b: (f64, f64)| b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal);
+    fn lower(name: &str) -> impl Iterator<Item = u8> + '_ {
+        name.bytes().map(|c| c.to_ascii_lowercase())
+    }
+    // The groups come out of a hash map in a new order every second, so ties, like the
+    // dozens of programs at 0% GPU, go by name or the rows would trade places on their own.
+    list.sort_by(|a, b| {
+        order(key(a.cpu, a.gpu, a.memory), key(b.cpu, b.gpu, b.memory))
+            .then_with(|| lower(&a.name).cmp(lower(&b.name)))
+    });
     for program in &mut list {
         program.cpu = program.cpu.min(100.0);
         program.gpu = program.gpu.min(100.0);
-        let first = program.pids[0];
-        program.eco = with_process(first, PROCESS_QUERY_LIMITED_INFORMATION, governor::eco_set).flatten();
-        program.can_end = endable(&program.name)
-            && with_process(first, PROCESS_QUERY_LIMITED_INFORMATION, |handle| !critical(handle)).unwrap_or(false);
+        program.processes.sort_by(|a, b| order(key(a.cpu, a.gpu, a.memory), key(b.cpu, b.gpu, b.memory)));
     }
     list
 }
@@ -836,7 +932,9 @@ fn service_names() -> HashMap<u32, Vec<(String, String)>> {
 }
 
 pub fn set_eco(name: &str, pids: &[u32], on: bool) -> usize {
-    each_of(name, pids, PROCESS_SET_INFORMATION, |handle| governor::eco(handle, on))
+    let done = each_of(name, pids, PROCESS_SET_INFORMATION, |handle| governor::eco(handle, on));
+    ECO_CHANGED.store(true, Ordering::Relaxed);
+    done
 }
 
 /// Moves the processes' pages out to the standby list. They come back from RAM, not the
@@ -1282,6 +1380,32 @@ mod tests {
         println!("services holding a process: {}", service_names().len());
     }
 
+    /// The list holds every process Windows reports, the same count as Get-Process
+    /// without its Idle entry, the test itself among them with End off, and session 0:
+    /// `cargo test lists_every_process -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn lists_every_process() {
+        let mut facts = HashMap::new();
+        let list = programs(&mut HashMap::new(), &mut facts, &HashMap::new(), 1.0, 1);
+        let ours: usize = list.iter().map(|p| p.processes.len()).sum();
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "(Get-Process).Count"])
+            .output()
+            .expect("powershell didn't run");
+        let theirs: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+        println!("{} programs, {ours} processes; Get-Process says {theirs} with Idle", list.len());
+        // Get-Process adds Idle; and powershell itself, plus whatever started or ended in
+        // the second between the two counts.
+        assert!(ours.abs_diff(theirs - 1) <= 4, "{ours} against {}", theirs - 1);
+
+        let own = unsafe { GetCurrentProcessId() };
+        let me = list.iter().find(|p| p.processes.iter().any(|x| x.pid == own)).expect("the test isn't listed");
+        assert!(!me.can_end);
+        assert!(list.iter().any(|p| p.name.eq_ignore_ascii_case("services.exe")));
+        assert_eq!(facts.len(), list.len());
+    }
+
     /// `cargo test monitor_sample -- --ignored --nocapture`
     #[test]
     #[ignore]
@@ -1335,7 +1459,7 @@ mod tests {
             println!(
                 "{:<28} x{:<3} cpu {:>5.1}% gpu {:>5.1}% mem {:>6} MB eco {:?} end {}",
                 p.name,
-                p.pids.len(),
+                p.processes.len(),
                 p.cpu,
                 p.gpu,
                 p.memory >> 20,

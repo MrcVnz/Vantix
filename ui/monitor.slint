@@ -1,5 +1,14 @@
-import { Theme, Card, Button, Chip, Tip } from "theme.slint";
+import { Theme, Icons, Icon, Card, Button, Chip, Tip } from "theme.slint";
+import { LineEdit, ListView } from "std-widgets.slint";
 import { Sparkline } from "memory.slint";
+
+/// One process of a program, shown when its row is open.
+export struct ProcessRow {
+    pid: int,
+    cpu: string,
+    gpu: string,
+    memory: string,
+}
 
 /// Every process with the same exe name, as one row.
 export struct ProgramRow {
@@ -20,6 +29,8 @@ export struct ProgramRow {
     status-name: string,
     /// Status 4, and the service isn't one Vantix keeps its hands off.
     can-stop: bool,
+    /// Filled only for the open row.
+    processes: [ProcessRow],
 }
 
 /// An instruction set the CPU and Windows both support. The hint comes from
@@ -80,11 +91,18 @@ export global Monitor {
     /// The first reading of the performance counters is in, so the numbers are real.
     in property <bool> measured;
     in property <[ProgramRow]> programs;
+    /// Everything running, before the search.
+    in property <int> program-count;
+    in property <int> process-count;
+    in-out property <string> search;
+    /// The row showing its processes, by name.
+    in-out property <string> open;
     /// 0 CPU, 1 GPU, 2 memory.
     in-out property <int> sort;
     /// The pointer is over the list, so main.rs keeps the rows where they are.
     in-out property <bool> hovering;
     callback sorted(int);
+    callback refilter();
     callback end(int);
     callback stop-service(int);
     callback eco(int, bool);
@@ -296,104 +314,154 @@ component Cell inherits Text {
     vertical-alignment: center;
 }
 
-component ProgramLine inherits HorizontalLayout {
+component ProcessLine inherits HorizontalLayout {
+    in property <ProcessRow> item;
+
+    spacing: 16px;
+    padding-left: 34px;
+    padding-right: 18px;
+    height: 26px;
+
+    Text {
+        horizontal-stretch: 1;
+        text: "PID " + root.item.pid;
+        color: Theme.muted;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+    Cell { width: 64px; text: root.item.cpu; font-size: 12px; color: Theme.muted; }
+    if Monitor.has-gpu: Cell { width: 64px; text: root.item.gpu; font-size: 12px; color: Theme.muted; }
+    Cell { width: 84px; text: root.item.memory; font-size: 12px; color: Theme.muted; }
+    Rectangle { width: 270px; }
+}
+
+component ProgramLine inherits VerticalLayout {
     in property <ProgramRow> item;
     in property <int> index;
+    property <bool> open: Monitor.open == root.item.name;
     /// The program the first click on End was for. Tied to the name, not the row, so a
     /// list that reorders between the two clicks can't end something else.
     property <string> armed;
     property <bool> confirm: root.armed != "" && root.armed == root.item.name;
 
-    spacing: 16px;
-    padding-left: 6px;
-    padding-right: 6px;
-    height: 44px;
+    HorizontalLayout {
+        spacing: 16px;
+        padding-left: 6px;
+        // Clear of the list's scroll bar; the header lines up with it.
+        padding-right: 18px;
+        height: 44px;
 
-    HorizontalLayout {
-        horizontal-stretch: 1;
-        spacing: 8px;
-        alignment: start;
-        Text {
-            text: root.item.name;
-            color: Theme.text;
-            font-weight: 600;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-        if root.item.count > 1: Text {
-            text: "×" + root.item.count;
-            color: Theme.faint;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-        if root.item.status > 0: VerticalLayout {
-            alignment: center;
-            Chip {
-                text: root.item.status == 1 ? @tr("Ending...")
-                    : root.item.status == 2 ? @tr("Ended")
-                    : root.item.status == 3 ? @tr("Protected by Windows")
-                    : root.item.status == 4 ? @tr("Service: {}", root.item.status-name)
-                    : root.item.status == 5 ? @tr("Reopened by {}", root.item.status-name)
-                    : root.item.status == 6 ? @tr("Part of Windows")
-                    : root.item.status == 7 ? @tr("Windows wouldn't let it end")
-                    : root.item.status == 8 ? @tr("Stopping...")
-                    : root.item.status == 9 ? @tr("Service stopped")
-                    : root.item.status == 10 ? @tr("Windows started it again")
-                    : @tr("Windows wouldn't stop it");
-                tint: root.item.status == 2 || root.item.status == 9 ? Theme.accent
-                    : root.item.status == 1 || root.item.status == 8 ? Theme.muted
-                    : Theme.warn;
+        // The name opens the row on its processes.
+        Rectangle {
+            horizontal-stretch: 1;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        data: root.open ? Icons.up : Icons.down;
+                        size: 14px;
+                        tint: name.has-hover ? Theme.text : Theme.faint;
+                    }
+                }
+                Text {
+                    text: root.item.name;
+                    color: Theme.text;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if root.item.count > 1: Text {
+                    text: "×" + root.item.count;
+                    color: Theme.faint;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                if root.item.status > 0: VerticalLayout {
+                    alignment: center;
+                    Chip {
+                        text: root.item.status == 1 ? @tr("Ending...")
+                            : root.item.status == 2 ? @tr("Ended")
+                            : root.item.status == 3 ? @tr("Protected by Windows")
+                            : root.item.status == 4 ? @tr("Service: {}", root.item.status-name)
+                            : root.item.status == 5 ? @tr("Reopened by {}", root.item.status-name)
+                            : root.item.status == 6 ? @tr("Part of Windows")
+                            : root.item.status == 7 ? @tr("Windows wouldn't let it end")
+                            : root.item.status == 8 ? @tr("Stopping...")
+                            : root.item.status == 9 ? @tr("Service stopped")
+                            : root.item.status == 10 ? @tr("Windows started it again")
+                            : @tr("Windows wouldn't stop it");
+                        tint: root.item.status == 2 || root.item.status == 9 ? Theme.accent
+                            : root.item.status == 1 || root.item.status == 8 ? Theme.muted
+                            : Theme.warn;
+                    }
+                }
             }
-        }
-    }
-    Cell { width: 64px; text: root.item.cpu; }
-    if Monitor.has-gpu: Cell { width: 64px; text: root.item.gpu; }
-    Cell { width: 84px; text: root.item.memory; }
-    HorizontalLayout {
-        width: 270px;
-        spacing: 6px;
-        alignment: end;
-        VerticalLayout {
-            alignment: center;
-            Button {
-                text: @tr("Eco");
-                tall: 30px;
-                primary: root.item.eco == 1;
-                enabled: root.item.eco >= 0;
-                clicked => { Monitor.eco(root.index, root.item.eco != 1); }
-            }
-        }
-        VerticalLayout {
-            alignment: center;
-            Button {
-                text: @tr("Trim");
-                tall: 30px;
-                clicked => { Monitor.trim(root.index); }
-            }
-        }
-        VerticalLayout {
-            alignment: center;
-            // Ending a service's process only makes Windows start it again, so the button
-            // stops the service instead.
-            Button {
-                text: root.confirm ? @tr("Sure?") : root.item.can-stop ? @tr("Stop service") : @tr("End");
-                tall: 30px;
-                danger: true;
-                enabled: (root.item.can-end || root.item.can-stop) && root.item.status != 1 && root.item.status != 8;
+
+            name := TouchArea {
+                mouse-cursor: pointer;
                 clicked => {
-                    if root.confirm {
-                        root.armed = "";
-                        if root.item.can-stop {
-                            Monitor.stop-service(root.index);
+                    Monitor.open = root.open ? "" : root.item.name;
+                    Monitor.refilter();
+                }
+            }
+        }
+        Cell { width: 64px; text: root.item.cpu; }
+        if Monitor.has-gpu: Cell { width: 64px; text: root.item.gpu; }
+        Cell { width: 84px; text: root.item.memory; }
+        HorizontalLayout {
+            width: 270px;
+            spacing: 6px;
+            alignment: end;
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Eco");
+                    tall: 30px;
+                    primary: root.item.eco == 1;
+                    enabled: root.item.eco >= 0;
+                    clicked => { Monitor.eco(root.index, root.item.eco != 1); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: @tr("Trim");
+                    tall: 30px;
+                    clicked => { Monitor.trim(root.index); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                // Ending a service's process only makes Windows start it again, so the button
+                // stops the service instead.
+                Button {
+                    text: root.confirm ? @tr("Sure?") : root.item.can-stop ? @tr("Stop service") : @tr("End");
+                    tall: 30px;
+                    danger: true;
+                    enabled: (root.item.can-end || root.item.can-stop) && root.item.status != 1 && root.item.status != 8;
+                    clicked => {
+                        if root.confirm {
+                            root.armed = "";
+                            if root.item.can-stop {
+                                Monitor.stop-service(root.index);
+                            } else {
+                                Monitor.end(root.index);
+                            }
                         } else {
-                            Monitor.end(root.index);
+                            root.armed = root.item.name;
                         }
-                    } else {
-                        root.armed = root.item.name;
                     }
                 }
             }
         }
+    }
+
+    if root.open: VerticalLayout {
+        padding-bottom: 8px;
+        for process in root.item.processes: ProcessLine { item: process; }
     }
 
     Timer {
@@ -580,9 +648,31 @@ export component MonitorPage inherits VerticalLayout {
         vertical-stretch: 1;
 
         HorizontalLayout {
+            spacing: Theme.gap;
+            padding-left: 6px;
+            Text {
+                horizontal-stretch: 1;
+                text: Monitor.program-count == 0 ? ""
+                    : Monitor.search == ""
+                    ? @tr("{} programs running, {} processes", Monitor.program-count, Monitor.process-count)
+                    : @tr("{} of {} programs", Monitor.programs.length, Monitor.program-count);
+                color: Theme.text;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            LineEdit {
+                width: 260px;
+                placeholder-text: @tr("Search by name");
+                text <=> Monitor.search;
+                edited => { Monitor.refilter(); }
+            }
+        }
+
+        HorizontalLayout {
             spacing: 16px;
             padding-left: 6px;
-            padding-right: 6px;
+            padding-right: 18px;
             Text {
                 horizontal-stretch: 1;
                 text: @tr("Program");
@@ -604,13 +694,15 @@ export component MonitorPage inherits VerticalLayout {
 
         if Monitor.programs.length == 0: Text {
             x: 6px;
-            text: @tr("Measuring...");
+            text: Monitor.program-count == 0 ? @tr("Measuring...") : @tr("No program by that name.");
             color: Theme.faint;
         }
 
+        // Tall enough for a handful of rows when the window is short; the page scrolls to it.
         list := TouchArea {
-            VerticalLayout {
-                alignment: start;
+            min-height: 280px;
+            vertical-stretch: 1;
+            ListView {
                 for program[i] in Monitor.programs: ProgramLine {
                     item: program;
                     index: i;
