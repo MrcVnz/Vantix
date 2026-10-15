@@ -44,6 +44,8 @@ export global Memory {
     in property <string> auto-countdown;
     /// False right after a limit cleanup, until usage drops back under the limit.
     in property <bool> auto-armed: true;
+    /// A game is running, so the automatic cleanup waits for it to end.
+    in property <bool> auto-held;
 
     in property <CleanState> state;
     in property <string> last-freed;
@@ -696,7 +698,8 @@ export component MemoryPage inherits VerticalLayout {
                     }
                 }
                 Text {
-                    text: Memory.applied-mode == 1 ? @tr("Next cleanup in {}", Memory.auto-countdown)
+                    text: Memory.auto-held ? @tr("Paused while you play. Cleaning now would make the game stutter.")
+                        : Memory.applied-mode == 1 ? @tr("Next cleanup in {}", Memory.auto-countdown)
                         : Memory.auto-armed ? @tr("Watching: now {}%, cleans above {}%", round(Memory.load * 100), Memory.applied-percent)
                         : @tr("Cleaned. Waits for usage to drop below {}% before cleaning again.", Memory.applied-percent);
                     color: Theme.text;

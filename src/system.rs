@@ -59,23 +59,28 @@ pub fn init_com() {
 /// Appends a line to `vantix.log` in the data folder, for failures nothing else would show.
 pub fn log_error(what: &str, error: &dyn std::fmt::Display) {
     let line = format!("{} {what}: {error}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
-    let _ = std::fs::create_dir_all(data_dir());
-    if let Ok(mut file) =
-        std::fs::OpenOptions::new().create(true).append(true).open(data_dir().join("vantix.log"))
-    {
-        let _ = file.write_all(line.as_bytes());
-    }
+    append_log(&data_dir().join("vantix.log"), &line);
 }
 
 /// Appends a crash report to crash.log, next to vantix.log, and gives back its path.
 pub fn log_crash(text: &str) -> std::path::PathBuf {
     let path = data_dir().join("crash.log");
     let line = format!("{} Vantix {}\n{text}\n\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), env!("CARGO_PKG_VERSION"));
-    let _ = std::fs::create_dir_all(data_dir());
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = file.write_all(line.as_bytes());
-    }
+    append_log(&path, &line);
     path
+}
+
+/// A log past this size starts over, keeping the previous one as `<name>.old.log`.
+const LOG_LIMIT: u64 = 1 << 20;
+
+pub fn append_log(path: &std::path::Path, text: &str) {
+    let _ = std::fs::create_dir_all(data_dir());
+    if std::fs::metadata(path).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
+        let _ = std::fs::rename(path, path.with_extension("old.log"));
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(text.as_bytes());
+    }
 }
 
 /// A plain Windows message box, for when the window itself can't be counted on.

@@ -97,7 +97,10 @@ impl App {
         if disk_due {
             self.read_system_disk();
         }
-        self.with_ui(|ui| show_home(ui, &self.state.borrow()));
+        // Only for the page on screen; every change of step shows it right away anyway.
+        if self.with_ui_value(|ui| ui.get_page() == HOME_PAGE).unwrap_or(false) {
+            self.with_ui(|ui| show_home(ui, &self.state.borrow()));
+        }
     }
 
     fn check_update(self: &Rc<Self>) {
@@ -142,7 +145,8 @@ impl App {
         self.with_ui(|ui| show_home(ui, &self.state.borrow()));
         self.run_job(
             move || {
-                let path = update::download(&release, &done);
+                let mut release = release;
+                let path = update::download(&mut release, &done);
                 (release, path)
             },
             |app, result| {

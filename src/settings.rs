@@ -210,13 +210,61 @@ pub enum Unreadable {
 
 /// What went wrong with the undo journal this session, kept for the window to tell.
 static JOURNAL: std::sync::Mutex<Option<Unreadable>> = std::sync::Mutex::new(None);
+/// The journal as last loaded or saved, for the checks that run on worker threads: one
+/// read of the file at start instead of one per tweak on every refresh.
+static CACHE: std::sync::Mutex<Vec<Change>> = std::sync::Mutex::new(Vec::new());
+
+/// The journal as the window has it. Changes made since the last save aren't in it yet.
+pub fn journal() -> Vec<Change> {
+    CACHE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+pub fn in_journal(id: &str) -> bool {
+    CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|c| c.id == id)
+}
 
 /// The undo journal. Empty when missing or unusable; `journal_problem` says which.
 pub fn load_changes() -> Vec<Change> {
-    read_json(&data_dir().join("changes.json")).unwrap_or_else(|problem| {
-        JOURNAL.lock().unwrap().get_or_insert(problem);
-        Vec::new()
-    })
+    let mut changes: Vec<Change> = match read_json(&data_dir().join("changes.json")) {
+        Ok(changes) => changes,
+        Err(problem) => {
+            JOURNAL.lock().unwrap().get_or_insert(problem);
+            Vec::new()
+        }
+    };
+    // Changes made right before Vantix ended, with no time to write them to the journal.
+    let pending: Vec<Change> = read_json(&pending_path()).unwrap_or_default();
+    let before = changes.len();
+    for change in pending {
+        if !changes.iter().any(|c| c.id == change.id && c.plan == change.plan) {
+            changes.push(change);
+        }
+    }
+    if changes.len() == before || save_changes(&changes).is_ok() {
+        clear_pending();
+    }
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = changes.clone();
+    changes
+}
+
+fn pending_path() -> PathBuf {
+    data_dir().join("changes.pending.json")
+}
+
+/// Records a change the moment it's made, from the thread that made it, for
+/// `load_changes` to find if Vantix ends before the journal is written.
+pub fn note_pending(change: Change) {
+    let path = pending_path();
+    let mut pending: Vec<Change> = read_json(&path).unwrap_or_default();
+    pending.push(change);
+    if let Err(e) = write_json(&path, &pending) {
+        crate::system::log_error("save changes.pending.json", &e);
+    }
+}
+
+/// Once the journal holds them.
+pub fn clear_pending() {
+    let _ = fs::remove_file(pending_path());
 }
 
 pub fn journal_problem() -> Option<Unreadable> {
@@ -224,6 +272,8 @@ pub fn journal_problem() -> Option<Unreadable> {
 }
 
 pub fn save_changes(changes: &[Change]) -> io::Result<()> {
+    // What the window holds is the truth, saved or not.
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = changes.to_vec();
     // A journal that's there but couldn't be read still holds changes this session
     // doesn't know about. Writing ours over it would lose them for good.
     if *JOURNAL.lock().unwrap() == Some(Unreadable::Locked) {
@@ -270,10 +320,15 @@ pub(crate) fn read_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T,
 }
 
 /// Writes to a sibling temp file first so a crash mid-write never leaves a truncated file.
+/// The temp file reaches the disk before the rename: otherwise a power cut can keep the
+/// rename and lose the data, leaving an empty file where the undo journal was.
 pub(crate) fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
     fs::create_dir_all(path.parent().unwrap())?;
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_vec_pretty(value)?)?;
+    let mut file = fs::File::create(&tmp)?;
+    io::Write::write_all(&mut file, &serde_json::to_vec_pretty(value)?)?;
+    file.sync_all()?;
+    drop(file);
     fs::rename(tmp, path)
 }
 

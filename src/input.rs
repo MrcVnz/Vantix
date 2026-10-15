@@ -466,7 +466,7 @@ fn parameters(id: &str) -> String {
 pub const POWER_TWEAK: &str = "input-power-off";
 
 pub fn shows_power() -> bool {
-    crate::settings::load_changes().iter().any(|c| c.id == POWER_TWEAK)
+    crate::settings::in_journal(POWER_TWEAK)
         || power_nodes().iter().any(|(_, on)| *on)
 }
 
@@ -475,7 +475,7 @@ pub fn shows_power() -> bool {
 /// undone, and the journal would drop the Undo for the others.
 pub fn power_off() -> Result<bool> {
     let nodes = power_nodes();
-    let changes = crate::settings::load_changes();
+    let changes = crate::settings::journal();
     let made = changes.iter().find(|c| c.id == POWER_TWEAK && !c.reset);
     if let Some(previous) = made.and_then(|c| c.previous.as_deref()) {
         let mine: Vec<&str> = previous.split('|').filter_map(|pair| pair.rsplit_once('=')).map(|(id, _)| id).collect();

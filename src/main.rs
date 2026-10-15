@@ -210,6 +210,8 @@ struct App {
 const MIN_BUILD: u32 = 17763;
 
 static MAIN_THREAD: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
+/// Delete all Vantix data was confirmed; the data folder goes after shutdown.
+static RESET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn main() -> std::process::ExitCode {
     let _ = MAIN_THREAD.set(std::thread::current().id());
@@ -265,6 +267,8 @@ fn crash(text: &str) -> ! {
         )
     };
     system::message_box("Vantix", &message);
+    // After the box, so the old exe doesn't wait out its time for this one to close.
+    update::roll_back();
     std::process::exit(1)
 }
 
@@ -373,14 +377,25 @@ fn run() -> Result<(), slint::PlatformError> {
         app.start(!minimized)?;
     }
 
+    // A minute with the window's thread alive: an update that got this far works.
+    Timer::single_shot(Duration::from_secs(60), || {
+        std::thread::spawn(update::settled);
+    });
     let result = slint::run_event_loop_until_quit();
     shutdown();
+    if RESET.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = std::fs::remove_dir_all(settings::data_dir());
+    }
     result
 }
 
 /// Writes the undo journal; false when it couldn't, which the job sheet says.
 fn save_journal(changes: &[Change]) -> bool {
-    settings::save_changes(changes).inspect_err(|e| system::log_error("save changes.json", e)).is_ok()
+    let saved = settings::save_changes(changes).inspect_err(|e| system::log_error("save changes.json", e)).is_ok();
+    if saved {
+        settings::clear_pending();
+    }
+    saved
 }
 
 fn bind_with<T>(app: &Rc<App>, f: impl Fn(&Rc<App>, T) + 'static) -> impl Fn(T) + 'static {
@@ -637,7 +652,8 @@ impl App {
         });
         prefs.on_reset_all(|| {
             system::unregister_all();
-            let _ = std::fs::remove_dir_all(settings::data_dir());
+            // Deleted once the governor has put things back: it writes there on its way out.
+            RESET.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = slint::quit_event_loop();
         });
         let protection = ui.global::<Protection>();
@@ -1053,7 +1069,11 @@ impl App {
                     ongoing: action.seconds.is_none(),
                 })
                 .collect();
-            live.set_actions(ModelRc::new(VecModel::from(actions)));
+            // A new model every second would redraw the list every second.
+            let shown = live.get_actions();
+            if shown.row_count() != actions.len() || shown.iter().zip(&actions).any(|(a, b)| a != *b) {
+                live.set_actions(ModelRc::new(VecModel::from(actions)));
+            }
             live.set_restrained(status.restrained as i32);
             live.set_efficient(status.efficient as i32);
         });
@@ -2064,6 +2084,7 @@ impl App {
 
     fn show_tweaks(&self, ui: &AppWindow) {
         let state = self.state.borrow();
+        ui.global::<Preferences>().set_applied(state.changes.len() as i32);
         let change = |id: &str| {
             state.changes.iter().find(|c| c.id == id && (c.plan.is_none() || c.plan == state.active_plan))
         };
@@ -2411,11 +2432,21 @@ impl App {
                         (Kind::Toggle { apply, .. }, Op::Reapply(_)) => apply().map(|_| None),
                         (Kind::Action { run }, _) => run().map(|_| None),
                     });
-                    let failed = result.is_err();
-                    outcomes.push((i, op, plan, result));
-                    if failed {
-                        break;
+                    // On the journal's way already, in case Vantix ends before it's written.
+                    if let (Ok(previous), Op::Apply | Op::Reset, Kind::Toggle { .. }) = (&result, &op, &tweak.kind) {
+                        settings::note_pending(Change {
+                            id: tweak.id.into(),
+                            time: Local::now(),
+                            previous: previous.clone(),
+                            boot: tweaks::boot_time(),
+                            reboot: tweak.reboot,
+                            freed: None,
+                            reset: matches!(op, Op::Reset),
+                            plan: plan.clone(),
+                        });
                     }
+                    // Undo all goes on past one that fails: the rest can still go back.
+                    outcomes.push((i, op, plan, result));
                 }
                 // The ones that went back, and to what, for the journal and the page.
                 let undone: Vec<(String, services::Start)> = services
@@ -2449,9 +2480,11 @@ impl App {
                     app.refresh_tweaks();
                     return;
                 };
+                // With several changes at once, each failure says which one it was.
+                let many = outcomes.len() > 1;
                 // Under 1 MB is just the noise of other programs writing.
                 let gained = (gained >= 1 << 20).then_some(gained);
-                let mut error = None;
+                let mut errors: Vec<String> = Vec::new();
                 let mut reboot = false;
                 let saved;
                 {
@@ -2502,16 +2535,16 @@ impl App {
                             }
                             Err(e) => {
                                 system::log_error(tweak.id, &e);
-                                error = Some(e.message());
+                                errors.push(if many { format!("{}: {}", app.tweak_title(i), e.message()) } else { e.message() });
                             }
                         }
                     }
                     saved = save_journal(&state.changes);
                 }
                 let again = std::mem::take(&mut app.state.borrow_mut().diag_again);
-                match error {
-                    Some(message) => app.set_job(JobState::Failed, &message),
-                    None => {
+                match errors.is_empty() {
+                    false => app.set_job(JobState::Failed, &errors.join("\n")),
+                    true => {
                         // A fix from the diagnosis shows its effect right away.
                         if again {
                             app.run_diagnose();
@@ -3497,8 +3530,11 @@ fn format_traffic(bytes: u64) -> String {
     if bytes < 1024 * 1024 { format!("{} KB", bytes.div_ceil(1024)) } else { format_bytes(bytes) }
 }
 
+/// Never while a game runs: emptying working sets and the standby list makes it fault
+/// its textures and code back in, which is the stutter the cleanup is meant to stop.
+/// What came due waits for the game to end.
 fn auto_clean_due(state: &State, load: u32) -> bool {
-    if state.cleaning {
+    if state.cleaning || governor::playing() {
         return false;
     }
     let auto = state.settings.auto_clean;
@@ -3522,6 +3558,7 @@ fn show_auto_status(ui: &AppWindow, state: &State) {
     let countdown = if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") };
     mem.set_auto_countdown(countdown.into());
     mem.set_auto_armed(state.limit_armed);
+    mem.set_auto_held(governor::playing());
 }
 
 fn show_stats(ui: &AppWindow, stats: &memory::Stats) {

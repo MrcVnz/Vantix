@@ -2746,3 +2746,15 @@ msgstr "Procurar um .exe"
 
 msgid "Add a program"
 msgstr "Adicionar programa"
+
+msgid "Paused while you play. Cleaning now would make the game stutter."
+msgstr "Pausada enquanto você joga. Limpar agora faria o jogo engasgar."
+
+msgid "{} changes made by Vantix are still applied. Undo them first under Protection: once the data is gone, they stay in Windows and only a restore point can take them back."
+msgstr "{} alterações feitas pelo Vantix ainda estão aplicadas. Desfaça antes em Proteção: sem os dados, elas ficam no Windows e só um ponto de restauração as desfaz."
+
+msgid "PID {}, started by {}"
+msgstr "PID {}, aberto por {}"
+
+msgid "End this one"
+msgstr "Finalizar este"

@@ -2,7 +2,8 @@
 //! A thread wakes once a second, measures every process and steps in only while there's
 //! a reason. Everything it changes is put back when the reason ends, when the feature is
 //! turned off and when Vantix exits. What would outlive a crash (stopped services, Wi-Fi
-//! scanning off) is also written to game.json and undone on the next start.
+//! scanning off, processes held back or in efficiency mode, the game's priority) is also
+//! written to game.json and undone on the next start.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -167,6 +168,11 @@ pub fn configure(config: Config) {
 
 pub fn status() -> Status {
     SHARED.get().map(|shared| shared.status.lock().unwrap().clone()).unwrap_or_default()
+}
+
+/// A game is being boosted right now.
+pub fn playing() -> bool {
+    SHARED.get().is_some_and(|shared| shared.status.lock().unwrap().game.is_some())
 }
 
 pub fn capabilities() -> Capabilities {
@@ -404,6 +410,8 @@ struct Governor {
     eco_skip: HashSet<u32>,
     candidate: Option<(u32, u32)>,
     game: Option<Game>,
+    /// What game.json says is changed, see `save_touched`.
+    saved_touched: Touched,
     last: Option<LastGame>,
     ticks: u64,
     me: u32,
@@ -427,11 +435,13 @@ fn run() {
     while !shared.stop.load(Ordering::Relaxed) {
         let config = shared.config.lock().unwrap().clone();
         governor.tick(&config, &shared.capabilities);
+        governor.save_touched();
         *shared.status.lock().unwrap() = governor.status();
         std::thread::sleep(Duration::from_secs(1));
     }
     governor.release_all();
     governor.end_game();
+    governor.save_touched();
 }
 
 impl Governor {
@@ -445,6 +455,27 @@ impl Governor {
             ),
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()) as f64,
             ..Default::default()
+        }
+    }
+
+    /// Which processes carry a change right now, by id and start time.
+    fn touched(&self) -> Touched {
+        let of = |pid: &u32| self.processes.get(pid).map(|p| (p.pid, p.created));
+        let mut touched = Touched {
+            held: self.restrained.keys().filter_map(of).collect(),
+            efficient: self.efficient.iter().filter_map(of).collect(),
+            game: self.game.as_ref().filter(|game| game.raised || game.cores).map(|game| (game.pid, game.created)),
+        };
+        touched.held.sort_unstable();
+        touched.efficient.sort_unstable();
+        touched
+    }
+
+    /// Writes `touched` to game.json when it changed, so a crash can't leave them as they are.
+    fn save_touched(&mut self) {
+        let touched = self.touched();
+        if touched != self.saved_touched && update_leftovers(|l| l.touched = touched.clone()) {
+            self.saved_touched = touched;
         }
     }
 
@@ -1425,6 +1456,19 @@ struct Leftovers {
     wifi: Vec<GUID>,
     /// Games Vantix pointed at the dedicated GPU.
     gpu: Vec<String>,
+    touched: Touched,
+}
+
+/// Processes as (pid, creation time): a later process that got the same id is left alone.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+struct Touched {
+    /// Below Normal by ProBalance.
+    held: Vec<(u32, u64)>,
+    /// In efficiency mode for the game.
+    efficient: Vec<(u32, u64)>,
+    /// The game, raised to High or pinned to the fast cores.
+    game: Option<(u32, u64)>,
 }
 
 mod guids {
@@ -1481,6 +1525,45 @@ fn restore_leftovers() {
     let leftovers = load_leftovers();
     if !leftovers.services.is_empty() || !leftovers.wifi.is_empty() {
         put_back(&leftovers.services, &leftovers.wifi);
+    }
+    if leftovers.touched != Touched::default() {
+        put_back_processes(&leftovers.touched);
+        update_leftovers(|l| l.touched = Touched::default());
+    }
+}
+
+/// What a governor that didn't get to exit left on processes still running. Each only if
+/// it still is as Vantix set it: something else may have changed it since.
+fn put_back_processes(touched: &Touched) {
+    let open = |(pid, start): (u32, u64), f: &dyn Fn(HANDLE)| unsafe {
+        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION | PROCESS_SET_LIMITED_INFORMATION;
+        if let Ok(handle) = OpenProcess(access, false, pid) {
+            if created(handle) == Some(start) {
+                f(handle);
+            }
+            let _ = CloseHandle(handle);
+        }
+    };
+    for &process in &touched.held {
+        open(process, &|handle| unsafe {
+            if GetPriorityClass(handle) == BELOW_NORMAL_PRIORITY_CLASS.0 {
+                let _ = SetPriorityClass(handle, NORMAL_PRIORITY_CLASS);
+            }
+        });
+    }
+    for &process in &touched.efficient {
+        open(process, &|handle| {
+            eco(handle, false);
+        });
+    }
+    if let Some(game) = touched.game {
+        open(game, &|handle| unsafe {
+            if GetPriorityClass(handle) == HIGH_PRIORITY_CLASS.0 {
+                let _ = SetPriorityClass(handle, NORMAL_PRIORITY_CLASS);
+            }
+            let _ = D3DKMTSetProcessSchedulingPriorityClass(handle, D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL);
+            pin(game.0, handle, None);
+        });
     }
 }
 
@@ -1652,6 +1735,52 @@ mod tests {
         assert_eq!(journal.contains(&"WSearch".to_string()), search_before);
         assert_eq!(search_after, search_before, "Windows Search not back");
         assert!(load_leftovers().services.is_empty());
+    }
+
+    /// A process held back and one in efficiency mode when Vantix dies: game.json has them,
+    /// and the next start puts both back. A pid that's now another process stays as it is:
+    /// `cargo test process_crash_recovery -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn process_crash_recovery() {
+        let scratch = std::env::temp_dir().join("vantix-touched-test");
+        std::fs::create_dir_all(scratch.join("Vantix")).unwrap();
+        unsafe { std::env::set_var("APPDATA", &scratch) };
+
+        let held = powershell("Start-Sleep 60");
+        let efficient = powershell("Start-Sleep 60");
+        let other = powershell("Start-Sleep 60");
+        std::thread::sleep(Duration::from_millis(300));
+        let start = |pid: u32| unsafe {
+            let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION;
+            let handle = OpenProcess(access, false, pid).unwrap();
+            (handle, created(handle).unwrap())
+        };
+        let (held_handle, held_start) = start(held.0.id());
+        let (eco_handle, eco_start) = start(efficient.0.id());
+        let (other_handle, other_start) = start(other.0.id());
+        unsafe {
+            SetPriorityClass(held_handle, BELOW_NORMAL_PRIORITY_CLASS).unwrap();
+            SetPriorityClass(other_handle, BELOW_NORMAL_PRIORITY_CLASS).unwrap();
+        }
+        assert!(eco(eco_handle, true));
+        let touched = Touched {
+            held: vec![(held.0.id(), held_start), (other.0.id(), other_start + 1)],
+            efficient: vec![(efficient.0.id(), eco_start)],
+            game: None,
+        };
+        assert!(update_leftovers(|l| l.touched = touched));
+
+        restore_leftovers();
+        assert_eq!(priority(held.0.id()), NORMAL_PRIORITY_CLASS.0, "held back one not put back");
+        assert_eq!(eco_of(efficient.0.id()), Some(false), "efficiency mode not put back");
+        assert_eq!(priority(other.0.id()), BELOW_NORMAL_PRIORITY_CLASS.0, "a different process was changed");
+        assert!(load_leftovers().touched == Touched::default());
+        unsafe {
+            let _ = CloseHandle(held_handle);
+            let _ = CloseHandle(eco_handle);
+            let _ = CloseHandle(other_handle);
+        }
     }
 
     /// Turns background scanning off on the connected Wi-Fi and back, through game.json as

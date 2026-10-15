@@ -336,7 +336,7 @@ fn set_wifi_power(ac: u32, dc: u32) -> Result<()> {
 }
 
 pub fn shows_wifi_power() -> bool {
-    crate::net::uses_wifi() || crate::settings::load_changes().iter().any(|c| c.id == "wifi-max-performance")
+    crate::net::uses_wifi() || crate::settings::in_journal("wifi-max-performance")
 }
 
 pub fn wifi_full_power() -> Result<bool> {
@@ -490,7 +490,7 @@ fn msi_devices() -> Vec<String> {
 /// MSI off on devices that already use it would only make them slower, so that isn't
 /// offered, and a PC without such devices has nothing to show.
 pub fn shows_msi() -> bool {
-    crate::settings::load_changes().iter().any(|c| c.id == "msi-mode")
+    crate::settings::in_journal("msi-mode")
         || !msi_devices().is_empty() && !msi_on().unwrap_or(true)
 }
 
@@ -1027,7 +1027,7 @@ pub const FILTER_DELAY_TWEAK: &str = "filter-keys-delay-off";
 
 /// Only while one of them is set, or to undo.
 pub fn shows_filter_delay() -> bool {
-    crate::settings::load_changes().iter().any(|c| c.id == FILTER_DELAY_TWEAK)
+    crate::settings::in_journal(FILTER_DELAY_TWEAK)
         || !filter_delay_off().unwrap_or(true)
 }
 

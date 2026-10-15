@@ -34,6 +34,8 @@ pub struct Release {
     pub size: u64,
     exe: String,
     sha: String,
+    /// The hash the download matched, checked again right before the swap.
+    hash: Option<[u8; 32]>,
 }
 
 pub enum Check {
@@ -111,6 +113,7 @@ pub fn check() -> Result<Check, Error> {
         size: exe.size,
         exe: exe.browser_download_url.clone(),
         sha: sha.browser_download_url.clone(),
+        hash: None,
     }))
 }
 
@@ -129,9 +132,9 @@ fn newer(release: [u32; 3], running: Option<[u32; 3]>) -> bool {
 }
 
 /// Downloads the release's exe into the data folder and returns where it is. It's only
-/// written once its hash matches, so a bad download leaves nothing behind. `done`
-/// counts the bytes as they come.
-pub fn download(release: &Release, done: &AtomicU64) -> Result<PathBuf, Error> {
+/// written once its hash matches, so a bad download leaves nothing behind, and the hash
+/// stays on `release` for `install`. `done` counts the bytes as they come.
+pub fn download(release: &mut Release, done: &AtomicU64) -> Result<PathBuf, Error> {
     let (status, sha) = get(&release.sha, None, 4096, None)?;
     if status != 200 {
         return Err(Error::Refused(status));
@@ -147,6 +150,7 @@ pub fn download(release: &Release, done: &AtomicU64) -> Result<PathBuf, Error> {
     let dir = settings::data_dir().join("update");
     let path = dir.join(EXE);
     fs::create_dir_all(&dir).and_then(|()| fs::write(&path, &exe)).map_err(|_| Error::Disk)?;
+    release.hash = Some(want);
     Ok(path)
 }
 
@@ -226,7 +230,16 @@ struct WhatsNew {
 /// renamed but not overwritten, so it steps aside as `<name>.old.exe`, which the new one
 /// deletes once this one is gone. The path stays the same, so the logon task still
 /// points at it. Anything that fails puts the old exe back. The caller then quits.
+///
+/// The download sat in the data folder, which programs without admin can write, and
+/// the new exe runs as admin. So it's read once more and the bytes that match the hash
+/// are the ones written, never the file as it is by then.
 pub fn install(new: &Path, release: &Release) -> io::Result<()> {
+    let bytes = fs::read(new)?;
+    if release.hash.is_none() || sha256(&bytes) != release.hash {
+        let _ = fs::remove_file(new);
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the download changed after it was checked"));
+    }
     let exe = std::env::current_exe()?;
     let old = old_exe(&exe);
     // Written first, so the new exe finds them however fast it starts. Notes left over
@@ -237,16 +250,58 @@ pub fn install(new: &Path, release: &Release) -> io::Result<()> {
     }
     let _ = fs::remove_file(&old);
     fs::rename(&exe, &old)?;
-    // The data folder can be on another drive than the exe, where a rename can't go.
-    let started = fs::rename(new, &exe)
-        .or_else(|_| fs::copy(new, &exe).map(drop))
+    let started = fs::write(&exe, &bytes)
         .and_then(|()| Command::new(&exe).arg(UPDATED_ARG).arg(std::process::id().to_string()).spawn());
+    let _ = fs::remove_file(new);
     if let Err(e) = started {
         let _ = fs::remove_file(&exe);
         let _ = fs::rename(&old, &exe);
         return Err(e);
     }
     Ok(())
+}
+
+fn updated() -> bool {
+    std::env::args().any(|arg| arg == UPDATED_ARG)
+}
+
+/// When an exe an update just started crashes before it settled: the old exe goes back
+/// in its place and starts again, so a broken release can't leave nothing that opens.
+/// The broken one stays beside it as `<name>.failed.exe` until the next start.
+pub fn roll_back() {
+    if !updated() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let old = old_exe(&exe);
+    if !old.exists() {
+        return;
+    }
+    let failed = exe.with_file_name(format!("{}.failed.exe", exe.file_stem().unwrap_or_default().to_string_lossy()));
+    let _ = fs::remove_file(&failed);
+    if fs::rename(&exe, &failed).is_ok() && fs::rename(&old, &exe).is_ok() {
+        let _ = fs::remove_file(settings::data_dir().join(NOTES));
+        // It waits for this one to end, which still holds the single-instance lock.
+        let _ = Command::new(&exe).arg(UPDATED_ARG).arg(std::process::id().to_string()).spawn();
+    }
+}
+
+/// Called once the window has been up for a while: from then on a crash isn't the
+/// update's fault, and the old exe can go.
+pub fn settled() {
+    if let Ok(exe) = std::env::current_exe() {
+        delete_soon(&old_exe(&exe));
+    }
+}
+
+fn delete_soon(path: &Path) {
+    // Windows may still hold an exe for a moment after its process ended.
+    for _ in 0..10 {
+        if fs::remove_file(path).is_ok() || !path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 }
 
 fn old_exe(exe: &Path) -> PathBuf {
@@ -268,18 +323,16 @@ pub fn wait_for_old() {
     }
 }
 
-/// On every start: deletes what an update leaves behind, the old exe and the download.
-/// Only once this is the one instance, so a second launch can't take the download away
-/// from the one running.
+/// On every start: deletes what an update leaves behind, the download, a release that
+/// was rolled back and the old exe. Right after an update the old exe waits for
+/// `settled`, so `roll_back` still has it. Only once this is the one instance, so a
+/// second launch can't take the download away from the one running.
 pub fn clean_up() {
     if let Ok(exe) = std::env::current_exe() {
-        let old = old_exe(&exe);
-        // Windows may still hold the old exe for a moment after its process ended.
-        for _ in 0..10 {
-            if fs::remove_file(&old).is_ok() || !old.exists() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+        let stem = exe.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+        delete_soon(&exe.with_file_name(format!("{stem}.failed.exe")));
+        if !updated() {
+            delete_soon(&old_exe(&exe));
         }
     }
     let _ = fs::remove_dir_all(settings::data_dir().join("update"));

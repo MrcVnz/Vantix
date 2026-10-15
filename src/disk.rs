@@ -130,11 +130,15 @@ impl Category {
         }
     }
 
-    /// Browsers and launchers lock and rewrite their cache while open.
+    /// Browsers and launchers lock and rewrite their cache while open, and a build reads
+    /// the package caches as it goes: Gradle runs as java.exe.
     fn blocking_processes(self) -> &'static [&'static str] {
         match self {
             Category::BrowserCache => &["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "opera.exe"],
             Category::LauncherCaches => &["steam.exe", "EpicGamesLauncher.exe"],
+            Category::DevCaches => {
+                &["java.exe", "javaw.exe", "cargo.exe", "rustc.exe", "node.exe", "dotnet.exe", "go.exe", "pip.exe"]
+            }
             _ => &[],
         }
     }
@@ -187,7 +191,7 @@ impl Category {
                 vec![Target::matching(local.join(r"Microsoft\Windows\Explorer"), "thumbcache_")]
             }
             Category::BrowserCache => browser_caches(&local),
-            Category::OldDownloads => crate::dupes::downloads().map(Target::contents).into_iter().collect(),
+            Category::OldDownloads => crate::dupes::downloads().map(Target::items).into_iter().collect(),
             Category::DevCaches => dev_caches(&local),
             Category::OldDrivers | Category::WindowsOld | Category::RecycleBin => Vec::new(),
         }
@@ -197,8 +201,8 @@ impl Category {
 /// Files in Downloads untouched for this long count as old.
 pub const DOWNLOAD_DAYS: u64 = 30;
 
-/// A folder whose contents get removed (the folder itself stays), a single file, or
-/// the files of a folder whose names start with a prefix.
+/// A folder whose contents get removed (the folder itself stays), a single file, the
+/// files of a folder whose names start with a prefix, or the things directly in a folder.
 struct Target {
     path: PathBuf,
     kind: TargetKind,
@@ -208,11 +212,18 @@ enum TargetKind {
     Contents,
     File,
     Prefix(&'static str),
+    /// Each file or folder directly inside is one thing: a folder goes whole or stays
+    /// whole, by the newest file in it. Downloads, where half of an unpacked program
+    /// is worse than all of it.
+    Items,
 }
 
 impl Target {
     fn contents(path: PathBuf) -> Self {
         Self { path, kind: TargetKind::Contents }
+    }
+    fn items(path: PathBuf) -> Self {
+        Self { path, kind: TargetKind::Items }
     }
     fn file(path: PathBuf) -> Self {
         Self { path, kind: TargetKind::File }
@@ -258,9 +269,9 @@ pub fn scan(category: Category) -> Outcome {
     let mut groups: HashMap<PathBuf, u64> = HashMap::new();
     let cutoff = category.min_age().map(cutoff);
     for target in &targets {
-        visit(target, cutoff, &mut |size, path| {
+        visit(target, cutoff, &mut |size, files, path| {
             tally.bytes += size;
-            tally.files += 1;
+            tally.files += files;
             let group = if several { target.path.clone() } else { first_level(&target.path, path) };
             *groups.entry(group).or_default() += size;
             true
@@ -288,8 +299,9 @@ fn biggest(items: impl Iterator<Item = (String, u64)>) -> Vec<(String, u64)> {
 /// A path as the list shows it, with the profile folder as ~.
 fn shown(path: &Path) -> String {
     let text = path.display().to_string();
+    // Compared by the same bytes it's cut at: lowercasing can change a name's length.
     match std::env::var("USERPROFILE") {
-        Ok(home) if !home.is_empty() && text.to_lowercase().starts_with(&home.to_lowercase()) => {
+        Ok(home) if !home.is_empty() && text.get(..home.len()).is_some_and(|head| head.eq_ignore_ascii_case(&home)) => {
             format!("~{}", &text[home.len()..])
         }
         _ => text,
@@ -331,13 +343,13 @@ pub fn clean(category: Category) -> Outcome {
 }
 
 fn clean_target(target: &Target, cutoff: Option<u64>, recycle: bool, tally: &mut Tally) {
-    visit(target, cutoff, &mut |size, path| {
+    visit(target, cutoff, &mut |size, files, path| {
         let gone = if recycle { crate::dupes::recycle_file(path) } else { delete_file(path) };
         if gone {
             tally.bytes += size;
-            tally.files += 1;
+            tally.files += files;
         } else {
-            tally.skipped += 1;
+            tally.skipped += files.max(1);
         }
         true
     });
@@ -356,8 +368,14 @@ pub fn system_drive_space() -> (u64, u64) {
     (free, total)
 }
 
+/// A folder from the environment. Missing or relative, it would make the cleanup's
+/// paths relative to wherever Vantix runs from, so it comes back as a path that can't
+/// exist and the targets under it are simply not found.
 fn env_path(name: &str) -> PathBuf {
-    std::env::var_os(name).map(PathBuf::from).unwrap_or_default()
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"\\?\vantix-missing"))
 }
 
 fn system_drive() -> String {
@@ -707,23 +725,60 @@ fn filetime(time: FILETIME) -> u64 {
     (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
 }
 
-/// Calls `f(size, path)` for every file the target covers. Returning false stops the walk.
-fn visit(target: &Target, cutoff: Option<u64>, f: &mut impl FnMut(u64, &Path) -> bool) {
+/// Calls `f(size, files, path)` for every file the target covers, or for every folder
+/// of an `Items` target, with the files in it. Returning false stops the walk.
+fn visit(target: &Target, cutoff: Option<u64>, f: &mut impl FnMut(u64, u64, &Path) -> bool) {
     match target.kind {
         TargetKind::File => {
             if let Ok(meta) = std::fs::symlink_metadata(&target.path)
                 && meta.is_file()
             {
-                f(meta.len(), &target.path);
+                f(meta.len(), 1, &target.path);
             }
         }
         TargetKind::Contents => {
-            walk(&target.path, cutoff, None, f);
+            walk(&target.path, cutoff, None, &mut |size, path| f(size, 1, path));
         }
         TargetKind::Prefix(prefix) => {
-            walk(&target.path, cutoff, Some(prefix), f);
+            walk(&target.path, cutoff, Some(prefix), &mut |size, path| f(size, 1, path));
+        }
+        TargetKind::Items => visit_items(&target.path, cutoff, f),
+    }
+}
+
+fn visit_items(dir: &Path, cutoff: Option<u64>, f: &mut impl FnMut(u64, u64, &Path) -> bool) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            continue;
+        }
+        let path = entry.path();
+        // The folder's own creation is when it was unpacked or made here.
+        let mut newest = touched(&meta);
+        let (mut size, mut files) = (0, 0);
+        if meta.is_dir() {
+            walk(&path, None, None, &mut |bytes, file| {
+                size += bytes;
+                files += 1;
+                if let Ok(meta) = std::fs::symlink_metadata(file) {
+                    newest = newest.max(touched(&meta));
+                }
+                true
+            });
+        } else {
+            (size, files) = (meta.len(), 1);
+        }
+        if cutoff.is_none_or(|limit| newest < limit) && !f(size, files, &path) {
+            return;
         }
     }
+}
+
+/// Files unpacked from an archive keep its old dates, but their creation time is when
+/// they landed here; the newer of the two decides.
+fn touched(meta: &std::fs::Metadata) -> u64 {
+    meta.last_write_time().max(meta.creation_time())
 }
 
 /// Returns false when `f` asked to stop.
@@ -745,10 +800,7 @@ fn walk(
             // Prefix filtering only applies to the top level files.
             prefix.is_some() || walk(&path, cutoff, None, f)
         } else {
-            // Files unpacked from an archive keep its old dates, but their creation time is
-            // when they landed here; the newer of the two decides.
-            let touched = meta.last_write_time().max(meta.creation_time());
-            let old_enough = cutoff.is_none_or(|limit| touched < limit);
+            let old_enough = cutoff.is_none_or(|limit| touched(&meta) < limit);
             let wanted = prefix
                 .is_none_or(|p| entry.file_name().to_string_lossy().to_ascii_lowercase().starts_with(p));
             !(old_enough && wanted) || f(meta.len(), &path)
@@ -861,6 +913,35 @@ mod tests {
         assert!(target.exists(), "removed the root");
         assert!(!target.join("a.tmp").exists() && !target.join("sub").exists());
         let _ = std::fs::remove_dir(target.join("link"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A folder in Downloads with one new file in it stays whole; an old one counts once,
+    /// with all its files.
+    #[test]
+    fn download_folders_go_whole_or_stay() {
+        let base = std::env::temp_dir().join(format!("vantix-items-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for dir in ["old", "mixed"] {
+            std::fs::create_dir_all(base.join(dir).join("sub")).unwrap();
+            std::fs::write(base.join(dir).join("a.bin"), b"aaaa").unwrap();
+            std::fs::write(base.join(dir).join("sub").join("b.bin"), b"bb").unwrap();
+        }
+        std::fs::write(base.join("loose.bin"), b"c").unwrap();
+        // Everything was just written, so "old" means older than a moment from now, and
+        // the new file in "mixed" is written after that moment.
+        std::thread::sleep(Duration::from_millis(50));
+        let limit = cutoff(Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::write(base.join("mixed").join("sub").join("new.bin"), b"n").unwrap();
+
+        let mut seen = Vec::new();
+        visit(&Target::items(base.clone()), Some(limit), &mut |size, files, path| {
+            seen.push((path.file_name().unwrap().to_string_lossy().into_owned(), size, files));
+            true
+        });
+        seen.sort();
+        assert_eq!(seen, [("loose.bin".to_string(), 1, 1), ("old".to_string(), 6, 2)]);
         let _ = std::fs::remove_dir_all(&base);
     }
 

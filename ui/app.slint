@@ -27,6 +27,8 @@ export global Preferences {
     in-out property <bool> notifications;
     in-out property <bool> game-notice;
     in property <string> version;
+    /// Changes in the undo journal, which a reset would leave without a way back.
+    in property <int> applied;
     // Saves everything except autostart, which has its own call because it can fail.
     callback changed();
     callback autostart-toggled(bool);
@@ -215,6 +217,12 @@ component SettingsPage inherits VerticalLayout {
                 Text {
                     text: @tr("Removes the startup task, notification registration and all Vantix data, then closes the app.");
                     color: Theme.muted;
+                    wrap: word-wrap;
+                }
+
+                if Preferences.applied > 0: Text {
+                    text: @tr("{} changes made by Vantix are still applied. Undo them first under Protection: once the data is gone, they stay in Windows and only a restore point can take them back.", Preferences.applied);
+                    color: Theme.warn;
                     wrap: word-wrap;
                 }
 

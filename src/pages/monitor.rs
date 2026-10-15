@@ -40,7 +40,8 @@ impl App {
             let mut state = app.state.borrow_mut();
             app.with_ui(|ui| show_programs(ui, &snapshot.programs, &mut state));
         }));
-        page.on_end(bind_with(self, |app, i: i32| app.end_program(i)));
+        page.on_end(bind_with(self, |app, i: i32| app.end_program(i, None)));
+        page.on_end_process(bind_with2(self, |app, i: i32, pid: i32| app.end_program(i, Some(pid as u32))));
         page.on_stop_service(bind_with(self, |app, i: i32| app.stop_service(i)));
         page.on_eco(bind_with2(self, |app, i: i32, on: bool| {
             app.on_program(i, move |p| {
@@ -76,14 +77,15 @@ impl App {
 
     /// Ending takes about two seconds, since it goes back to see whether the program is
     /// really gone, so the row says "Ending..." meanwhile and then what happened.
-    fn end_program(self: &Rc<Self>, i: i32) {
+    /// `pid` ends one process of the row, from the row opened up; `None` ends them all.
+    fn end_program(self: &Rc<Self>, i: i32, pid: Option<u32>) {
         let Some(program) = self.state.borrow().programs.get(i as usize).cloned() else { return };
         let name = program.name.clone();
         self.state.borrow_mut().ended = Some((name.clone(), RowNote::Ending, Instant::now()));
         self.tick_monitor();
         let ending = name.clone();
         self.run_job(
-            move || monitor::end(&ending),
+            move || monitor::end(&ending, pid),
             move |app, outcome| {
                 {
                     let mut state = app.state.borrow_mut();
@@ -360,6 +362,7 @@ fn show_programs(ui: &AppWindow, all: &[monitor::Program], state: &mut State) {
                     .iter()
                     .map(|process| ProcessRow {
                         pid: process.pid as i32,
+                        parent: process.parent.as_str().into(),
                         cpu: format_percent(process.cpu).into(),
                         gpu: format_percent(process.gpu).into(),
                         memory: format_bytes(process.memory).into(),

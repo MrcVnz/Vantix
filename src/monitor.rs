@@ -108,6 +108,9 @@ impl Program {
 #[derive(Clone, Default)]
 pub struct Process {
     pub pid: u32,
+    /// The program that started it, when that one still runs: what tells two java.exe
+    /// apart, a game's server from a build.
+    pub parent: String,
     pub cpu: f32,
     pub gpu: f32,
     pub memory: u64,
@@ -632,15 +635,24 @@ fn programs(
     // Per program, its oldest process: the one whose EcoQoS the row shows, and what Vantix
     // and the critical check go by.
     let mut groups: HashMap<String, (Program, (u32, u64), bool)> = HashMap::new();
-    for entry in read_processes(true) {
+    let entries = read_processes(true);
+    let by_pid: HashMap<u32, &Raw> = entries.iter().map(|entry| (entry.pid, entry)).collect();
+    for entry in &entries {
         seen.insert(entry.pid, entry.cpu_time);
         let cpu =
             times.get(&entry.pid).map_or(0.0, |before| entry.cpu_time.saturating_sub(*before) as f64 / budget * 100.0);
         let (program, oldest, has_own) = groups.entry(entry.name.to_ascii_lowercase()).or_insert_with(|| {
             (Program { name: entry.name.clone(), ..Default::default() }, (entry.pid, entry.created), false)
         });
+        // A parent younger than the child is a later process that got the id.
+        let parent = by_pid
+            .get(&entry.parent)
+            .filter(|parent| parent.pid != entry.pid && parent.created <= entry.created)
+            .map(|parent| parent.name.trim_end_matches(".exe").to_string())
+            .unwrap_or_default();
         let process = Process {
             pid: entry.pid,
+            parent,
             cpu: cpu as f32,
             gpu: gpu.get(&entry.pid).copied().unwrap_or(0.0),
             memory: entry.memory,
@@ -778,18 +790,20 @@ pub enum EndOutcome {
     Failed,
 }
 
-/// Ends every process of `name` and says what happened. Takes about two seconds: it goes
-/// back to see whether the program is really gone, which is the only honest answer.
-pub fn end(name: &str) -> EndOutcome {
+/// Ends every process of `name`, or only the one with `pid`, and says what happened.
+/// Takes about two seconds: it goes back to see whether the program is really gone,
+/// which is the only honest answer.
+pub fn end(name: &str, pid: Option<u32>) -> EndOutcome {
     if !endable(name) {
         return EndOutcome::Core;
     }
+    let mine = |p: &&Raw| p.name.eq_ignore_ascii_case(name) && pid.is_none_or(|pid| p.pid == pid);
     let mut protected = false;
     // Three rounds, because a program being ended can start a child in between, and
     // because the sample the row came from is up to a second old.
     for round in 0..3 {
         let mut found = 0;
-        for process in process_list().iter().filter(|p| p.name.eq_ignore_ascii_case(name)) {
+        for process in process_list().iter().filter(mine) {
             found += 1;
             protected |= kill(process.pid, name) == Kill::Protected;
         }
@@ -804,7 +818,7 @@ pub fn end(name: &str) -> EndOutcome {
     // A service, or a program with a watchdog, is back on its feet by now.
     std::thread::sleep(Duration::from_millis(1500));
     let list = process_list();
-    let left: Vec<&Raw> = list.iter().filter(|p| p.name.eq_ignore_ascii_case(name)).collect();
+    let left: Vec<&Raw> = list.iter().filter(mine).collect();
     if left.is_empty() {
         return EndOutcome::Ended;
     }
@@ -1350,13 +1364,13 @@ mod tests {
 
         let mut kids: Vec<_> = (0..3).map(|_| spawn()).collect();
         std::thread::sleep(Duration::from_millis(400));
-        assert_eq!(end("ping.exe"), EndOutcome::Ended);
+        assert_eq!(end("ping.exe", None), EndOutcome::Ended);
         for kid in &mut kids {
             let _ = kid.wait();
         }
 
         // Part of Windows: nothing is even tried.
-        assert_eq!(end("svchost.exe"), EndOutcome::Core);
+        assert_eq!(end("svchost.exe", None), EndOutcome::Core);
 
         // A loop that starts it again as soon as it's gone.
         let mut keeper = Command::new("cmd")
@@ -1364,18 +1378,18 @@ mod tests {
             .spawn()
             .expect("cmd didn't start");
         std::thread::sleep(Duration::from_millis(600));
-        match end("ping.exe") {
+        match end("ping.exe", None) {
             EndOutcome::Reopened(by) => println!("reopened by {by}"),
             other => panic!("expected Reopened, got {other:?}"),
         }
         let _ = keeper.kill();
         let _ = keeper.wait();
         std::thread::sleep(Duration::from_millis(400));
-        assert_eq!(end("ping.exe"), EndOutcome::Ended);
+        assert_eq!(end("ping.exe", None), EndOutcome::Ended);
 
         // Defender's own process, if it's running: protected, and ending it does nothing.
         if process_list().iter().any(|p| p.name.eq_ignore_ascii_case("MsMpEng.exe")) {
-            assert_eq!(end("MsMpEng.exe"), EndOutcome::Protected);
+            assert_eq!(end("MsMpEng.exe", None), EndOutcome::Protected);
         }
         println!("services holding a process: {}", service_names().len());
     }

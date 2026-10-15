@@ -32,6 +32,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{GUID, HSTRING, PCWSTR, PWSTR};
 
+use crate::settings::in_journal;
 use crate::{etw, reg, tweaks};
 
 /// Anycast, so it answers from close by nearly everywhere, and the same network as the
@@ -1105,7 +1106,7 @@ impl SavedDns {
 
     /// What the journal says was there before Vantix's DNS change, if one is in place.
     fn from_journal() -> Option<Self> {
-        let changes = crate::settings::load_changes();
+        let changes = crate::settings::journal();
         changes.iter().find(|c| c.id == DNS_TWEAK)?.previous.as_deref().and_then(Self::decode)
     }
 
@@ -1434,12 +1435,8 @@ fn property(key: &str, keyword: &str) -> Option<String> {
 
 /// The GUID a journal entry was saved with, when the tweak is in the journal.
 fn journal_guid(id: &str) -> Option<String> {
-    let previous = crate::settings::load_changes().into_iter().find(|c| c.id == id)?.previous?;
+    let previous = crate::settings::journal().into_iter().find(|c| c.id == id)?.previous?;
     previous.split('|').next().map(String::from)
-}
-
-fn in_journal(id: &str) -> bool {
-    crate::settings::load_changes().iter().any(|c| c.id == id)
 }
 
 /// The adapter Vantix changed, or else the one in use if it's the right kind. Returns
@@ -1903,8 +1900,14 @@ pub fn restart_connection() -> windows::core::Result<()> {
 
 /// The hosts file: a line pointing a domain somewhere sends anything that touches it
 /// there. Common leftovers: update servers, antivirus, sites blocked once and forgotten.
-const HOSTS_PATH: &str = r"C:\Windows\System32\drivers\etc\hosts";
-const HOSTS_BACKUP: &str = r"C:\Windows\System32\drivers\etc\hosts.vantix.bak";
+fn hosts_path() -> std::path::PathBuf {
+    let windows = std::env::var_os("SystemRoot").map_or_else(|| r"C:\Windows".into(), std::path::PathBuf::from);
+    windows.join(r"System32\drivers\etc\hosts")
+}
+
+fn hosts_backup() -> std::path::PathBuf {
+    hosts_path().with_file_name("hosts.vantix.bak")
+}
 
 /// Names whose redirection breaks browsing or updates. Exact names only: privacy lists
 /// that send telemetry hosts like vortex.data.microsoft.com to 0.0.0.0 are someone's
@@ -1937,10 +1940,10 @@ fn hosts_blocking(line: &[u8]) -> bool {
 
 /// (total entries, blocking ones), `None` when the file is missing or unreadable.
 pub fn hosts_state() -> Option<(usize, usize)> {
-    hosts_state_in(HOSTS_PATH)
+    hosts_state_in(&hosts_path())
 }
 
-pub fn hosts_state_in(path: &str) -> Option<(usize, usize)> {
+pub fn hosts_state_in(path: &std::path::Path) -> Option<(usize, usize)> {
     let bytes = std::fs::read(path).ok()?;
     let entries: Vec<&[u8]> = bytes
         .split(|&b| b == b'\n')
@@ -1955,7 +1958,7 @@ pub fn hosts_state_in(path: &str) -> Option<(usize, usize)> {
 
 /// The lines the repair takes out, as text, for the confirmation.
 pub fn hosts_blocking_lines() -> Vec<String> {
-    let bytes = std::fs::read(HOSTS_PATH).unwrap_or_default();
+    let bytes = std::fs::read(hosts_path()).unwrap_or_default();
     bytes
         .split(|&b| b == b'\n')
         .filter(|line| hosts_blocking(line))
@@ -1980,12 +1983,12 @@ pub fn clear_hosts() -> windows::core::Result<()> {
 
 /// Saved as the number of lines taken out; the bytes themselves are the backup file.
 pub fn reset_hosts() -> windows::core::Result<Option<String>> {
-    reset_hosts_in(HOSTS_PATH, HOSTS_BACKUP)
+    reset_hosts_in(&hosts_path(), &hosts_backup())
 }
 
 /// Works on raw bytes split at `\n`, so every kept line goes back exactly as it was,
 /// line ending and ANSI characters included.
-pub fn reset_hosts_in(path: &str, backup: &str) -> windows::core::Result<Option<String>> {
+pub fn reset_hosts_in(path: &std::path::Path, backup: &std::path::Path) -> windows::core::Result<Option<String>> {
     let Some((_, blocking)) = hosts_state_in(path) else { return Err(failure("hosts file is missing")) };
     if blocking > 0 {
         std::fs::copy(path, backup)?;
@@ -2004,11 +2007,38 @@ pub fn reset_hosts_in(path: &str, backup: &str) -> windows::core::Result<Option<
 }
 
 pub fn restore_hosts(_: Option<&str>) -> windows::core::Result<()> {
-    restore_hosts_in(HOSTS_PATH, HOSTS_BACKUP)
+    restore_hosts_in(&hosts_path(), &hosts_backup())
 }
 
-pub fn restore_hosts_in(path: &str, backup: &str) -> windows::core::Result<()> {
-    std::fs::copy(backup, path)?;
+/// Puts back only the lines the repair took out, at the end, so whatever was written to
+/// the file since stays. A file that only lost those lines comes back as it was.
+pub fn restore_hosts_in(path: &std::path::Path, backup: &std::path::Path) -> windows::core::Result<()> {
+    let saved = std::fs::read(backup)?;
+    let mut now = std::fs::read(path)?;
+    let present: std::collections::HashSet<&[u8]> = now.split(|&b| b == b'\n').map(<[u8]>::trim_ascii).collect();
+    let taken: Vec<Vec<u8>> = saved
+        .split(|&b| b == b'\n')
+        .filter(|line| hosts_blocking(line) && !present.contains(line.trim_ascii()))
+        .map(<[u8]>::to_vec)
+        .collect();
+    let unchanged = {
+        let kept: Vec<&[u8]> = saved.split(|&b| b == b'\n').filter(|line| !hosts_blocking(line)).collect();
+        kept.join(&b'\n') == now
+    };
+    if unchanged {
+        now = saved;
+    } else if !taken.is_empty() {
+        // The way the file ends its lines, CRLF unless it has none.
+        let ending: &[u8] = if now.windows(2).any(|pair| pair == b"\r\n") || !now.contains(&b'\n') { b"\r\n" } else { b"\n" };
+        if !now.is_empty() && !now.ends_with(b"\n") {
+            now.extend_from_slice(ending);
+        }
+        for line in taken {
+            now.extend_from_slice(line.trim_ascii_end());
+            now.extend_from_slice(ending);
+        }
+    }
+    std::fs::write(path, now)?;
     std::fs::remove_file(backup)?;
     let _ = flush_dns();
     Ok(())
@@ -3751,8 +3781,8 @@ mod tests {
             }
         }
         let _remove = Remove(dir.clone());
-        let path = dir.join("hosts").to_string_lossy().into_owned();
-        let backup = dir.join("hosts.bak").to_string_lossy().into_owned();
+        let path = dir.join("hosts");
+        let backup = dir.join("hosts.bak");
         // ANSI "Café" (0xE9) in a comment, CRLF and LF lines mixed, a privacy list entry,
         // a lookalike, and two lines that do get in the way.
         let content: &[u8] = b"# Caf\xe9\r\n127.0.0.1 localhost\r\n0.0.0.0 vortex.data.microsoft.com\r\n\
@@ -3767,7 +3797,17 @@ mod tests {
         );
         restore_hosts_in(&path, &backup).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), content);
-        assert!(!std::path::Path::new(&backup).exists(), "backup goes away on undo");
+        assert!(!backup.exists(), "backup goes away on undo");
+
+        // Edited after the repair: the edit stays and only the two lines come back.
+        reset_hosts_in(&path, &backup).unwrap();
+        let mut edited = std::fs::read(&path).unwrap();
+        edited.extend_from_slice(b"10.0.0.5 nas.local\r\n");
+        std::fs::write(&path, &edited).unwrap();
+        restore_hosts_in(&path, &backup).unwrap();
+        let mut expected = edited.clone();
+        expected.extend_from_slice(b"93.184.216.34 www.google.com # test\r\n0.0.0.0 fe2.update.windowsupdate.com\r\n");
+        assert_eq!(String::from_utf8_lossy(&std::fs::read(&path).unwrap()), String::from_utf8_lossy(&expected));
     }
 
     /// `cargo test net_ncsi -- --ignored --nocapture`

@@ -5,6 +5,8 @@ import { Sparkline } from "memory.slint";
 /// One process of a program, shown when its row is open.
 export struct ProcessRow {
     pid: int,
+    /// The program that started it, or empty.
+    parent: string,
     cpu: string,
     gpu: string,
     memory: string,
@@ -104,6 +106,8 @@ export global Monitor {
     callback sorted(int);
     callback refilter();
     callback end(int);
+    /// One process of a row: the row, then the pid.
+    callback end-process(int, int);
     callback stop-service(int);
     callback eco(int, bool);
     callback trim(int);
@@ -316,23 +320,54 @@ component Cell inherits Text {
 
 component ProcessLine inherits HorizontalLayout {
     in property <ProcessRow> item;
+    /// Offers End for this process alone, when the row has several.
+    in property <bool> can-end;
+    in property <int> index;
+    /// Armed by pid, like the row's End by name.
+    property <int> armed: -1;
 
     spacing: 16px;
     padding-left: 34px;
     padding-right: 18px;
-    height: 26px;
+    height: 30px;
 
     Text {
         horizontal-stretch: 1;
-        text: "PID " + root.item.pid;
+        text: root.item.parent == "" ? "PID " + root.item.pid : @tr("PID {}, started by {}", root.item.pid, root.item.parent);
         color: Theme.muted;
         font-size: 12px;
         vertical-alignment: center;
+        overflow: elide;
     }
     Cell { width: 64px; text: root.item.cpu; font-size: 12px; color: Theme.muted; }
     if Monitor.has-gpu: Cell { width: 64px; text: root.item.gpu; font-size: 12px; color: Theme.muted; }
     Cell { width: 84px; text: root.item.memory; font-size: 12px; color: Theme.muted; }
-    Rectangle { width: 270px; }
+    HorizontalLayout {
+        width: 270px;
+        alignment: end;
+        if root.can-end: VerticalLayout {
+            alignment: center;
+            Button {
+                text: root.armed == root.item.pid ? @tr("Sure?") : @tr("End this one");
+                tall: 24px;
+                danger: true;
+                clicked => {
+                    if root.armed == root.item.pid {
+                        root.armed = -1;
+                        Monitor.end-process(root.index, root.item.pid);
+                    } else {
+                        root.armed = root.item.pid;
+                    }
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 4s;
+        running: root.armed >= 0;
+        triggered => { root.armed = -1; }
+    }
 }
 
 component ProgramLine inherits VerticalLayout {
@@ -461,7 +496,12 @@ component ProgramLine inherits VerticalLayout {
 
     if root.open: VerticalLayout {
         padding-bottom: 8px;
-        for process in root.item.processes: ProcessLine { item: process; }
+        for process in root.item.processes: ProcessLine {
+            item: process;
+            index: root.index;
+            can-end: root.item.count > 1 && root.item.can-end && !root.item.can-stop
+                && root.item.status != 1 && root.item.status != 8;
+        }
     }
 
     Timer {
