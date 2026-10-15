@@ -1204,6 +1204,7 @@ pub fn set_dns() -> windows::core::Result<Option<String>> {
         None => SavedDns::read(&adapter.guid),
     };
     let provider = &PROVIDERS[provider];
+    crate::settings::checkpoint(Some(saved.encode()))?;
     set_family("ipv4", adapter.index, &provider.v4.map(|ip| ip.to_string()))?;
     // Only with IPv6 internet: IPv6 servers the PC can't reach would make every lookup
     // wait for them first.
@@ -1483,11 +1484,11 @@ fn apply_setting(setting: &AdapterSetting) -> windows::core::Result<Option<Strin
             continue;
         }
         let Some(value) = value_for(&key, p.keyword, p.on[0]) else { continue };
-        let written = reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword).and_then(|old| {
-            saved.push(format!("{}={}", p.keyword, old.as_deref().unwrap_or("-")));
-            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, &value)
-        });
-        // Nothing reaches the journal on an error, so what was already written goes back.
+        let old = reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword)?;
+        saved.push(format!("{}={}", p.keyword, old.as_deref().unwrap_or("-")));
+        crate::settings::checkpoint(Some(saved.join("|")))?;
+        let written = reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, &value);
+        // Roll back eagerly; the durable snapshot remains if recovery also fails.
         if let Err(e) = written {
             let _ = revert_setting(Some(&saved.join("|")));
             return Err(e);
@@ -1517,14 +1518,40 @@ fn revert_setting(previous: Option<&str>) -> windows::core::Result<()> {
 
 fn reset_setting(setting: &AdapterSetting) -> windows::core::Result<()> {
     let (guid, key) = changed_adapter(setting.id, setting.wifi)?;
+    let mut saved = vec![guid.clone()];
+    let mut writes = Vec::new();
     for p in present(setting, &key) {
         if accepts(&key, p.keyword, p.off)
             && let Some(value) = value_for(&key, p.keyword, p.off)
         {
-            reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword, &value)?;
+            let old = reg::get_string(reg::HKEY_LOCAL_MACHINE, &key, p.keyword)?;
+            saved.push(format!("{}={}", p.keyword, old.as_deref().unwrap_or("-")));
+            writes.push((p.keyword, value));
         }
     }
-    restart_adapter(&guid)
+    let saved = saved.join("|");
+    crate::settings::checkpoint_restore(Some(saved.clone()))?;
+    reset_properties(
+        &writes,
+        |(keyword, value)| reg::set_string(reg::HKEY_LOCAL_MACHINE, &key, keyword, value),
+        || restart_adapter(&guid),
+        || revert_setting(Some(&saved)),
+    )
+}
+
+fn reset_properties<T>(
+    writes: &[T],
+    mut write: impl FnMut(&T) -> windows::core::Result<()>,
+    restart: impl FnOnce() -> windows::core::Result<()>,
+    restore: impl FnOnce() -> windows::core::Result<()>,
+) -> windows::core::Result<()> {
+    if let Err(error) = writes.iter().try_for_each(&mut write).and_then(|()| restart()) {
+        if let Err(undo) = restore() {
+            return Err(failure(&format!("{error}; recovery is still required: {undo}")));
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// The driver only reads its settings when the adapter starts. One that's disabled is
@@ -1636,6 +1663,7 @@ pub fn adapter_sleep_off() -> windows::core::Result<bool> {
 pub fn disable_adapter_sleep() -> windows::core::Result<Option<String>> {
     let (guid, key) = changed_adapter(ADAPTER_SLEEP, None)?;
     let old = reg::get_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities")?;
+    crate::settings::checkpoint(Some(format!("{guid}|{}", old.map_or("-".into(), |v| v.to_string()))))?;
     reg::set_dword(reg::HKEY_LOCAL_MACHINE, &key, "PnPCapabilities", old.unwrap_or(0) | NO_POWER_OFF)?;
     Ok(Some(format!("{guid}|{}", old.map_or("-".into(), |v| v.to_string()))))
 }
@@ -1793,6 +1821,7 @@ pub fn reset_proxy() -> windows::core::Result<Option<String>> {
     let user = reg::get_binary(reg::HKEY_CURRENT_USER, USER_CONNECTIONS, USER_SETTINGS)?;
     fields.push(user.as_deref().map(hex_encode).unwrap_or_else(|| "-".into()));
     let saved = fields.join("|");
+    crate::settings::checkpoint(Some(saved.clone()))?;
 
     reg::set_dword(reg::HKEY_CURRENT_USER, PROXY_KEY, "ProxyEnable", 0)?;
     for name in ["ProxyServer", "ProxyOverride", "AutoConfigURL"] {
@@ -1992,6 +2021,8 @@ pub fn reset_hosts_in(path: &std::path::Path, backup: &std::path::Path) -> windo
     let Some((_, blocking)) = hosts_state_in(path) else { return Err(failure("hosts file is missing")) };
     if blocking > 0 {
         std::fs::copy(path, backup)?;
+        std::fs::OpenOptions::new().write(true).open(backup)?.sync_all()?;
+        crate::settings::checkpoint(Some(blocking.to_string()))?;
         let bytes = std::fs::read(path)?;
         let kept: Vec<&[u8]> = bytes.split(|&b| b == b'\n').filter(|line| !hosts_blocking(line)).collect();
         if let Err(e) = std::fs::write(path, kept.join(&b'\n')) {
@@ -2075,6 +2106,7 @@ fn quoted(name: &str) -> String {
 /// Saved as the adapter's GUID, so undo finds the same adapter after a restart.
 pub fn disable_ipv6() -> windows::core::Result<Option<String>> {
     let Some(adapter) = connection() else { return Err(failure("no connected adapter")) };
+    crate::settings::checkpoint(Some(adapter.guid.clone()))?;
     tweaks::powershell(&format!(
         "Disable-NetAdapterBinding -Name {} -ComponentID ms_tcpip6 -ErrorAction Stop",
         quoted(&adapter.name)
@@ -2116,6 +2148,7 @@ pub fn llmnr_off() -> windows::core::Result<bool> {
 /// Saved as the old value, `-` when there was none.
 pub fn disable_llmnr() -> windows::core::Result<Option<String>> {
     let old = reg::get_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast")?;
+    crate::settings::checkpoint(Some(old.map_or("-".into(), |v| v.to_string())))?;
     reg::set_dword(reg::HKEY_LOCAL_MACHINE, DNS_POLICY, "EnableMulticast", 0)?;
     Ok(Some(old.map_or("-".into(), |v| v.to_string())))
 }
@@ -2165,11 +2198,12 @@ pub fn disable_netbios() -> windows::core::Result<Option<String>> {
             continue;
         }
         let key = format!(r"{NETBT_INTERFACES}\{sub}");
+        saved.push(format!("{sub}={}", old.map_or("-".into(), |v| v.to_string())));
+        crate::settings::checkpoint(Some(saved.join("|")))?;
         if let Err(e) = reg::set_dword(reg::HKEY_LOCAL_MACHINE, &key, "NetbiosOptions", NETBIOS_OFF) {
             let _ = restore_netbios(Some(&saved.join("|")));
             return Err(e);
         }
-        saved.push(format!("{sub}={}", old.map_or("-".into(), |v| v.to_string())));
     }
     Ok(Some(saved.join("|")))
 }
@@ -2288,6 +2322,7 @@ fn enable_doh_for(provider: usize) -> windows::core::Result<Option<String>> {
             None => format!("{server}=-"),
         });
         let template = old.map_or_else(|| PROVIDERS[provider].doh.to_string(), |e| e.template);
+        crate::settings::checkpoint(Some(saved.join("|")))?;
         if let Err(e) = write_doh(&server, Some(&DohEntry { template, auto: true, fallback: false })) {
             let _ = restore_doh(Some(&saved.join("|")));
             return Err(e);
@@ -2378,6 +2413,7 @@ fn set_do_mode(mode: Option<u32>) -> windows::core::Result<()> {
 
 pub fn disable_do_upload() -> windows::core::Result<Option<String>> {
     let old = do_mode()?;
+    crate::settings::checkpoint(Some(old.map_or("-".into(), |v| v.to_string())))?;
     set_do_mode(Some(DO_LAN))?;
     Ok(Some(old.map_or("-".into(), |v| v.to_string())))
 }
@@ -2451,6 +2487,7 @@ pub fn set_limit() -> windows::core::Result<Option<String>> {
     if !limitable(&program) {
         return Err(failure("this program can't be limited on its own"));
     }
+    crate::settings::checkpoint(None)?;
     tweaks::powershell(&format!(
         "$n = '{LIMIT_PREFIX}{program}'; \
          Remove-NetQosPolicy -Name $n -Confirm:$false -ErrorAction SilentlyContinue; \
@@ -3434,6 +3471,29 @@ pub fn quietest(networks: &[Bss], band: u8, own: Option<[u8; 6]>) -> Option<(u32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_reset_restores_after_write_or_restart_failure() {
+        for fail_at in [0, 1, 2] {
+            let state = std::cell::RefCell::new(vec![4, 7]);
+            let restart_called = std::cell::Cell::new(false);
+            let result = reset_properties(
+                &[0usize, 1],
+                |&index| {
+                    if fail_at == index { return Err(failure("write failed")); }
+                    state.borrow_mut()[index] = 0;
+                    Ok(())
+                },
+                || { restart_called.set(true); Err(failure("restart failed")) },
+                || { *state.borrow_mut() = vec![4, 7]; Ok(()) },
+            );
+            assert!(result.is_err());
+            assert_eq!(*state.borrow(), vec![4, 7]);
+            assert_eq!(restart_called.get(), fail_at == 2);
+        }
+        let result = reset_properties(&[0], |_| Err(failure("write failed")), || Ok(()), || Err(failure("undo failed")));
+        assert!(result.unwrap_err().message().contains("recovery is still required"));
+    }
 
     /// `cargo test net_connection -- --ignored --nocapture`
     #[test]

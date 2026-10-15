@@ -4,6 +4,8 @@
 
 use std::fs;
 use std::io;
+use std::io::{Read, Write};
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,6 +15,8 @@ use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Networking::WinHttp::{WinHttpReadData, WinHttpSendRequest, WinHttpSetTimeouts};
 use windows::Win32::Security::Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHash};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+use windows::Win32::Storage::FileSystem::{FILE_SHARE_READ, ReplaceFileW, REPLACE_FILE_FLAGS};
+use windows::core::HSTRING;
 
 use crate::{net, settings};
 
@@ -242,21 +246,65 @@ pub fn install(new: &Path, release: &Release) -> io::Result<()> {
     }
     let exe = std::env::current_exe()?;
     let old = old_exe(&exe);
+    let _pinned = crate::fs_guard::pin_directory(exe.parent().ok_or_else(|| io::Error::other("missing executable directory"))?)?;
+    // Finish and flush the new image before touching the running executable.
+    let staged = exe.with_extension(format!("new-{}", std::process::id()));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&staged)?;
+    if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&staged);
+        return Err(error);
+    }
+    drop(file);
     // Written first, so the new exe finds them however fast it starts. Notes left over
     // from a swap that failed name another version and stay hidden.
     let notes = WhatsNew { version: release.version.clone(), notes: release.notes.clone() };
     if let Ok(json) = serde_json::to_vec(&notes) {
         let _ = fs::write(settings::data_dir().join(NOTES), json);
     }
-    let _ = fs::remove_file(&old);
-    fs::rename(&exe, &old)?;
-    let started = fs::write(&exe, &bytes)
-        .and_then(|()| Command::new(&exe).arg(UPDATED_ARG).arg(std::process::id().to_string()).spawn());
+    let result = swap_prepared(&exe, &staged, &old, || {
+        // A portable directory can be writable by other processes. Verify the installed
+        // image while holding it against writes and replacement until CreateProcess ends.
+        let mut image = fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ.0).open(&exe)?;
+        let mut installed = Vec::new();
+        image.read_to_end(&mut installed)?;
+        if sha256(&installed) != release.hash {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "the installed update changed"));
+        }
+        Command::new(&exe).arg(UPDATED_ARG).arg(std::process::id().to_string()).spawn().map(drop)
+    });
+    let _ = fs::remove_file(&staged);
     let _ = fs::remove_file(new);
-    if let Err(e) = started {
-        let _ = fs::remove_file(&exe);
-        let _ = fs::rename(&old, &exe);
-        return Err(e);
+    result
+}
+
+fn replace(exe: &Path, replacement: &Path, backup: Option<&Path>) -> io::Result<()> {
+    let backup = backup.map(|path| HSTRING::from(path.as_os_str()));
+    unsafe {
+        ReplaceFileW(
+            &HSTRING::from(exe.as_os_str()), &HSTRING::from(replacement.as_os_str()),
+            backup.as_ref().map(|path| windows::core::PCWSTR(path.as_ptr())).unwrap_or(windows::core::PCWSTR::null()),
+            REPLACE_FILE_FLAGS(0), None, None,
+        )
+    }.map_err(|error| io::Error::from_raw_os_error(error.code().0 & 0xffff))
+}
+
+fn swap_prepared(exe: &Path, staged: &Path, old: &Path, launch: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+    match fs::remove_file(old) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    if let Err(error) = replace(exe, staged, Some(old)) {
+        // ReplaceFile can report a partial failure. Never remove the backup to hide it.
+        if !exe.exists() && old.exists() {
+            fs::rename(old, exe).map_err(|restore| io::Error::other(format!("{error}; recovery failed: {restore}; backup: {}", old.display())))?;
+        }
+        return Err(error);
+    }
+    if let Err(error) = launch() {
+        replace(exe, old, None).map_err(|restore| io::Error::other(format!("{error}; recovery failed: {restore}; backup: {}", old.display())))?;
+        return Err(error);
     }
     Ok(())
 }
@@ -278,11 +326,14 @@ pub fn roll_back() {
         return;
     }
     let failed = exe.with_file_name(format!("{}.failed.exe", exe.file_stem().unwrap_or_default().to_string_lossy()));
-    let _ = fs::remove_file(&failed);
-    if fs::rename(&exe, &failed).is_ok() && fs::rename(&old, &exe).is_ok() {
+    if let Err(error) = replace(&exe, &old, Some(&failed)) {
+        crate::system::log_error("restore previous executable", &error);
+    } else {
         let _ = fs::remove_file(settings::data_dir().join(NOTES));
         // It waits for this one to end, which still holds the single-instance lock.
-        let _ = Command::new(&exe).arg(UPDATED_ARG).arg(std::process::id().to_string()).spawn();
+        if let Err(error) = Command::new(&exe).arg(UPDATED_ARG).arg(std::process::id().to_string()).spawn() {
+            crate::system::log_error("start previous executable", &error);
+        }
     }
 }
 
@@ -371,6 +422,34 @@ fn plain(markdown: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_keeps_backup_and_restores_on_launch_failure() {
+        use windows::Win32::Storage::FileSystem::FILE_SHARE_DELETE;
+        let dir = std::env::temp_dir().join(format!("vantix-swap-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("app.exe");
+        let staged = dir.join("app.new");
+        let old = dir.join("app.old.exe");
+        fs::write(&exe, b"old").unwrap();
+        fs::write(&staged, b"new").unwrap();
+        // A running image can be read and renamed, but cannot be written in place.
+        let running = fs::OpenOptions::new().read(true)
+            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_DELETE.0).open(&exe).unwrap();
+        swap_prepared(&exe, &staged, &old, || {
+            assert_eq!(fs::read(&exe).unwrap(), b"new");
+            assert_eq!(fs::read(&old).unwrap(), b"old");
+            Ok(())
+        }).unwrap();
+        drop(running);
+
+        fs::write(&staged, b"broken").unwrap();
+        assert!(swap_prepared(&exe, &staged, &old, || Err(io::Error::other("cannot launch"))).is_err());
+        assert_eq!(fs::read(&exe).unwrap(), b"new");
+        assert!(swap_prepared(&exe, &dir.join("missing"), &old, || Ok(())).is_err());
+        assert_eq!(fs::read(&exe).unwrap(), b"new");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn versions() {

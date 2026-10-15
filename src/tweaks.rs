@@ -1038,7 +1038,20 @@ pub fn restart() -> Result<()> {
 pub fn system_tool(name: &str) -> std::path::PathBuf {
     let mut buffer = [0u16; 260];
     let len = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
-    std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..len.min(buffer.len())])).join(name)
+    tool_path(&buffer, len, name)
+}
+
+pub fn windows_tool(name: &str) -> std::path::PathBuf {
+    let mut buffer = [0u16; 260];
+    let len = unsafe { GetWindowsDirectoryW(Some(&mut buffer)) } as usize;
+    tool_path(&buffer, len, name)
+}
+
+fn tool_path(buffer: &[u16], len: usize, name: &str) -> std::path::PathBuf {
+    if len == 0 || len >= buffer.len() {
+        return std::path::PathBuf::from(r"\\?\vantix-missing").join(name);
+    }
+    std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..len])).join(name)
 }
 
 fn windows_dir() -> String {
@@ -1120,6 +1133,7 @@ fn hiberfil_size() -> Option<u64> {
 }
 
 fn disable_hibernation() -> Result<Option<String>> {
+    crate::settings::checkpoint(None)?;
     run("powercfg.exe", &["/hibernate", "off"]).map(|_| None)
 }
 
@@ -1153,6 +1167,7 @@ fn reserved_storage_off() -> Result<bool> {
 }
 
 fn disable_reserved_storage() -> Result<Option<String>> {
+    crate::settings::checkpoint(None)?;
     powershell("Set-WindowsReservedStorageState -State Disabled -ErrorAction Stop").map(|_| None)
 }
 
@@ -1185,6 +1200,7 @@ fn compact_os_on() -> Result<bool> {
 // compact's exit code isn't a reliable success flag here, so the files have the last word.
 
 fn enable_compact_os() -> Result<Option<String>> {
+    crate::settings::checkpoint(None)?;
     match run("compact.exe", &["/compactos:always"]) {
         Err(e) if !compact_os_on().unwrap_or(false) => Err(e),
         _ => Ok(None),
@@ -1214,6 +1230,7 @@ fn last_access_off() -> Result<bool> {
 
 fn disable_last_access() -> Result<Option<String>> {
     let previous = reg::get_dword(reg::HKEY_LOCAL_MACHINE, FS_KEY, LAST_ACCESS)?;
+    crate::settings::checkpoint(previous.map(|value| value.to_string()))?;
     run("fsutil.exe", &["behavior", "set", "disablelastaccess", "1"])?;
     Ok(previous.map(|value| value.to_string()))
 }
@@ -1288,6 +1305,14 @@ fn seek_penalty(drive: &str) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tools_never_fall_back_to_executable_search() {
+        let missing = super::tool_path(&[], 0, "notepad.exe");
+        assert!(missing.is_absolute());
+        assert!(!missing.exists());
+        assert!(super::system_tool("notepad.exe").is_absolute());
+        assert!(super::windows_tool("explorer.exe").is_absolute());
+    }
     use super::*;
 
     /// Read-only: `cargo test tweaks_read -- --ignored --nocapture`

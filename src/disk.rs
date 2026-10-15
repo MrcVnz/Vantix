@@ -5,7 +5,8 @@
 //! a hand rolled FindFirstFileExW walk with large fetch measured no faster on 99k files.
 
 use std::collections::HashMap;
-use std::os::windows::fs::MetadataExt;
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,10 +19,12 @@ use windows::Win32::Devices::DeviceAndDriverInstallation::{
 };
 use windows::Win32::Devices::Properties::{DEVPKEY_Device_DriverInfPath, DEVPROPTYPE};
 
-use windows::Win32::Foundation::{ERROR_SERVICE_NOT_ACTIVE, FILETIME};
+use windows::Win32::Foundation::{ERROR_SERVICE_NOT_ACTIVE, FILETIME, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    DeleteFileW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, GetDiskFreeSpaceExW, RemoveDirectoryW,
-    SetFileAttributesW,
+    DELETE, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_BASIC_INFO, FILE_DISPOSITION_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FileBasicInfo, FileDispositionInfo,
+    GetDiskFreeSpaceExW, RemoveDirectoryW, SetFileInformationByHandle,
 };
 use windows::Win32::System::Services::{
     CloseServiceHandle, ControlService, OpenSCManagerW, OpenServiceW, QueryServiceStatus, SC_HANDLE,
@@ -343,6 +346,12 @@ pub fn clean(category: Category) -> Outcome {
 }
 
 fn clean_target(target: &Target, cutoff: Option<u64>, recycle: bool, tally: &mut Tally) {
+    let directory = if matches!(target.kind, TargetKind::File) { target.path.parent() } else { Some(target.path.as_path()) };
+    let Some(directory) = directory else { return };
+    let Ok(_pinned) = crate::fs_guard::pin_directory(directory) else {
+        tally.skipped += 1;
+        return;
+    };
     visit(target, cutoff, &mut |size, files, path| {
         let gone = if recycle { crate::dupes::recycle_file(path) } else { delete_file(path) };
         if gone {
@@ -599,7 +608,7 @@ fn clean_old_drivers() -> Tally {
     let mut tally = Tally::default();
     for package in old_drivers() {
         let size = folder_size(&package.folder);
-        let deleted = Command::new(env_path("SystemRoot").join(r"System32\pnputil.exe"))
+        let deleted = Command::new(crate::tweaks::system_tool("pnputil.exe"))
             .args(["/delete-driver", &package.inf])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
@@ -650,7 +659,7 @@ fn clean_windows_old() -> Tally {
     for handler in UPGRADE_HANDLERS {
         let _ = reg::set_dword(reg::HKEY_LOCAL_MACHINE, &format!(r"{VOLUME_CACHES}\{handler}"), &flag, 2);
     }
-    let _ = Command::new(env_path("SystemRoot").join(r"System32\cleanmgr.exe"))
+    let _ = Command::new(crate::tweaks::system_tool("cleanmgr.exe"))
         .arg(format!("/sagerun:{SAGE_RUN}"))
         .status();
     for handler in UPGRADE_HANDLERS {
@@ -747,6 +756,7 @@ fn visit(target: &Target, cutoff: Option<u64>, f: &mut impl FnMut(u64, u64, &Pat
 }
 
 fn visit_items(dir: &Path, cutoff: Option<u64>, f: &mut impl FnMut(u64, u64, &Path) -> bool) {
+    let Ok(_guard) = crate::fs_guard::open_directory(dir) else { return };
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
@@ -788,6 +798,7 @@ fn walk(
     prefix: Option<&str>,
     f: &mut impl FnMut(u64, &Path) -> bool,
 ) -> bool {
+    let Ok(_guard) = crate::fs_guard::open_directory(dir) else { return true };
     let Ok(entries) = std::fs::read_dir(dir) else { return true };
     for entry in entries.flatten() {
         // On Windows this comes from the directory listing itself, no extra call per file.
@@ -813,19 +824,36 @@ fn walk(
 }
 
 fn delete_file(path: &Path) -> bool {
-    let wide = HSTRING::from(path.as_os_str());
-    unsafe {
-        if DeleteFileW(&wide).is_ok() {
-            return true;
-        }
-        // Read-only files refuse deletion until the flag is cleared.
-        let readonly = std::fs::symlink_metadata(path).is_ok_and(|m| m.permissions().readonly());
-        readonly && SetFileAttributesW(&wide, FILE_ATTRIBUTE_NORMAL).is_ok() && DeleteFileW(&wide).is_ok()
+    let Ok(file) = std::fs::OpenOptions::new()
+        .access_mode(DELETE.0 | FILE_READ_ATTRIBUTES.0 | FILE_WRITE_ATTRIBUTES.0)
+        .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(path) else { return false };
+    let Ok(meta) = file.metadata() else { return false };
+    if !meta.is_file() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+        return false;
     }
+    let handle = HANDLE(file.as_raw_handle());
+    let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY.0 != 0;
+    let attributes = |bits| {
+        let info = FILE_BASIC_INFO { FileAttributes: bits, ..Default::default() };
+        unsafe { SetFileInformationByHandle(handle, FileBasicInfo, (&raw const info).cast(), size_of::<FILE_BASIC_INFO>() as u32) }
+    };
+    let writable = meta.file_attributes() & !FILE_ATTRIBUTE_READONLY.0;
+    if readonly && attributes(if writable == 0 { FILE_ATTRIBUTE_NORMAL.0 } else { writable }).is_err() {
+        return false;
+    }
+    let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+    let deleted = unsafe { SetFileInformationByHandle(handle, FileDispositionInfo, (&raw const info).cast(), size_of::<FILE_DISPOSITION_INFO>() as u32) }.is_ok();
+    if readonly && !deleted {
+        let _ = attributes(meta.file_attributes());
+    }
+    deleted
 }
 
 /// Removes empty folders under `dir`, deepest first. The root itself is kept.
 fn remove_empty_dirs(dir: &Path, root: bool) {
+    let Ok(guard) = crate::fs_guard::open_directory(dir) else { return };
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(kind) = entry.file_type() else { continue };
@@ -834,6 +862,7 @@ fn remove_empty_dirs(dir: &Path, root: bool) {
         }
     }
     if !root {
+        drop(guard);
         unsafe {
             let _ = RemoveDirectoryW(&HSTRING::from(dir.as_os_str()));
         }
@@ -905,6 +934,17 @@ mod tests {
             .unwrap();
         assert!(made.status.success(), "mklink failed");
 
+        std::fs::create_dir_all(victim.join("nested")).unwrap();
+        std::fs::write(victim.join("nested").join("keep.txt"), b"keep").unwrap();
+        for root in [target.join("link"), target.join("link").join("nested")] {
+            let mut tally = Tally::default();
+            clean_target(&Target::contents(root), None, false, &mut tally);
+            assert_eq!(tally.files, 0, "followed a root or ancestor junction");
+            assert!(tally.skipped > 0);
+            assert!(victim.join("keep.txt").exists());
+            assert!(victim.join("nested").join("keep.txt").exists());
+        }
+
         let mut tally = Tally::default();
         clean_target(&Target::contents(target.clone()), None, false, &mut tally);
 
@@ -914,6 +954,28 @@ mod tests {
         assert!(!target.join("a.tmp").exists() && !target.join("sub").exists());
         let _ = std::fs::remove_dir(target.join("link"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn deletion_handles_readonly_files_and_refuses_locked_files() {
+        let base = std::env::temp_dir().join(format!("vantix-delete-handle-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("readonly.tmp");
+        std::fs::write(&path, b"cache").unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        let mut tally = Tally::default();
+        clean_target(&Target::contents(base.clone()), None, false, &mut tally);
+        assert_eq!(tally.files, 1);
+        assert!(!path.exists());
+
+        std::fs::write(&path, b"in use").unwrap();
+        let locked = std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ.0).open(&path).unwrap();
+        assert!(!delete_file(&path));
+        assert!(path.exists());
+        drop(locked);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     /// A folder in Downloads with one new file in it stays whole; an old one counts once,

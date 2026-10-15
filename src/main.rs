@@ -18,6 +18,7 @@ mod reg;
 mod restore;
 mod services;
 mod settings;
+mod fs_guard;
 mod space;
 mod startup;
 mod system;
@@ -391,12 +392,20 @@ fn run() -> Result<(), slint::PlatformError> {
 }
 
 /// Writes the undo journal; false when it couldn't, which the job sheet says.
-fn save_journal(changes: &[Change]) -> bool {
-    let saved = settings::save_changes(changes).inspect_err(|e| system::log_error("save changes.json", e)).is_ok();
-    if saved {
-        settings::clear_pending();
+fn save_journal(changes: &mut Vec<Change>) -> bool {
+    settings::commit_journal(changes).inspect_err(|e| system::log_error("save changes.json", e)).is_ok()
+}
+
+fn stale_change(change: &Change, tweaks: &[TweakInfo], active: Option<&str>, gone: &[String]) -> bool {
+    if change.recovery || change.id.starts_with("service:") {
+        return false;
     }
-    saved
+    match (CATALOG.iter().position(|t| t.id == change.id), change.plan.as_deref()) {
+        (None, _) => true,
+        (Some(_), Some(plan)) if gone.iter().any(|p| p == plan) => true,
+        (Some(_), Some(plan)) if Some(plan) != active => false,
+        (Some(i), _) => tweaks[i].on == Some(change.reset),
+    }
 }
 
 fn bind_with<T>(app: &Rc<App>, f: impl Fn(&Rc<App>, T) + 'static) -> impl Fn(T) + 'static {
@@ -648,7 +657,7 @@ impl App {
             };
             let path = settings::data_dir().join(name);
             if std::fs::write(&path, text).is_ok() {
-                let _ = std::process::Command::new("notepad.exe").arg(path).spawn();
+                let _ = std::process::Command::new(tweaks::system_tool("notepad.exe")).arg(path).spawn();
             }
         });
         prefs.on_reset_all(|| {
@@ -764,7 +773,7 @@ impl App {
         live.on_open_log(|| {
             let log = settings::data_dir().join("game-mode.log");
             if log.exists() {
-                let _ = std::process::Command::new("explorer.exe").arg(log).spawn();
+                let _ = std::process::Command::new(tweaks::windows_tool("explorer.exe")).arg(log).spawn();
             }
         });
 
@@ -812,7 +821,7 @@ impl App {
         }));
         internet.on_scan_wifi(bind(self, |app| app.scan_wifi()));
         internet.on_open_location(|| {
-            let _ = std::process::Command::new("explorer.exe").arg("ms-settings:privacy-location").spawn();
+            let _ = std::process::Command::new(tweaks::windows_tool("explorer.exe")).arg("ms-settings:privacy-location").spawn();
         });
         internet.on_go_dns(bind(self, |app| {
             app.with_ui(|ui| ui.global::<Net>().set_tab(2));
@@ -1749,7 +1758,7 @@ impl App {
                     }
                     state.active_plan = active.clone();
                     // Only trusted when no change landed while these states were read.
-                    let current = state.journal_version == version && state.working.is_none();
+                    let current = state.journal_version == version && state.working.is_none() && !settings::preparing();
                     // Plan settings from before the journal kept plans were made on the plan
                     // that's active now, unless the plan changed since.
                     let mut dirty = false;
@@ -1768,15 +1777,7 @@ impl App {
                     let stale: Vec<(String, Option<String>)> = state
                         .changes
                         .iter()
-                        .filter(|change| {
-                            match (CATALOG.iter().position(|t| t.id == change.id), &change.plan) {
-                                (None, _) => true,
-                                (Some(_), Some(plan)) if gone.contains(plan) => true,
-                                (Some(_), Some(plan)) if Some(plan) != active.as_ref() => false,
-                                // A reset is stale once the tweak is back on, a change once it's off.
-                                (Some(i), _) => state.tweaks[i].on == Some(change.reset),
-                            }
-                        })
+                        .filter(|change| stale_change(change, &state.tweaks, active.as_deref(), &gone))
                         .map(|change| (change.id.clone(), change.plan.clone()))
                         .collect();
                     if current && !stale.is_empty() {
@@ -1784,7 +1785,7 @@ impl App {
                         dirty = true;
                     }
                     if dirty {
-                        save_journal(&state.changes);
+                        save_journal(&mut state.changes);
                     }
                 }
                 app.with_ui(|ui| app.show_tweaks(ui));
@@ -1935,7 +1936,20 @@ impl App {
         });
         let work = name.clone();
         self.run_job(
-            move || services::set_start(&work, start),
+            move || {
+                if undo {
+                    services::set_start(&work, start).and_then(|before| {
+                        settings::forget_pending(&format!("service:{work}"), None)?;
+                        Ok(before)
+                    })
+                } else {
+                    settings::with_change(Change {
+                        id: format!("service:{work}"), time: Local::now(), previous: None,
+                        boot: tweaks::boot_time(), reboot: false, freed: None, reset: false,
+                        recovery: true, plan: None,
+                    }, || services::set_start(&work, start))
+                }
+            },
             move |app, result| {
                 match result {
                     Some(Ok(before)) => {
@@ -1955,6 +1969,7 @@ impl App {
                                 // A second change keeps the first record: what it was
                                 // before Vantix is what Undo has to put back.
                                 change.time = Local::now();
+                                change.recovery = false;
                             } else {
                                 let change = Change {
                                     id,
@@ -1964,11 +1979,12 @@ impl App {
                                     reboot: false,
                                     freed: None,
                                     reset: false,
+                                    recovery: false,
                                     plan: None,
                                 };
                                 state.changes.push(change);
                             }
-                            saved = save_journal(&state.changes);
+                            saved = save_journal(&mut state.changes);
                         }
                         app.set_job(JobState::Done, "");
                         app.with_ui(|ui| ui.global::<Job>().set_journal_unsaved(!saved));
@@ -1978,8 +1994,14 @@ impl App {
                         });
                         app.refresh_tweaks();
                     }
-                    Some(Err(error)) => app.set_job(JobState::Failed, &error.message()),
-                    None => app.set_job(JobState::Failed, ""),
+                    Some(Err(error)) => {
+                        save_journal(&mut app.state.borrow_mut().changes);
+                        app.set_job(JobState::Failed, &error.message());
+                    }
+                    None => {
+                        save_journal(&mut app.state.borrow_mut().changes);
+                        app.set_job(JobState::Failed, "");
+                    }
                 }
             },
         );
@@ -2100,6 +2122,8 @@ impl App {
                 TweakState::Busy
             } else if let Kind::Action { .. } = tweak.kind {
                 if info.ran { TweakState::Ran } else { TweakState::Action }
+            } else if applied.is_some_and(|c| c.recovery) {
+                TweakState::Recovery
             } else if !info.loaded {
                 TweakState::Loading
             } else {
@@ -2424,7 +2448,7 @@ impl App {
                         Op::Apply | Op::Reset => active.clone(),
                     }
                     .filter(|_| tweak.on_plan);
-                    let result = boost::on_plan(plan.as_deref(), || match (&tweak.kind, &op) {
+                    let execute = || boost::on_plan(plan.as_deref(), || match (&tweak.kind, &op) {
                         (Kind::Toggle { apply, .. }, Op::Apply) => apply(),
                         (Kind::Toggle { reset, .. }, Op::Reset) => reset().map(|_| None),
                         (Kind::Toggle { revert, .. }, Op::Revert(previous, _)) => {
@@ -2433,17 +2457,25 @@ impl App {
                         (Kind::Toggle { apply, .. }, Op::Reapply(_)) => apply().map(|_| None),
                         (Kind::Action { run }, _) => run().map(|_| None),
                     });
-                    // On the journal's way already, in case Vantix ends before it's written.
-                    if let (Ok(previous), Op::Apply | Op::Reset, Kind::Toggle { .. }) = (&result, &op, &tweak.kind) {
-                        settings::note_pending(Change {
+                    let mut result = if matches!(op, Op::Apply | Op::Reset) && matches!(tweak.kind, Kind::Toggle { .. }) {
+                        settings::with_change(Change {
                             id: tweak.id.into(),
                             time: Local::now(),
-                            previous: previous.clone(),
+                            previous: None,
                             boot: tweaks::boot_time(),
                             reboot: tweak.reboot,
                             freed: None,
                             reset: matches!(op, Op::Reset),
+                            recovery: true,
                             plan: plan.clone(),
+                        }, execute)
+                    } else {
+                        execute()
+                    };
+                    if matches!(op, Op::Revert(..) | Op::Reapply(_)) {
+                        result = result.and_then(|previous| {
+                            settings::forget_pending(tweak.id, plan.as_deref())?;
+                            Ok(previous)
                         });
                     }
                     // Undo all goes on past one that fails: the rest can still go back.
@@ -2454,6 +2486,10 @@ impl App {
                     .into_iter()
                     .filter_map(|(name, previous)| {
                         services::set_start(&name, previous)
+                            .and_then(|before| {
+                                settings::forget_pending(&format!("service:{name}"), None)?;
+                                Ok(before)
+                            })
                             .inspect_err(|error| system::log_error(&name, error))
                             .ok()
                             .map(|_| (name, previous))
@@ -2475,6 +2511,7 @@ impl App {
                     }
                 }
                 let Some((outcomes, gained, active, undone)) = result else {
+                    save_journal(&mut app.state.borrow_mut().changes);
                     app.state.borrow_mut().working = None;
                     app.set_job(JobState::Failed, "");
                     app.with_ui(|ui| app.show_tweaks(ui));
@@ -2518,6 +2555,7 @@ impl App {
                                     reboot: tweak.reboot,
                                     freed: gained,
                                     reset,
+                                    recovery: false,
                                     plan: plan.clone(),
                                 };
                                 // A change on another plan doesn't alter what the card shows.
@@ -2540,7 +2578,7 @@ impl App {
                             }
                         }
                     }
-                    saved = save_journal(&state.changes);
+                    saved = save_journal(&mut state.changes);
                 }
                 let again = std::mem::take(&mut app.state.borrow_mut().diag_again);
                 match errors.is_empty() {
@@ -3921,7 +3959,7 @@ fn show_dupes(ui: &AppWindow, state: &mut State) {
 /// Opens Explorer on the folder of `path` with it selected.
 fn reveal(path: &str) {
     use std::os::windows::process::CommandExt;
-    let _ = std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{path}\"")).spawn();
+    let _ = std::process::Command::new(tweaks::windows_tool("explorer.exe")).raw_arg(format!("/select,\"{path}\"")).spawn();
 }
 
 fn show_space(ui: &AppWindow, state: &mut State) {
@@ -4113,4 +4151,23 @@ fn portuguese(language: Language) -> bool {
 /// Needs at least one component to exist, Slint only loads the bundled catalogs then.
 fn apply_language(language: Language) {
     let _ = slint::select_bundled_translation(if portuguese(language) { "pt_BR" } else { "" });
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_preserves_services_and_partial_changes() {
+        let tweaks = vec![TweakInfo { on: Some(false), ..Default::default() }; CATALOG.len()];
+        let mut service = settings::tests::change("service:Example");
+        service.recovery = false;
+        assert!(!stale_change(&service, &tweaks, None, &[]));
+        let mut tweak = settings::tests::change(CATALOG[0].id);
+        assert!(!stale_change(&tweak, &tweaks, None, &[]));
+        tweak.recovery = false;
+        assert!(stale_change(&tweak, &tweaks, None, &[]));
+        tweak.plan = Some("other plan".into());
+        assert!(!stale_change(&tweak, &tweaks, Some("active plan"), &[]));
+    }
 }

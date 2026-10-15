@@ -375,6 +375,7 @@ pub fn set_start(name: &str, start: Start) -> Result<Start> {
         let Some(code_before) = start_code(handle) else {
             return Err(Error::from_thread());
         };
+        crate::settings::checkpoint(Some(before.id().to_string()))?;
         change_start(handle, code)?;
         if matches!(start, Start::Auto | Start::Delayed) {
             let mut delay = SERVICE_DELAYED_AUTO_START_INFO { fDelayedAutostart: BOOL::from(start == Start::Delayed) };

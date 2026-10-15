@@ -492,9 +492,12 @@ pub fn disable_power() -> Result<Option<String>> {
     let had: Vec<bool> = nodes
         .iter()
         .map(|id| {
-            reg::get_dword(reg::HKEY_LOCAL_MACHINE, &parameters(id), "SelectiveSuspendOn").ok().flatten().is_some()
+            reg::get_dword(reg::HKEY_LOCAL_MACHINE, &parameters(id), "SelectiveSuspendOn").map(|value| value.is_some())
         })
-        .collect();
+        .collect::<Result<_>>()?;
+    crate::settings::checkpoint(Some(nodes.iter().zip(&had)
+        .map(|(id, had)| format!("{id}={}", if *had { "1" } else { "-" }))
+        .collect::<Vec<_>>().join("|")))?;
     let changed = set_power(&nodes, false)?;
     let saved: Vec<String> = nodes
         .iter()

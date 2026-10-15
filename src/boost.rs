@@ -79,6 +79,7 @@ macro_rules! dword_tweak {
         }
         pub fn $apply() -> Saved {
             let previous = reg::get_dword($root, $path, $name)?;
+            crate::settings::checkpoint(Some(saved(previous)))?;
             reg::set_dword($root, $path, $name, $value)?;
             Ok(Some(saved(previous)))
         }
@@ -184,6 +185,7 @@ macro_rules! power_tweak {
         }
         pub fn $apply() -> Saved {
             let previous = power(&$subgroup, &$setting)?;
+            crate::settings::checkpoint(Some(previous.to_string()))?;
             set_power(&$subgroup, &$setting, $value)?;
             Ok(Some(previous.to_string()))
         }
@@ -227,6 +229,7 @@ pub fn ultimate_on() -> Result<bool> {
 
 pub fn enable_ultimate() -> Saved {
     let previous = active_scheme()?;
+    crate::settings::checkpoint(Some(format!("{previous:?}")))?;
     if set_scheme(&VANTIX_ULTIMATE).is_err() {
         run("powercfg.exe", &["/duplicatescheme", &format!("{ULTIMATE:?}"), &format!("{VANTIX_ULTIMATE:?}")])?;
         if let Err(e) = set_scheme(&VANTIX_ULTIMATE) {
@@ -345,6 +348,7 @@ pub fn wifi_full_power() -> Result<bool> {
 
 pub fn set_wifi_full_power() -> Saved {
     let (ac, dc) = wifi_power()?;
+    crate::settings::checkpoint(Some(format!("{ac},{dc}")))?;
     set_wifi_power(0, 0)?;
     Ok(Some(format!("{ac},{dc}")))
 }
@@ -402,6 +406,7 @@ fn hvci_running() -> Result<bool> {
 
 pub fn disable_hvci() -> Saved {
     let previous = reg::get_dword(HKEY_LOCAL_MACHINE, HVCI_KEY, "Enabled")?;
+    crate::settings::checkpoint(Some(saved(previous)))?;
     reg::set_dword(HKEY_LOCAL_MACHINE, HVCI_KEY, "Enabled", 0)?;
     Ok(Some(saved(previous)))
 }
@@ -428,6 +433,7 @@ pub fn memory_compression_off() -> Result<bool> {
 }
 
 pub fn disable_memory_compression() -> Saved {
+    crate::settings::checkpoint(None)?;
     powershell("Disable-MMAgent -MemoryCompression -ErrorAction Stop").map(|_| None)
 }
 
@@ -513,6 +519,7 @@ pub fn enable_msi() -> Saved {
             off.push((device, saved(value)));
         }
     }
+    crate::settings::checkpoint(Some(off.iter().map(|(device, value)| format!("{device}={value}")).collect::<Vec<_>>().join("|")))?;
     all_or_nothing(
         "MSI mode",
         off.len(),
@@ -577,6 +584,7 @@ macro_rules! dx_tweak {
         }
         pub fn $apply() -> Saved {
             let previous = dx_get($key)?;
+            crate::settings::checkpoint(Some(previous.clone().unwrap_or("-".into())))?;
             dx_set($key, Some("1"))?;
             Ok(Some(previous.unwrap_or("-".into())))
         }
@@ -620,6 +628,7 @@ pub fn disable_game_dvr() -> Saved {
         .iter()
         .map(|&(root, path, name)| reg::get_dword(root, path, name).map(saved))
         .collect::<Result<Vec<_>>>()?;
+    crate::settings::checkpoint(Some(previous.join(",")))?;
     all_or_nothing(
         "Game DVR",
         DVR_VALUES.len(),
@@ -769,6 +778,7 @@ pub fn mouse_acceleration_off() -> Result<bool> {
 
 pub fn disable_mouse_acceleration() -> Saved {
     let previous = mouse()?;
+    crate::settings::checkpoint(Some(previous.map(|v| v.to_string()).join(",")))?;
     set_mouse([0, 0, 0])?;
     Ok(Some(previous.map(|v| v.to_string()).join(",")))
 }
@@ -849,6 +859,7 @@ pub fn hotkeys_off() -> Result<bool> {
 pub fn disable_hotkeys() -> Saved {
     let mut keys = hotkeys()?;
     let previous = format!("{},{},{}", keys.sticky.dwFlags.0, keys.filter.dwFlags, keys.toggle.dwFlags);
+    crate::settings::checkpoint(Some(previous.clone()))?;
     keys.sticky.dwFlags = STICKYKEYS_FLAGS(keys.sticky.dwFlags.0 & !HOTKEY_ACTIVE);
     keys.filter.dwFlags &= !HOTKEY_ACTIVE;
     keys.toggle.dwFlags &= !HOTKEY_ACTIVE;
@@ -928,6 +939,7 @@ pub fn fast_repeat() -> Result<bool> {
 
 pub fn set_fast_repeat() -> Saved {
     let (delay, speed) = keyboard_repeat()?;
+    crate::settings::checkpoint(Some(format!("{delay},{speed}")))?;
     set_keyboard_repeat(0, 31)?;
     Ok(Some(format!("{delay},{speed}")))
 }
@@ -976,6 +988,7 @@ pub fn set_game_filter_keys() -> Saved {
     let mut f = filter_keys()?;
     let previous =
         format!("{},{},{},{},{}", f.dwFlags, f.iWaitMSec, f.iDelayMSec, f.iRepeatMSec, f.iBounceMSec);
+    crate::settings::checkpoint(Some(previous.clone()))?;
     f.dwFlags |= FKF_FILTERKEYSON | FKF_AVAILABLE;
     (f.iWaitMSec, f.iBounceMSec) = (0, 0);
     (f.iDelayMSec, f.iRepeatMSec) = GAME_FILTER;
@@ -1034,6 +1047,7 @@ pub fn shows_filter_delay() -> bool {
 pub fn disable_filter_delay() -> Saved {
     let mut f = filter_keys()?;
     let previous = format!("{},{}", f.iWaitMSec, f.iBounceMSec);
+    crate::settings::checkpoint(Some(previous.clone()))?;
     (f.iWaitMSec, f.iBounceMSec) = (0, 0);
     set_filter_keys(f)?;
     Ok(Some(previous))
@@ -1084,6 +1098,7 @@ pub fn telemetry_off() -> Result<bool> {
 pub fn disable_telemetry() -> Saved {
     let policy = reg::get_dword(HKEY_LOCAL_MACHINE, TELEMETRY_KEY, "AllowTelemetry")?;
     let start = reg::get_dword(HKEY_LOCAL_MACHINE, DIAGTRACK_KEY, "Start")?;
+    crate::settings::checkpoint(Some(format!("{},{}", saved(policy), saved(start))))?;
     all_or_nothing(
         "telemetry",
         2,

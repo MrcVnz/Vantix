@@ -70,7 +70,7 @@ impl App {
                 _ => format!("{REPO}/issues/new"),
             };
             // Through Explorer, so the browser opens as the user and not elevated.
-            let _ = std::process::Command::new("explorer.exe").arg(url).spawn();
+            let _ = std::process::Command::new(crate::tweaks::windows_tool("explorer.exe")).arg(url).spawn();
         });
         home.on_dismiss_notes(bind(self, |app| {
             update::dismiss_whats_new();

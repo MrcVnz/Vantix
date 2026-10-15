@@ -11,6 +11,7 @@ export enum TweakState {
     /// Was in place before Vantix and Vantix turned it off; undoing puts it back.
     reverted,
     unknown,
+    recovery,
     busy,
     action,
     /// An action that already ran in this session.
@@ -337,6 +338,10 @@ component TweakCard inherits Rectangle {
                         tint: Theme.warn;
                     }
                 }
+                if root.item.state == TweakState.recovery: VerticalLayout {
+                    alignment: center;
+                    Chip { text: @tr("Recovery needed"); tint: Theme.warn; }
+                }
                 if root.item.state != TweakState.system && root.item.state != TweakState.unknown: VerticalLayout {
                     alignment: center;
                     RebootChip {
@@ -437,7 +442,7 @@ component TweakCard inherits Rectangle {
                     clicked => { Tweaks.reset(root.item.index); }
                 }
             }
-            if root.item.state == TweakState.on || root.item.state == TweakState.reverted: HorizontalLayout {
+            if root.item.state == TweakState.on || root.item.state == TweakState.reverted || root.item.state == TweakState.recovery: HorizontalLayout {
                 alignment: end;
                 Button {
                     text: @tr("Undo");

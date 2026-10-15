@@ -168,6 +168,9 @@ pub struct Change {
     /// The tweak was already in place before Vantix and this turned it off.
     #[serde(default)]
     pub reset: bool,
+    /// An interrupted operation must remain available even when only partly applied.
+    #[serde(default)]
+    pub recovery: bool,
     /// Power plan the change was made on, for the settings that live in a plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
@@ -232,15 +235,11 @@ pub fn load_changes() -> Vec<Change> {
             Vec::new()
         }
     };
-    // Changes made right before Vantix ended, with no time to write them to the journal.
+    // Prepared before a system write, including operations interrupted before completion.
     let pending: Vec<Change> = read_json(&pending_path()).unwrap_or_default();
-    let before = changes.len();
-    for change in pending {
-        if !changes.iter().any(|c| c.id == change.id && c.plan == change.plan) {
-            changes.push(change);
-        }
-    }
-    if changes.len() == before || save_changes(&changes).is_ok() {
+    let had_pending = !pending.is_empty();
+    merge_records(&mut changes, pending, true);
+    if had_pending && save_changes(&changes).is_ok() {
         clear_pending();
     }
     *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = changes.clone();
@@ -248,17 +247,152 @@ pub fn load_changes() -> Vec<Change> {
 }
 
 fn pending_path() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = TEST_PENDING.with(|path| path.borrow().clone()) {
+        return path;
+    }
     data_dir().join("changes.pending.json")
 }
 
-/// Records a change the moment it's made, from the thread that made it, for
-/// `load_changes` to find if Vantix ends before the journal is written.
-pub fn note_pending(change: Change) {
+#[cfg(test)]
+thread_local! {
+    static TEST_PENDING: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+thread_local! {
+    static PREPARING: std::cell::RefCell<Option<Change>> = const { std::cell::RefCell::new(None) };
+}
+
+static WRITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static PENDING_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn preparing() -> bool {
+    WRITERS.load(std::sync::atomic::Ordering::SeqCst) != 0
+}
+
+/// The guard also clears the context when a Windows operation panics.
+pub fn with_change<T>(change: Change, work: impl FnOnce() -> windows::core::Result<T>) -> windows::core::Result<T> {
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            PREPARING.with(|slot| slot.replace(None));
+            WRITERS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    {
+        let _lock = PENDING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        WRITERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    let _guard = Guard;
+    let reset = change.reset;
+    PREPARING.with(|slot| slot.replace(Some(change)));
+    if reset {
+        checkpoint(None)?;
+    }
+    let result = work();
+    if result.is_ok() {
+        PREPARING.with(|slot| -> windows::core::Result<()> {
+            let mut context = slot.borrow_mut();
+            let change = context.as_mut().unwrap();
+            let _lock = PENDING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let path = pending_path();
+            let mut pending: Vec<Change> = read_json(&path).map_err(|_| recovery_error("recovery journal is unreadable"))?;
+            if let Some(record) = pending.iter_mut().find(|c| c.id == change.id && c.plan == change.plan) {
+                record.recovery = false;
+                write_json(&path, &pending).map_err(recovery_error)?;
+            }
+            Ok(())
+        })?;
+    }
+    result
+}
+
+fn recovery_error(error: impl std::fmt::Display) -> windows::core::Error {
+    windows::core::Error::new(windows::Win32::Foundation::E_FAIL, format!("cannot save recovery data: {error}"))
+}
+
+/// Called with the exact undo data BEFORE the first corresponding system write.
+/// Direct integration tests without an application transaction keep their old behavior.
+pub fn checkpoint(previous: Option<String>) -> windows::core::Result<()> {
+    PREPARING.with(|slot| {
+        let mut context = slot.borrow_mut();
+        let Some(change) = context.as_mut() else { return Ok(()) };
+        if !change.reset {
+            change.previous = previous;
+            // Repeated service edits undo to the state before the first edit.
+            if change.id.starts_with("service:")
+                && let Some(original) = journal().into_iter().find(|c| c.id == change.id)
+            {
+                change.previous = original.previous;
+            }
+        }
+        change.recovery = true;
+        let _lock = PENDING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        persist_pending(&pending_path(), change).map_err(recovery_error)
+    })
+}
+
+/// A reset with an exact snapshot can recover that snapshot instead of reapplying.
+pub fn checkpoint_restore(previous: Option<String>) -> windows::core::Result<()> {
+    PREPARING.with(|slot| {
+        if let Some(change) = slot.borrow_mut().as_mut() {
+            change.reset = false;
+        }
+    });
+    checkpoint(previous)
+}
+
+fn persist_pending(path: &Path, change: &Change) -> io::Result<()> {
+    let mut pending: Vec<Change> = read_json(path).map_err(|_| io::Error::other("recovery journal is unreadable"))?;
+    if let Some(existing) = pending.iter_mut().find(|c| c.id == change.id && c.plan == change.plan) {
+        *existing = change.clone();
+    } else {
+        pending.push(change.clone());
+    }
+    write_json(path, &pending)
+}
+
+/// Only after undo succeeds. If saving fails, keep the original journal entry so
+/// undo can be retried; never let an older pending apply resurrect the undone change.
+pub fn forget_pending(id: &str, plan: Option<&str>) -> windows::core::Result<()> {
+    let _lock = PENDING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = pending_path();
-    let mut pending: Vec<Change> = read_json(&path).unwrap_or_default();
-    pending.push(change);
-    if let Err(e) = write_json(&path, &pending) {
-        crate::system::log_error("save changes.pending.json", &e);
+    let mut pending: Vec<Change> = read_json(&path).map_err(|_| recovery_error("recovery journal is unreadable"))?;
+    let before = pending.len();
+    pending.retain(|c| c.id != id || c.plan.as_deref() != plan);
+    if pending.len() != before {
+        write_json(&path, &pending).map_err(recovery_error)?;
+    }
+    Ok(())
+}
+
+/// Commit under the same lock that starts writers. Never clear another job's snapshot.
+pub fn commit_journal(changes: &mut Vec<Change>) -> io::Result<()> {
+    let _lock = PENDING_LOCK.try_lock().map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "recovery journal is busy"))?;
+    if preparing() {
+        return Err(io::Error::new(io::ErrorKind::WouldBlock, "a system change is still running"));
+    }
+    let pending: Vec<Change> = read_json(&pending_path()).map_err(|_| io::Error::other("recovery journal is unreadable"))?;
+    merge_records(changes, pending, false);
+    save_changes(changes)?;
+    match fs::remove_file(pending_path()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn merge_records(changes: &mut Vec<Change>, pending: Vec<Change>, restarted: bool) {
+    for mut change in pending {
+        if let Some(existing) = changes.iter_mut().find(|c| c.id == change.id && c.plan == change.plan) {
+            if change.recovery || change.time > existing.time || (restarted && existing.recovery) {
+                change.recovery = true;
+                *existing = change;
+            }
+        } else {
+            change.recovery = true;
+            changes.push(change);
+        }
     }
 }
 
@@ -333,8 +467,92 @@ pub(crate) fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::R
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn change(id: &str) -> Change {
+        Change { id: id.into(), time: Local::now(), previous: None, boot: 0, reboot: false,
+            freed: None, reset: false, recovery: true, plan: None }
+    }
+
+    #[test]
+    fn interrupted_records_keep_exact_snapshots_and_completed_results() {
+        let mut old = change("dns");
+        old.previous = Some("old adapter".into());
+        old.recovery = false;
+        let mut pending = change("dns");
+        pending.previous = Some("new adapter".into());
+        let mut changes = vec![old.clone()];
+        merge_records(&mut changes, vec![pending.clone()], false);
+        assert_eq!(changes[0].previous, pending.previous);
+        assert!(changes[0].recovery);
+
+        pending.recovery = false;
+        old.time = pending.time + chrono::TimeDelta::seconds(1);
+        let mut changes = vec![old.clone()];
+        merge_records(&mut changes, vec![pending.clone()], false);
+        assert_eq!(changes[0].previous, old.previous);
+        assert!(!changes[0].recovery);
+        changes[0].time = pending.time - chrono::TimeDelta::seconds(1);
+        merge_records(&mut changes, vec![pending.clone()], true);
+        assert_eq!(changes[0].previous, pending.previous);
+        assert!(changes[0].recovery);
+    }
+
+    #[test]
+    fn recovery_is_durable_before_write_and_failure_blocks_mutation() {
+        let dir = std::env::temp_dir().join(format!("vantix-write-ahead-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pending.json");
+        TEST_PENDING.with(|slot| slot.replace(Some(path.clone())));
+        let result: windows::core::Result<()> = with_change(change("test"), || {
+            checkpoint(Some("original".into()))?;
+            let disk: Vec<Change> = read_json(&path).unwrap();
+            assert_eq!(disk[0].previous.as_deref(), Some("original"));
+            assert!(disk[0].recovery);
+            Err(recovery_error("simulated system failure"))
+        });
+        assert!(result.is_err());
+        assert!(PREPARING.with(|slot| slot.borrow().is_none()));
+        let disk: Vec<Change> = read_json(&path).unwrap();
+        assert!(disk[0].recovery);
+
+        let mut reset = change("reset-test");
+        reset.reset = true;
+        let result: windows::core::Result<()> = with_change(reset, || {
+            let disk: Vec<Change> = read_json(&path).unwrap();
+            assert!(disk.iter().any(|c| c.id == "reset-test" && c.reset && c.recovery));
+            checkpoint_restore(Some("exact pre-reset state".into()))?;
+            Err(recovery_error("interrupted reset"))
+        });
+        assert!(result.is_err());
+        let disk: Vec<Change> = read_json(&path).unwrap();
+        let reset = disk.iter().find(|c| c.id == "reset-test").unwrap();
+        assert!(!reset.reset);
+        assert_eq!(reset.previous.as_deref(), Some("exact pre-reset state"));
+
+        with_change(change("test"), || checkpoint(Some("original".into()))).unwrap();
+        let disk: Vec<Change> = read_json(&path).unwrap();
+        assert!(!disk.iter().find(|c| c.id == "test").unwrap().recovery);
+        forget_pending("test", None).unwrap();
+        let disk: Vec<Change> = read_json(&path).unwrap();
+        assert_eq!(disk.len(), 1);
+        assert_eq!(disk[0].id, "reset-test");
+
+        let invalid = dir.join("not-a-directory");
+        fs::write(&invalid, b"file").unwrap();
+        TEST_PENDING.with(|slot| slot.replace(Some(invalid.join("pending.json"))));
+        let mutated = std::cell::Cell::new(false);
+        let result = with_change(change("test"), || {
+            checkpoint(Some("before".into()))?;
+            mutated.set(true);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(!mutated.get());
+        TEST_PENDING.with(|slot| slot.replace(None));
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn damaged_json_is_moved_aside() {

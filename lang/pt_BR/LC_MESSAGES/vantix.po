@@ -2759,5 +2759,8 @@ msgstr "PID {}, aberto por {}"
 msgid "End this one"
 msgstr "Finalizar este"
 
+msgid "Recovery needed"
+msgstr "Recuperação necessária"
+
 msgid "Runs at logon with admin rights, without a UAC prompt, from a copy in Program Files that only admins can change."
 msgstr "Abre quando você entra no Windows, como administrador e sem a janela do UAC, a partir de uma cópia em Arquivos de Programas que só administradores podem alterar."
