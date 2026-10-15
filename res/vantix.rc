@@ -1,11 +1,11 @@
 #include <winver.h>
 
-1 ICON "vantix.ico"
-1 24 "vantix.manifest"
+1 ICON "@RES@/vantix.ico"
+1 24 "@RES@/vantix.manifest"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,1,0,0
-PRODUCTVERSION 0,1,0,0
+FILEVERSION @COMMAS@
+PRODUCTVERSION @COMMAS@
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -15,11 +15,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "MrcVnz"
             VALUE "FileDescription", "Vantix"
-            VALUE "FileVersion", "0.1.0"
+            VALUE "FileVersion", "@VERSION@"
             VALUE "InternalName", "vantix"
             VALUE "OriginalFilename", "vantix.exe"
             VALUE "ProductName", "Vantix"
-            VALUE "ProductVersion", "0.1.0"
+            VALUE "ProductVersion", "@VERSION@"
         END
     END
     BLOCK "VarFileInfo"

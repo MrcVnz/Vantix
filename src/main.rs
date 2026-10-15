@@ -287,6 +287,7 @@ fn run() -> Result<(), slint::PlatformError> {
         return Ok(());
     }
     update::clean_up();
+    std::thread::spawn(system::keep_autostart_current);
     system::init_com();
     memory::enable_privileges();
 

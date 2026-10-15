@@ -142,7 +142,7 @@ component SettingsPage inherits VerticalLayout {
 
                 Toggle {
                     text: @tr("Start with Windows");
-                    detail: @tr("Runs at logon with admin rights, without a UAC prompt.");
+                    detail: @tr("Runs at logon with admin rights, without a UAC prompt, from a copy in Program Files that only admins can change.");
                     checked <=> Preferences.start-with-windows;
                     toggled(on) => { Preferences.autostart-toggled(on); }
                 }

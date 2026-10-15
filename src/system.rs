@@ -7,7 +7,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 use windows::Win32::Foundation::{
-    COLORREF, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, VARIANT_FALSE, WAIT_OBJECT_0, WPARAM,
+    COLORREF, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HLOCAL, HWND, LPARAM, LocalFree, VARIANT_FALSE,
+    WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWINDOWATTRIBUTE,
@@ -31,6 +32,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON, SM_CXSMICON, SendMessageW,
     WM_SETICON,
 };
+use windows::Win32::Security::Authorization::{
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+};
+use windows::Win32::Security::{
+    DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, OWNER_SECURITY_INFORMATION,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+};
+use windows::Win32::Storage::FileSystem::{
+    GetFileVersionInfoSizeW, GetFileVersionInfoW, MOVEFILE_DELAY_UNTIL_REBOOT, MOVEFILE_REPLACE_EXISTING,
+    MOVEFILE_WRITE_THROUGH, MoveFileExW, VS_FIXEDFILEINFO, VerQueryValueW,
+};
+use windows::Win32::UI::Shell::{FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
 use windows::core::{BSTR, HSTRING, Interface, PCWSTR, Result, w};
 
 use crate::reg;
@@ -312,17 +325,193 @@ fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// The Run key would trigger a UAC prompt on every logon because the app needs admin,
-/// so autostart is a logon task with the highest run level instead.
+// Autostart. The Run key would trigger a UAC prompt on every logon because the app
+// needs admin, so it's a logon task with the highest run level instead. A task like that
+// must never start a file a program without admin could replace, such as an exe in
+// Downloads or in a build folder: whatever sits there at the next logon would run as
+// admin. So the task starts a copy in Program Files, in a folder whose permissions
+// Vantix sets itself, and the task can only be changed by admins.
+
+/// Admins and SYSTEM have full control, users read and run, nothing is inherited from
+/// above and the owner is Administrators: a folder made by someone else gets the same.
+const LOCKED_FOLDER: PCWSTR = w!("O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)");
+/// The task itself: admins and SYSTEM change it, signed-in users only read it.
+const LOCKED_TASK: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;AU)";
+/// What an update or a copy can leave next to the installed exe.
+const INSTALLED_FILES: [&str; 4] = ["vantix.exe", "vantix.exe.new", "vantix.old.exe", "vantix.failed.exe"];
+
+/// The copy the logon task starts.
+fn installed_exe() -> Result<std::path::PathBuf> {
+    // The known folder, not %ProgramFiles%: the environment is the user's to change.
+    let folder = unsafe {
+        let path = SHGetKnownFolderPath(&FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, None)?;
+        let text = path.to_string();
+        windows::Win32::System::Com::CoTaskMemFree(Some(path.0 as *const _));
+        text.map_err(|_| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))?
+    };
+    Ok(std::path::Path::new(&folder).join("Vantix").join("vantix.exe"))
+}
+
+fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    a.as_os_str().eq_ignore_ascii_case(b.as_os_str())
+}
+
+fn io_error(error: std::io::Error) -> windows::core::Error {
+    windows::core::Error::new(windows::Win32::Foundation::E_FAIL, error.to_string())
+}
+
+/// Gives the folder `LOCKED_FOLDER`, passed down to what's inside.
+fn lock_folder(folder: &std::path::Path) -> Result<()> {
+    unsafe {
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(LOCKED_FOLDER, SDDL_REVISION_1, &mut descriptor, None)?;
+        let (mut owner, mut defaulted) = (windows::Win32::Security::PSID::default(), windows::core::BOOL(0));
+        let (mut dacl, mut present) = (std::ptr::null_mut(), windows::core::BOOL(0));
+        let read = GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted)
+            .and_then(|()| GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted));
+        let set = read.and_then(|()| {
+            SetNamedSecurityInfoW(
+                &HSTRING::from(folder.as_os_str()),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                Some(owner),
+                None,
+                Some(dacl),
+                None,
+            )
+            .ok()
+        });
+        let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+        set
+    }
+}
+
+/// Copies the running exe into the locked folder and checks the copy byte for byte.
+/// Nothing to do when this already is the installed copy.
+fn install_copy() -> Result<std::path::PathBuf> {
+    let exe = std::env::current_exe().map_err(io_error)?;
+    let target = installed_exe()?;
+    if same_path(&exe, &target) {
+        return Ok(target);
+    }
+    let folder = target.parent().unwrap();
+    std::fs::create_dir_all(folder).map_err(io_error)?;
+    lock_folder(folder)?;
+    let bytes = std::fs::read(&exe).map_err(io_error)?;
+    let new = folder.join("vantix.exe.new");
+    std::fs::write(&new, &bytes).map_err(io_error)?;
+    unsafe {
+        MoveFileExW(
+            &HSTRING::from(new.as_os_str()),
+            &HSTRING::from(target.as_os_str()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .inspect_err(|_| {
+        let _ = std::fs::remove_file(&new);
+    })?;
+    if std::fs::read(&target).map_err(io_error)? != bytes {
+        return Err(windows::core::Error::new(windows::Win32::Foundation::E_FAIL, "the installed copy doesn't match"));
+    }
+    Ok(target)
+}
+
+/// Deletes the installed copy and its folder. The running exe can't go while it runs,
+/// so when Vantix runs from there, Windows deletes it at the next restart.
+fn remove_copy() {
+    let Ok(target) = installed_exe() else { return };
+    let folder = target.parent().unwrap();
+    let running = std::env::current_exe().is_ok_and(|exe| same_path(&exe, &target));
+    for name in INSTALLED_FILES {
+        let path = folder.join(name);
+        if std::fs::remove_file(&path).is_err() && running && path.exists() {
+            unsafe {
+                let _ = MoveFileExW(&HSTRING::from(path.as_os_str()), None, MOVEFILE_DELAY_UNTIL_REBOOT);
+            }
+        }
+    }
+    // Only when empty: a folder with anything else in it isn't only Vantix's.
+    if std::fs::remove_dir(folder).is_err() && running {
+        unsafe {
+            let _ = MoveFileExW(&HSTRING::from(folder.as_os_str()), None, MOVEFILE_DELAY_UNTIL_REBOOT);
+        }
+    }
+}
+
+/// Version from the exe's resource, as one number to compare.
+fn file_version(path: &std::path::Path) -> Option<u64> {
+    unsafe {
+        let file = HSTRING::from(path.as_os_str());
+        let size = GetFileVersionInfoSizeW(&file, None);
+        if size == 0 {
+            return None;
+        }
+        let mut data = vec![0u8; size as usize];
+        GetFileVersionInfoW(&file, None, size, data.as_mut_ptr().cast()).ok()?;
+        let mut pointer = std::ptr::null_mut();
+        let mut len = 0u32;
+        if !VerQueryValueW(data.as_ptr().cast(), w!("\\"), &mut pointer, &mut len).as_bool()
+            || (len as usize) < size_of::<VS_FIXEDFILEINFO>()
+        {
+            return None;
+        }
+        let info = &*(pointer as *const VS_FIXEDFILEINFO);
+        Some((u64::from(info.dwFileVersionMS) << 32) | u64::from(info.dwFileVersionLS))
+    }
+}
+
+/// The exe the logon task starts, if there is one.
+fn task_path() -> Option<String> {
+    unsafe {
+        let task = task_folder().ok()?.GetTask(&BSTR::from(TASK_NAME)).ok()?;
+        let action: IExecAction = task.Definition().ok()?.Actions().ok()?.get_Item(1).ok()?.cast().ok()?;
+        let mut path = BSTR::new();
+        action.Path(&mut path).ok()?;
+        Some(path.to_string())
+    }
+}
+
+/// On every start, off the UI thread. A task from before the installed copy, pointing at
+/// wherever Vantix was, moves to the copy. And an exe started from elsewhere that's as new
+/// as the copy or newer, like the one an update just replaced, becomes the copy, so the
+/// next logon starts what was run last. An older one leaves the copy alone.
+pub fn keep_autostart_current() {
+    let Some(path) = task_path() else { return };
+    let Ok(target) = installed_exe() else { return };
+    if !same_path(std::path::Path::new(&path), &target) {
+        if let Err(e) = set_autostart(true) {
+            log_error("move the logon task to Program Files", &e);
+        }
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    if same_path(&exe, &target) || file_version(&exe) < file_version(&target) {
+        return;
+    }
+    let differs = match (std::fs::read(&exe), std::fs::read(&target)) {
+        (Ok(running), Ok(installed)) => running != installed,
+        (Ok(_), Err(_)) => true,
+        _ => false,
+    };
+    if differs && let Err(e) = install_copy() {
+        log_error("refresh the installed copy", &e);
+    }
+}
+
 pub fn set_autostart(enabled: bool) -> Result<()> {
     let folder = task_folder()?;
     let name = BSTR::from(TASK_NAME);
     unsafe {
         if !enabled {
-            return folder
+            let deleted = folder
                 .DeleteTask(&name, 0)
                 .or_else(|e| if e.code().0 as u32 == 0x80070002 { Ok(()) } else { Err(e) });
+            if deleted.is_ok() {
+                remove_copy();
+            }
+            return deleted;
         }
+        let exe = install_copy()?;
 
         let service = task_service()?;
         let task = service.NewTask(0)?;
@@ -342,10 +531,10 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
         trigger.SetDelay(&BSTR::from("PT10S"))?;
 
         let action: IExecAction = task.Actions()?.Create(TASK_ACTION_EXEC)?.cast()?;
-        action.SetPath(&BSTR::from(std::env::current_exe()?.to_string_lossy().as_ref()))?;
+        action.SetPath(&BSTR::from(exe.to_string_lossy().as_ref()))?;
         action.SetArguments(&BSTR::from(AUTOSTART_ARG))?;
 
-        folder.RegisterTaskDefinition(
+        let registered = folder.RegisterTaskDefinition(
             &name,
             &task,
             TASK_CREATE_OR_UPDATE.0,
@@ -354,23 +543,17 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
             TASK_LOGON_INTERACTIVE_TOKEN,
             &VARIANT::default(),
         )?;
+        // Set afterwards: the descriptor passed to RegisterTaskDefinition is ignored for
+        // an interactive-token task.
+        registered.SetSecurityDescriptor(&BSTR::from(LOCKED_TASK), 0)?;
     }
     Ok(())
 }
 
-/// True only when the task exists and starts this very executable.
+/// True only when the task exists and starts the installed copy, and the copy is there.
 pub fn autostart_enabled() -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
-    let path = || -> Result<String> {
-        unsafe {
-            let task = task_folder()?.GetTask(&BSTR::from(TASK_NAME))?;
-            let action: IExecAction = task.Definition()?.Actions()?.get_Item(1)?.cast()?;
-            let mut path = BSTR::new();
-            action.Path(&mut path)?;
-            Ok(path.to_string())
-        }
-    };
-    path().is_ok_and(|path| path.eq_ignore_ascii_case(&exe.to_string_lossy()))
+    let Ok(target) = installed_exe() else { return false };
+    task_path().is_some_and(|path| same_path(std::path::Path::new(&path), &target)) && target.exists()
 }
 
 /// Undoes everything the app registered outside its data folder.
@@ -431,14 +614,33 @@ mod tests {
     }
 
     /// Creates and removes a real logon task: `cargo test autostart -- --ignored --nocapture`
+    /// Takes the task and the installed copy away however the test ends.
+    struct Unregister;
+
+    impl Drop for Unregister {
+        fn drop(&mut self) {
+            let _ = set_autostart(false);
+        }
+    }
+
     #[test]
     #[ignore]
     fn autostart_round_trip() {
+        let _cleanup = Unregister;
         let exists =
             std::process::Command::new("schtasks").args(["/Query", "/TN", TASK_NAME]).output().unwrap();
         assert!(!exists.status.success(), "a task named {TASK_NAME} already exists, refusing to touch it");
         set_autostart(true).unwrap();
         assert!(autostart_enabled());
+        let installed = installed_exe().unwrap();
+        assert_eq!(std::fs::read(&installed).unwrap(), std::fs::read(std::env::current_exe().unwrap()).unwrap());
+        // Users can't write to the folder or the task.
+        let acl = std::process::Command::new("icacls").arg(installed.parent().unwrap()).output().unwrap();
+        let acl = String::from_utf8_lossy(&acl.stdout).to_string();
+        println!("{acl}");
+        let users = acl.lines().filter(|line| line.contains("BUILTIN\\Users") || line.contains("BUILTIN\\Usu")).collect::<Vec<_>>();
+        assert!(!users.is_empty() && users.iter().all(|line| line.contains("(RX)")), "users can do more than read");
+        assert!(!acl.contains("(I)"), "inherits from Program Files instead of its own list");
         let xml = std::process::Command::new("schtasks")
             .args(["/Query", "/TN", TASK_NAME, "/XML"])
             .output()
@@ -449,7 +651,37 @@ mod tests {
         assert!(xml.contains(AUTOSTART_ARG));
         set_autostart(false).unwrap();
         assert!(!autostart_enabled());
+        assert!(!installed.exists(), "the installed copy stayed");
         // Deleting a task that isn't there is fine too.
+        set_autostart(false).unwrap();
+    }
+
+    /// A task from before the installed copy moves to it on the next start:
+    /// `cargo test autostart_moves -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn autostart_moves_to_the_copy() {
+        let _cleanup = Unregister;
+        let exists =
+            std::process::Command::new("schtasks").args(["/Query", "/TN", TASK_NAME]).output().unwrap();
+        assert!(!exists.status.success(), "a task named {TASK_NAME} already exists, refusing to touch it");
+        let made = std::process::Command::new("schtasks")
+            .args(["/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/RL", "HIGHEST", "/TR"])
+            .arg(format!("\"{}\" {AUTOSTART_ARG}", std::env::current_exe().unwrap().display()))
+            .output()
+            .unwrap();
+        assert!(made.status.success());
+        assert!(!autostart_enabled(), "an old task counts as enabled");
+        keep_autostart_current();
+        assert!(autostart_enabled(), "the task didn't move");
+        // Only admins and SYSTEM can change the task now.
+        let sddl = unsafe {
+            task_folder().unwrap().GetTask(&BSTR::from(TASK_NAME)).unwrap().GetSecurityDescriptor(4).unwrap().to_string()
+        };
+        println!("task: {sddl}");
+        let aces: Vec<&str> = sddl.split('(').skip(1).map(|ace| ace.trim_end_matches(')')).collect();
+        assert!(aces.contains(&"A;;FA;;;BA"), "{sddl}");
+        assert!(aces.iter().all(|ace| ace.ends_with(";;;BA") || ace.ends_with(";;;SY") || ace.starts_with("A;;FR;")), "{sddl}");
         set_autostart(false).unwrap();
     }
 }
