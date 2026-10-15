@@ -189,8 +189,8 @@ msgstr "Só quando abrir junto com o Windows."
 msgid "Notifications"
 msgstr "Notificações"
 
-msgid "Tells you what automatic cleanups freed."
-msgstr "Avisa quanto as limpezas automáticas liberaram."
+msgid "Windows notifications from Vantix, such as what automatic cleanups freed."
+msgstr "Notificações do Vantix no Windows, como quanto as limpezas automáticas liberaram."
 
 msgid "Reset"
 msgstr "Redefinir"
@@ -2704,3 +2704,18 @@ msgstr "Abre uma issue nova. Conte o que aconteceu e anexe o crash.log, se houve
 
 msgid "Download update"
 msgstr "Baixar atualização"
+
+msgid "Game mode notice"
+msgstr "Aviso do Modo jogo"
+
+msgid "Tells you once when game mode picks up a game."
+msgstr "Avisa uma vez quando o Modo jogo pega um jogo."
+
+msgid "Game mode on"
+msgstr "Modo jogo ligado"
+
+msgid "Boosting {}."
+msgstr "Reforçando {}."
+
+msgid "Boosting {}. Its anti-cheat blocks priority; the other boosts stay on."
+msgstr "Reforçando {}. O anti-cheat bloqueia a prioridade; os outros reforços continuam."

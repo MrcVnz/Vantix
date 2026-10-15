@@ -705,11 +705,9 @@ export component MemoryPage inherits VerticalLayout {
                 }
             }
 
-            Button {
-                text: root.auto-dirty ? @tr("Apply") : @tr("Applied");
-                icon: root.auto-dirty ? "" : Icons.check;
-                enabled: root.auto-dirty;
-                primary: root.auto-dirty;
+            if root.auto-dirty: Button {
+                text: @tr("Apply");
+                primary: true;
                 clicked => { Memory.apply-auto(); }
             }
         }

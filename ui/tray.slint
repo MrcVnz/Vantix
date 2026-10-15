@@ -10,6 +10,9 @@ export component Tray inherits SystemTrayIcon {
     // Notification texts live here so they go through the same translation catalog as the UI.
     public pure function freed-title() -> string { return @tr("Automatic cleanup"); }
     public pure function freed-body(amount: string) -> string { return @tr("Freed {}", amount); }
+    public pure function game-title() -> string { return @tr("Game mode on"); }
+    public pure function game-body(name: string) -> string { return @tr("Boosting {}.", name); }
+    public pure function game-blocked(name: string) -> string { return @tr("Boosting {}. Its anti-cheat blocks priority; the other boosts stay on.", name); }
     public pure function hint-title() -> string { return @tr("Vantix is still running"); }
     public pure function hint-body() -> string { return @tr("It keeps working from the tray. Use Quit in the tray menu to close it."); }
 

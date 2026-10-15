@@ -108,6 +108,8 @@ struct State {
     /// Traffic totals at the last tick, to turn them into rates.
     traffic: Option<(Instant, HashMap<String, [u64; 2]>)>,
     ticks: u32,
+    /// Start of the last game a toast went out for, so each game gets one.
+    game_noticed: Option<chrono::DateTime<Local>>,
     /// Since when the tray icon has been found missing, see check_tray.
     tray_missing: Option<Instant>,
     opened_without_tray: bool,
@@ -317,6 +319,7 @@ fn run() -> Result<(), slint::PlatformError> {
             wifi: None,
             traffic: None,
             ticks: 0,
+            game_noticed: None,
             tray_missing: None,
             opened_without_tray: false,
             programs: Vec::new(),
@@ -608,6 +611,7 @@ impl App {
                 settings.language = language;
                 settings.start_minimized = prefs.get_start_minimized();
                 settings.notifications = prefs.get_notifications();
+                settings.game_notice = prefs.get_game_notice();
                 let _ = settings.save();
                 apply_language(language);
             })
@@ -1004,6 +1008,7 @@ impl App {
         let stats = memory::stats();
         self.with_tray(|tray| tray.set_load(stats.load as i32));
         let status = governor::status();
+        self.notice_game(&status);
         self.with_ui(|ui| {
             let live = ui.global::<Live>();
             live.set_game(status.game.unwrap_or_default().into());
@@ -1966,7 +1971,7 @@ impl App {
                 let entry = &mut state.startup[index];
                 entry.enabled = on;
                 let row = startup_row(entry);
-                let count = state.startup.iter().filter(|e| e.enabled).count() as i32;
+                let count = enabled_startup(&state.startup);
                 app.with_ui(|ui| {
                     let startup = ui.global::<Startup>();
                     startup.get_rows().set_row_data(index, row);
@@ -1974,6 +1979,25 @@ impl App {
                 });
             },
         );
+    }
+
+    /// One toast per game, once game mode has it.
+    fn notice_game(&self, status: &governor::Status) {
+        let Some(last) = status.last.as_ref().filter(|_| status.game.is_some()) else { return };
+        let mut state = self.state.borrow_mut();
+        if state.game_noticed == Some(last.started) {
+            return;
+        }
+        state.game_noticed = Some(last.started);
+        if !(state.settings.notifications && state.settings.game_notice) {
+            return;
+        }
+        drop(state);
+        let name = last.name.strip_suffix(".exe").unwrap_or(&last.name);
+        self.with_tray(|tray| {
+            let body = if last.blocked { tray.invoke_game_blocked(name.into()) } else { tray.invoke_game_body(name.into()) };
+            system::notify(&tray.invoke_game_title(), &body);
+        });
     }
 
     fn change_game_lists(&self, change: impl FnOnce(&mut Settings)) {
@@ -2002,7 +2026,8 @@ impl App {
         let state = self.state.borrow();
         let rows: Vec<StartupRow> = state.startup.iter().map(startup_row).collect();
         let startup = ui.global::<Startup>();
-        startup.set_enabled_count(state.startup.iter().filter(|e| e.enabled).count() as i32);
+        startup.set_enabled_count(enabled_startup(&state.startup));
+        startup.set_working_count(state.startup.iter().filter(|e| !e.missing).count() as i32);
         startup.set_rows(ModelRc::new(VecModel::from(rows)));
         startup.set_loaded(true);
     }
@@ -3631,6 +3656,7 @@ fn show_settings(ui: &AppWindow, settings: &Settings) {
     prefs.set_start_with_windows(system::autostart_enabled());
     prefs.set_start_minimized(settings.start_minimized);
     prefs.set_notifications(settings.notifications);
+    prefs.set_game_notice(settings.game_notice);
 }
 
 fn show_history(ui: &AppWindow, history: &[HistoryEntry]) {
@@ -3729,6 +3755,11 @@ fn show_live(ui: &AppWindow, settings: &Settings) {
     live.set_has_wifi(capabilities.wifi);
     live.set_has_hybrid_gpu(capabilities.hybrid_gpu);
     show_game_lists(ui, settings);
+}
+
+/// Entries whose program is gone start nothing, so they stay out of the count.
+fn enabled_startup(entries: &[startup::Entry]) -> i32 {
+    entries.iter().filter(|e| e.enabled && !e.missing).count() as i32
 }
 
 fn startup_row(entry: &startup::Entry) -> StartupRow {

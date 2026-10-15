@@ -87,6 +87,8 @@ pub struct Settings {
     /// Only applies to starts from the logon task.
     pub start_minimized: bool,
     pub notifications: bool,
+    /// A toast when game mode finds a game.
+    pub game_notice: bool,
     pub tray_hint_shown: bool,
     /// Sequence number of the restore point made before Vantix's first system change.
     /// Later changes rely on it and the journal instead of making a point each.
@@ -120,6 +122,7 @@ impl Default for Settings {
             auto_clean: AutoClean::default(),
             start_minimized: true,
             notifications: true,
+            game_notice: true,
             tray_hint_shown: false,
             baseline_point: None,
             own_points: Vec::new(),

@@ -21,6 +21,8 @@ export struct StartupRow {
 export global Startup {
     in property <[StartupRow]> rows;
     in property <int> enabled-count;
+    /// Rows whose program still exists.
+    in property <int> working-count;
     in property <bool> loaded;
     /// Startup apps or tweaks, kept while the page itself comes and goes.
     in-out property <int> tab;
@@ -80,8 +82,8 @@ export component BackgroundPage inherits VerticalLayout {
         Text {
             x: 6px;
             text: !Startup.loaded ? @tr("Loading...")
-                : Startup.rows.length == 0 ? @tr("No apps start with Windows.")
-                : @tr("{} of {} start with Windows. Changes count from the next sign-in.", Startup.enabled-count, Startup.rows.length);
+                : Startup.working-count == 0 ? @tr("No apps start with Windows.")
+                : @tr("{} of {} start with Windows. Changes count from the next sign-in.", Startup.enabled-count, Startup.working-count);
             color: Theme.text;
             font-weight: 600;
         }

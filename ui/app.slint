@@ -25,6 +25,7 @@ export global Preferences {
     in-out property <bool> start-with-windows;
     in-out property <bool> start-minimized;
     in-out property <bool> notifications;
+    in-out property <bool> game-notice;
     in property <string> version;
     // Saves everything except autostart, which has its own call because it can fail.
     callback changed();
@@ -154,8 +155,16 @@ component SettingsPage inherits VerticalLayout {
                 }
                 Toggle {
                     text: @tr("Notifications");
-                    detail: @tr("Tells you what automatic cleanups freed.");
+                    detail: @tr("Windows notifications from Vantix, such as what automatic cleanups freed.");
                     checked <=> Preferences.notifications;
+                    toggled => { Preferences.changed(); }
+                }
+                Toggle {
+                    text: @tr("Game mode notice");
+                    detail: @tr("Tells you once when game mode picks up a game.");
+                    enabled: Preferences.notifications;
+                    checked <=> Preferences.game-notice;
+                    shows: Preferences.notifications && Preferences.game-notice;
                     toggled => { Preferences.changed(); }
                 }
             }
