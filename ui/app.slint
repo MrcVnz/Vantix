@@ -6,7 +6,7 @@ import { Storage, StoragePage, CleanupRow, CleanupEntry, DriveRow, RowState } fr
 import { Tweaks, TweakText, TweakRow, TweakState, ChangeRow, RebootBanner, SectionPage } from "tweaks.slint";
 import { Terms, TermsSheet, TermsLine, TermsParagraph } from "terms.slint";
 import { Startup, StartupRow, BackgroundPage } from "startup.slint";
-import { Live, ProBalanceCard, GameModeCard } from "live.slint";
+import { Live, ProBalanceCard, GameModeCard, GameListsCard, GameEntry } from "live.slint";
 import { Net, InternetPage, PingRow, BloatResult, DnsRow, UsageRow } from "internet.slint";
 import { Monitor, MonitorPage, ProgramRow, Feature, GpuCard } from "monitor.slint";
 import { Services, ServicesPage, ServiceRow } from "services.slint";
@@ -539,7 +539,9 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             padding-bottom: 12px;
                             padding-right: 12px;
+                            spacing: Theme.gap;
                             GameModeCard {}
+                            if Live.game-mode: GameListsCard {}
                         }
                     }
                 }

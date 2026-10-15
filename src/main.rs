@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::Local;
-use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
 
 use memory::Level;
@@ -108,6 +108,8 @@ struct State {
     /// Traffic totals at the last tick, to turn them into rates.
     traffic: Option<(Instant, HashMap<String, [u64; 2]>)>,
     ticks: u32,
+    /// Exe names offered on the game lists card, in row order.
+    open_programs: Vec<String>,
     /// Start of the last game a toast went out for, so each game gets one.
     game_noticed: Option<chrono::DateTime<Local>>,
     /// Since when the tray icon has been found missing, see check_tray.
@@ -319,6 +321,7 @@ fn run() -> Result<(), slint::PlatformError> {
             wifi: None,
             traffic: None,
             ticks: 0,
+            open_programs: Vec::new(),
             game_noticed: None,
             tray_missing: None,
             opened_without_tray: false,
@@ -701,6 +704,33 @@ impl App {
             let Some(exe) = dupes::pick_exe(owner) else { return };
             let Some(name) = exe.file_name().map(|name| name.to_string_lossy().into_owned()) else { return };
             app.change_game_lists(|settings| mark_game(settings, &name, game));
+            app.with_ui(|ui| ui.global::<Live>().set_picking(false));
+        }));
+        live.on_pick(bind(self, |app| {
+            let always = app.with_ui_value(|ui| ui.global::<Live>().get_list_tab() == 0).unwrap_or(true);
+            let programs: Vec<governor::Windowed> = {
+                let settings = &app.state.borrow().settings;
+                let listed = if always { &settings.games } else { &settings.not_games };
+                governor::windowed_programs()
+                    .into_iter()
+                    .filter(|program| !listed.iter().any(|name| name.eq_ignore_ascii_case(&program.exe)))
+                    .collect()
+            };
+            let rows: Vec<GameEntry> = programs
+                .iter()
+                .map(|program| GameEntry { title: program.title.as_str().into(), exe: program.exe.as_str().into() })
+                .collect();
+            app.state.borrow_mut().open_programs = programs.into_iter().map(|program| program.exe).collect();
+            app.with_ui(|ui| {
+                let live = ui.global::<Live>();
+                live.set_open_programs(ModelRc::new(VecModel::from(rows)));
+                live.set_picking(true);
+            });
+        }));
+        live.on_add_open(bind_with2(self, |app, game: bool, index: i32| {
+            let Some(name) = app.state.borrow().open_programs.get(index as usize).cloned() else { return };
+            app.change_game_lists(|settings| mark_game(settings, &name, game));
+            app.with_ui(|ui| ui.global::<Live>().set_picking(false));
         }));
         live.on_remove_game(bind_with2(self, |app, game: bool, index: i32| {
             app.change_game_lists(|settings| {
@@ -3693,8 +3723,15 @@ fn live_config(settings: &Settings) -> governor::Config {
 }
 
 fn show_game_lists(ui: &AppWindow, settings: &Settings) {
-    let names = |list: &[String]| -> ModelRc<SharedString> {
-        ModelRc::new(VecModel::from(list.iter().map(|name| SharedString::from(name.as_str())).collect::<Vec<_>>()))
+    let names = |list: &[String]| -> ModelRc<GameEntry> {
+        let entries: Vec<GameEntry> = list
+            .iter()
+            .map(|name| {
+                let title = name.len().checked_sub(4).filter(|&cut| name.is_char_boundary(cut) && name[cut..].eq_ignore_ascii_case(".exe"));
+                GameEntry { title: title.map_or(name.as_str(), |cut| &name[..cut]).into(), exe: name.as_str().into() }
+            })
+            .collect();
+        ModelRc::new(VecModel::from(entries))
     };
     let live = ui.global::<Live>();
     live.set_always(names(&settings.games));

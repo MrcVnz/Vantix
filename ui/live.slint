@@ -1,4 +1,4 @@
-import { Theme, Icons, Toggle, Chip, Button, IconButton } from "theme.slint";
+import { Theme, Icons, Icon, Toggle, Chip, Button, IconButton, Segmented } from "theme.slint";
 
 /// The latest game game mode found, and what it did.
 export struct LastGameRow {
@@ -23,6 +23,13 @@ export struct ActionRow {
     /// How long, while `ongoing` is false.
     seconds: int,
     ongoing: bool,
+}
+
+/// A program on a game list, or one with a window open offered for them.
+export struct GameEntry {
+    /// File description for open programs; the exe name without .exe on the lists.
+    title: string,
+    exe: string,
 }
 
 /// ProBalance and the real-time game mode: what runs while Vantix is open.
@@ -54,71 +61,94 @@ export global Live {
     /// What ProBalance did lately, newest first.
     in property <[ActionRow]> actions;
     /// Exe names marked by hand as always a game, and never.
-    in property <[string]> always;
-    in property <[string]> never;
+    in property <[GameEntry]> always;
+    in property <[GameEntry]> never;
+
+    /// The list the lists card shows: 0 always, 1 never.
+    in-out property <int> list-tab;
+    /// Programs with a window open are offered instead of the list.
+    in-out property <bool> picking;
+    in property <[GameEntry]> open-programs;
 
     callback changed();
-    /// Picks a program for the always list (true) or the never list.
+    /// Picks an exe file for the always list (true) or the never list.
     callback add-game(bool);
     callback remove-game(bool, int);
+    /// Fills open-programs and shows them.
+    callback pick();
+    callback add-open(bool, int);
     /// Puts the game being boosted on the never list, which ends the boost.
     callback not-a-game();
     /// Opens game-mode.log.
     callback open-log();
 }
 
-/// One of the hand made lists: a title, the names and a way to add one.
-component GameList inherits VerticalLayout {
+/// A program on a game list or offered for one: icon tile, name, exe and one action.
+component NameRow inherits Rectangle {
+    in property <string> icon;
+    in property <color> tint;
     in property <string> title;
     in property <string> detail;
-    in property <[string]> names;
-    callback add();
-    callback remove(int);
+    in property <string> action-icon;
+    in property <color> action-tint;
+    /// The whole row does the action, not only its button.
+    in property <bool> whole;
+    callback action();
 
-    spacing: 4px;
+    height: 46px;
+    border-radius: 8px;
+    background: touch.has-hover ? Theme.raised : transparent;
 
+    touch := TouchArea {
+        mouse-cursor: root.whole ? pointer : default;
+        clicked => {
+            if root.whole {
+                root.action();
+            }
+        }
+    }
     HorizontalLayout {
-        spacing: 16px;
+        padding-left: 10px;
+        padding-right: 6px;
+        spacing: 12px;
         VerticalLayout {
             alignment: center;
-            spacing: 2px;
+            Rectangle {
+                width: 30px;
+                height: 30px;
+                border-radius: 8px;
+                background: root.tint.with-alpha(0.12);
+                Icon {
+                    data: root.icon;
+                    tint: root.tint;
+                    size: 16px;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 1px;
             horizontal-stretch: 1;
             Text {
                 text: root.title;
                 color: Theme.text;
                 font-weight: 600;
+                overflow: elide;
             }
             Text {
                 text: root.detail;
                 color: Theme.muted;
                 font-size: 12px;
-                wrap: word-wrap;
+                overflow: elide;
             }
         }
         VerticalLayout {
             alignment: center;
-            Button {
-                text: @tr("Add");
-                tall: 32px;
-                clicked => { root.add(); }
+            IconButton {
+                icon: root.action-icon;
+                hover-tint: root.action-tint;
+                clicked => { root.action(); }
             }
-        }
-    }
-    for name[i] in root.names: HorizontalLayout {
-        spacing: 10px;
-        height: 32px;
-        padding-left: 12px;
-        Text {
-            text: name;
-            color: Theme.text;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
-        }
-        IconButton {
-            icon: Icons.x;
-            hover-tint: Theme.bad;
-            clicked => { root.remove(i); }
         }
     }
 }
@@ -319,20 +349,136 @@ export component GameModeCard inherits LiveCard {
             detail: @tr("Each game found is set to the dedicated GPU in Windows graphics settings, from its next start. A choice you already made there stays. Turning this off removes the ones Vantix set.");
             checked <=> Live.gpu;
         }
-        Rectangle { height: 6px; }
-        GameList {
-            title: @tr("Always a game");
-            detail: @tr("Boosted whenever it's in front, in a window too.");
-            names: Live.always;
-            add => { Live.add-game(true); }
-            remove(i) => { Live.remove-game(true, i); }
+    }
+}
+
+/// The hand made lists, for what automatic detection gets wrong.
+export component GameListsCard inherits LiveCard {
+    property <bool> always: Live.list-tab == 0;
+    property <[GameEntry]> names: self.always ? Live.always : Live.never;
+
+    on: false;
+
+    HorizontalLayout {
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: @tr("Your game lists");
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            Text {
+                text: root.always ? @tr("Boosted whenever it's in front, in a window too.") : @tr("Never boosted, even in fullscreen.");
+                color: Theme.muted;
+                font-size: 12px;
+                overflow: elide;
+            }
         }
-        GameList {
-            title: @tr("Never a game");
-            detail: @tr("Never boosted, even in fullscreen.");
-            names: Live.never;
-            add => { Live.add-game(false); }
-            remove(i) => { Live.remove-game(false, i); }
+        VerticalLayout {
+            alignment: center;
+            Segmented {
+                width: 290px;
+                options: [@tr("Always a game ({})", Live.always.length), @tr("Never a game ({})", Live.never.length)];
+                selected <=> Live.list-tab;
+                changed => { Live.picking = false; }
+            }
+        }
+    }
+
+    Rectangle {
+        height: panel.preferred-height;
+        background: Theme.background;
+        border-radius: Theme.radius-small;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        panel := VerticalLayout {
+            padding: 6px;
+            spacing: 2px;
+
+            if Live.picking: HorizontalLayout {
+                padding-left: 10px;
+                Text {
+                    height: 30px;
+                    text: root.always ? @tr("Open now. Pick the game:") : @tr("Open now. Pick the program:");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+            if Live.picking: VerticalLayout {
+                spacing: 2px;
+                for program[i] in Live.open-programs: NameRow {
+                    icon: Icons.monitor;
+                    tint: Theme.info;
+                    title: program.title;
+                    detail: program.exe;
+                    action-icon: Icons.plus;
+                    action-tint: Theme.accent;
+                    whole: true;
+                    action => { Live.add-open(root.always, i); }
+                }
+            }
+            if Live.picking && Live.open-programs.length == 0: Text {
+                height: 46px;
+                text: @tr("No other program has a window open right now.");
+                color: Theme.muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if !Live.picking: VerticalLayout {
+                spacing: 2px;
+                for entry[i] in root.names: NameRow {
+                    icon: root.always ? Icons.gamepad : Icons.ban;
+                    tint: root.always ? Theme.accent : Theme.muted;
+                    title: entry.title;
+                    detail: entry.exe;
+                    action-icon: Icons.x;
+                    action-tint: Theme.bad;
+                    action => { Live.remove-game(root.always, i); }
+                }
+            }
+            if !Live.picking && root.names.length == 0: VerticalLayout {
+                padding: 14px;
+                Text {
+                    text: root.always
+                        ? @tr("Nothing here yet. Vantix finds most games by itself; add one only when it's missed.")
+                        : @tr("Nothing here yet. Add a program that goes fullscreen without being a game, like a video player.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        alignment: end;
+        spacing: 8px;
+        if Live.picking: Button {
+            text: @tr("Browse for an .exe");
+            icon: Icons.folder;
+            tall: 32px;
+            clicked => { Live.add-game(root.always); }
+        }
+        if Live.picking: Button {
+            text: @tr("Cancel");
+            tall: 32px;
+            clicked => { Live.picking = false; }
+        }
+        if !Live.picking: Button {
+            text: @tr("Add a program");
+            icon: Icons.plus;
+            tall: 32px;
+            clicked => { Live.pick(); }
         }
     }
 }

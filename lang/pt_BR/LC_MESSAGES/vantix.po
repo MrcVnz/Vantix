@@ -2714,8 +2714,35 @@ msgstr "Avisa uma vez quando o Modo jogo pega um jogo."
 msgid "Game mode on"
 msgstr "Modo jogo ligado"
 
-msgid "Boosting {}."
-msgstr "Reforçando {}."
-
 msgid "Boosting {}. Its anti-cheat blocks priority; the other boosts stay on."
-msgstr "Reforçando {}. O anti-cheat bloqueia a prioridade; os outros reforços continuam."
+msgstr "Turbinando {}. O anti-cheat bloqueia a prioridade; os outros reforços continuam."
+
+msgid "Your game lists"
+msgstr "Suas listas de jogos"
+
+msgid "Always a game ({})"
+msgstr "Sempre é um jogo ({})"
+
+msgid "Never a game ({})"
+msgstr "Nunca é um jogo ({})"
+
+msgid "Open now. Pick the game:"
+msgstr "Abertos agora. Escolha o jogo:"
+
+msgid "Open now. Pick the program:"
+msgstr "Abertos agora. Escolha o programa:"
+
+msgid "No other program has a window open right now."
+msgstr "Nenhum outro programa está com janela aberta agora."
+
+msgid "Nothing here yet. Vantix finds most games by itself; add one only when it's missed."
+msgstr "Nada aqui ainda. O Vantix acha a maioria dos jogos sozinho; adicione um só quando ele deixar passar."
+
+msgid "Nothing here yet. Add a program that goes fullscreen without being a game, like a video player."
+msgstr "Nada aqui ainda. Adicione um programa que fica em tela cheia sem ser jogo, como um player de vídeo."
+
+msgid "Browse for an .exe"
+msgstr "Procurar um .exe"
+
+msgid "Add a program"
+msgstr "Adicionar programa"

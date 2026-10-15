@@ -468,7 +468,7 @@ pub struct Raw {
     pub pid: u32,
     /// Whoever created it. The id can already belong to someone else, so it's only worth
     /// anything together with a name that's still there.
-    parent: u32,
+    pub parent: u32,
     pub name: String,
     /// User plus kernel time, in 100 ns units.
     pub cpu_time: u64,

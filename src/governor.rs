@@ -43,8 +43,11 @@ use windows::Win32::System::Threading::{
     PROCESS_SET_LIMITED_INFORMATION, ProcessPowerThrottling, SetPriorityClass,
     SetProcessDefaultCpuSets, SetProcessInformation, SetThreadSelectedCpuSets, THREAD_SET_LIMITED_INFORMATION,
 };
+use windows::Win32::Foundation::LPARAM;
+use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, WS_CAPTION,
+    EnumWindows, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW,
+    GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible, WS_CAPTION, WS_EX_TOOLWINDOW,
 };
 use windows::core::{GUID, HSTRING};
 
@@ -298,6 +301,8 @@ struct Process {
     created: u64,
     cpu: u64,
     priority: i32,
+    /// Whoever started it, which tells the processes a game starts.
+    parent: u32,
     name: String,
     /// Lowercased full path, empty when it couldn't be read.
     path: String,
@@ -322,6 +327,7 @@ impl Process {
             created: entry.created,
             cpu: entry.cpu_time,
             priority: entry.priority,
+            parent: entry.parent,
             name: entry.name,
             path: image.to_lowercase(),
             image,
@@ -376,6 +382,9 @@ struct Game {
     /// The game's own folder: helpers in it (anti-cheat, crash reporter, launcher UI) are
     /// part of the game and never slowed down.
     folder: String,
+    /// Processes the game started, and the ones those started: Hytale's and Minecraft's
+    /// local servers, crash reporters, helpers outside the game folder.
+    family: HashSet<u32>,
     raised: bool,
     cores: bool,
     services: Vec<String>,
@@ -495,6 +504,9 @@ impl Governor {
         self.ticks += 1;
         let busy = self.sample();
         let foreground = foreground_pid();
+        for line in self.follow_family() {
+            self.note(&line);
+        }
 
         if config.probalance {
             self.balance(busy, foreground);
@@ -584,8 +596,44 @@ impl Governor {
                 && !(self.game.is_some() && listed(BACKGROUND_SERVICES, &process.name))
             || listed(EXEMPT, &process.name)
             || self.game.as_ref().is_some_and(|game| {
-                game.pid == pid || !game.folder.is_empty() && process.path.starts_with(&game.folder)
+                game.pid == pid
+                    || game.family.contains(&pid)
+                    || !game.folder.is_empty() && process.path.starts_with(&game.folder)
             })
+    }
+
+    /// Brings the game's family up to date: whatever its processes started since the last
+    /// tick joins, whatever ended leaves. A child has to be younger than its parent, or
+    /// the parent id belonged to an earlier process. Returns the log lines for who joined.
+    fn follow_family(&mut self) -> Vec<String> {
+        let Some(game) = &self.game else { return Vec::new() };
+        let mut family = HashSet::from([game.pid]);
+        loop {
+            let found: Vec<u32> = self
+                .processes
+                .values()
+                .filter(|process| {
+                    !family.contains(&process.pid)
+                        && family.contains(&process.parent)
+                        && self.processes.get(&process.parent).is_some_and(|parent| parent.created <= process.created)
+                })
+                .map(|process| process.pid)
+                .collect();
+            if found.is_empty() {
+                break;
+            }
+            family.extend(found);
+        }
+        family.remove(&game.pid);
+        let joined: Vec<String> = family
+            .difference(&game.family)
+            .filter_map(|pid| self.processes.get(pid))
+            .map(|process| format!("  part of the game: {} ({})", process.name, process.pid))
+            .collect();
+        if let Some(game) = &mut self.game {
+            game.family = family;
+        }
+        joined
     }
 
     fn balance(&mut self, busy: f64, foreground: u32) {
@@ -743,6 +791,7 @@ impl Governor {
             created,
             name,
             folder,
+            family: HashSet::new(),
             raised: false,
             cores: false,
             services: Vec::new(),
@@ -838,7 +887,7 @@ impl Governor {
             let in_front = |process: &Process| front.as_deref() == Some(process.path.as_str());
             for pid in self.efficient.clone() {
                 if let Some(process) = self.processes.get(&pid)
-                    && in_front(process)
+                    && (in_front(process) || self.exempt(pid, process))
                 {
                     if let Some(handle) = process.handle {
                         eco(handle, false);
@@ -981,6 +1030,62 @@ fn foreground_pid() -> u32 {
         }
     }
     pid
+}
+
+/// A program with a window on the taskbar right now, for the game lists.
+pub struct Windowed {
+    pub exe: String,
+    /// The file description, or the exe name without .exe when there's none.
+    pub title: String,
+}
+
+/// Programs with a taskbar window right now, one row per exe, without Windows' own and
+/// Vantix itself.
+pub fn windowed_programs() -> Vec<Windowed> {
+    unsafe extern "system" fn add(window: HWND, list: LPARAM) -> windows::core::BOOL {
+        unsafe {
+            let pids = &mut *(list.0 as *mut Vec<u32>);
+            let mut cloaked = 0u32;
+            let shown = IsWindowVisible(window).as_bool()
+                && GetWindow(window, GW_OWNER).is_err()
+                && GetWindowLongW(window, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 == 0
+                && GetWindowTextLengthW(window) > 0
+                // Store apps keep hidden windows that only cloaking tells apart.
+                && (DwmGetWindowAttribute(window, DWMWA_CLOAKED, (&raw mut cloaked).cast(), 4).is_err() || cloaked == 0);
+            if shown {
+                let mut pid = 0;
+                GetWindowThreadProcessId(window, Some(&mut pid));
+                pids.push(pid);
+            }
+        }
+        true.into()
+    }
+    let mut pids: Vec<u32> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(add), LPARAM(&raw mut pids as isize));
+    }
+    let windows = format!("{}\\", std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()).to_lowercase());
+    let me = std::process::id();
+    let mut seen = HashSet::new();
+    let mut list = Vec::new();
+    for pid in pids {
+        if pid == me {
+            continue;
+        }
+        let Some(path) = monitor::image_path(pid) else { continue };
+        let Some(exe) = path.rsplit('\\').next().map(str::to_string) else { continue };
+        if path.to_lowercase().starts_with(&windows)
+            || listed(NOT_GAMES, &exe)
+            || !seen.insert(exe.to_lowercase())
+        {
+            continue;
+        }
+        let (description, _) = crate::startup::version_info(std::path::Path::new(&path));
+        let title = if description.is_empty() { exe.trim_end_matches(".exe").to_string() } else { description };
+        list.push(Windowed { exe, title });
+    }
+    list.sort_by_key(|program| program.title.to_lowercase());
+    list
 }
 
 /// The foreground window covers its whole monitor without a title bar and isn't the
@@ -1688,6 +1793,47 @@ mod tests {
         println!("{log}");
     }
 
+    /// Hytale's client starts its local server as a child: it and whatever it starts are
+    /// part of the game. A process whose parent id is older than itself isn't.
+    #[test]
+    fn game_family() {
+        let raw = |pid: u32, parent: u32, created: u64| monitor::Raw {
+            pid,
+            parent,
+            name: format!("p{pid}.exe"),
+            cpu_time: 0,
+            memory: 0,
+            created,
+            session: 0,
+            priority: NORMAL_BASE,
+        };
+        let mut governor = Governor::default();
+        for (pid, parent, created) in [(100, 1, 10), (200, 100, 20), (300, 200, 30), (400, 100, 5), (500, 1, 40)] {
+            governor.processes.insert(pid, Process::new(raw(pid, parent, created)));
+        }
+        governor.game = Some(Game {
+            pid: 100,
+            created: 10,
+            name: "p100.exe".into(),
+            folder: String::new(),
+            family: HashSet::new(),
+            raised: false,
+            cores: false,
+            services: Vec::new(),
+            wifi: Vec::new(),
+        });
+        governor.follow_family();
+        assert_eq!(governor.game.as_ref().unwrap().family, HashSet::from([200, 300]));
+        let exempt = |pid| governor.exempt(pid, &governor.processes[&pid]);
+        assert!(exempt(100) && exempt(200) && exempt(300));
+        assert!(!exempt(400) && !exempt(500));
+
+        // The server closes: it leaves the family.
+        governor.processes.remove(&300);
+        governor.follow_family();
+        assert_eq!(governor.game.as_ref().unwrap().family, HashSet::from([200]));
+    }
+
     #[test]
     fn probalance_limits_in_a_game() {
         let mut governor = Governor { threads: 16.0, ..Default::default() };
@@ -1697,6 +1843,7 @@ mod tests {
             created: 0,
             name: String::new(),
             folder: String::new(),
+            family: HashSet::new(),
             raised: false,
             cores: false,
             services: Vec::new(),
